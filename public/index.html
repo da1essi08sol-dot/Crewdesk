@@ -1,27 +1,30 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Crewdesk</title>
-<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Jobs, tasks, photos and team chat for your crew, in one app.">
+<meta name="theme-color" content="#f3f6f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c1410" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Crewdesk">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css">
+<link rel="preload" href="/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/be-vietnam-pro-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css?v=2">
 </head>
 <body>
+<a class="skip-link" href="#view">Skip to content</a>
 <div id="app"></div>
 <div id="sheet-root"></div>
-<div id="toasts" aria-live="polite"></div>
-<script src="/app.js"></script>
+<div id="toasts" role="status" aria-live="polite"></div>
+<noscript><p style="padding:20px;font-family:sans-serif">Crewdesk needs JavaScript turned on.</p></noscript>
+<script src="/app.js?v=2"></script>
 </body>
 </html>

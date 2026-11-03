@@ -1,11 +1,14 @@
 {
   "name": "Crewdesk",
   "short_name": "Crewdesk",
-  "description": "Jobs, tasks, crews and chat in one place",
+  "description": "Jobs, tasks, photos and team chat for your crew",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#f6f4ef",
-  "theme_color": "#e8590c",
+  "orientation": "portrait",
+  "background_color": "#f3f6f3",
+  "theme_color": "#18693f",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },

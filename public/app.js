@@ -44,14 +44,19 @@ const P = {
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21a2 2 0 0 0 4 0"/>',
   phoneapp: '<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.5" r="3.5"/>',
+  gallery: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L6 21"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
+  shield: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z"/>',
+  file: '<path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
 };
 const ic = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n] || ''}</svg>`;
 
 const STATUS = { planned: 'Planned', active: 'In progress', hold: 'On hold', done: 'Done' };
-const STATUS_COLOR = { planned: 'var(--blue)', active: 'var(--accent)', hold: 'var(--amber)', done: 'var(--green)' };
+const STATUS_COLOR = { planned: 'var(--blue)', active: 'var(--accent)', hold: 'var(--amber)', done: 'var(--slate)' };
 const PRIORITY = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
 const ROLE = { owner: 'Owner', admin: 'Admin', member: 'Member' };
-const PALETTE = ['#e8590c', '#1c7ed6', '#2b8a3e', '#ae3ec9', '#f08c00', '#0c8599', '#c2255c', '#5c7cfa', '#495057', '#66a80f'];
+const PALETTE = ['#18693f', '#1a5bb5', '#8a3fb8', '#c2255c', '#0c7a8a', '#a35200', '#2f8a3a', '#4c5fc0', '#495057', '#6b7f00'];
 
 function colorFor(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; }
 function initials(name) { return String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?'; }
@@ -132,7 +137,7 @@ const store = {
 const S = {
   token: store.get('cd_token'), cid: store.get('cd_cid'), user: null, companies: [], role: null, company: null,
   members: {}, teams: {}, jobs: {}, tasks: {}, clients: {}, announcements: {}, locations: {},
-  unread: {}, lastMsg: {}, msgs: {}, msgsMore: {}, pendingImg: {},
+  unread: {}, lastMsg: {}, msgs: {}, msgsMore: {}, photos: {}, info: null,
   jobFilter: 'open', jobSearch: '', clientSearch: '', openTask: null,
 };
 
@@ -166,7 +171,8 @@ function toast(text, isErr = false, link = '') {
   el.innerHTML = `<span class="grow">${esc(text)}</span>${link ? ic('right') : ''}`;
   el.style.cssText = '';
   el.onclick = () => { if (link) location.hash = link; el.remove(); };
-  $('#toasts').appendChild(el);
+  const box = $('#toasts'); box.appendChild(el);
+  while (box.children.length > 2) box.firstElementChild.remove();
   setTimeout(() => el.remove(), isErr ? 5000 : 4200);
 }
 function sheet(html, onMount) {
@@ -208,57 +214,297 @@ function peoplePicker(selected, name = 'people') {
 }
 const picked = (root, name = 'people') => $$(`[data-picker="${name}"] .person-chip.on`, root).map((b) => b.dataset.id);
 
-// ============================================================ images
-function resizeImage(file, max, square = false) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      let sx = 0, sy = 0, sw = img.width, sh = img.height;
-      if (square) { const m = Math.min(sw, sh); sx = (sw - m) / 2; sy = (sh - m) / 2; sw = sh = m; }
-      const s = Math.min(1, max / Math.max(sw, sh));
-      const c = document.createElement('canvas');
-      c.width = Math.round(sw * s); c.height = Math.round(sh * s);
-      c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(url);
-      resolve(c.toDataURL('image/jpeg', 0.82));
+// ============================================================ photos: picking, resizing, uploading, viewing
+const isTouch = () => matchMedia('(pointer: coarse)').matches || matchMedia('(hover: none)').matches;
+const LOGO = `<svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="#18693f"/><path d="M0 0h512v512z" fill="#0f4a2b" opacity=".35" clip-path="inset(0 round 116px)"/><ellipse cx="256" cy="414" rx="84" ry="18" fill="#48C680" opacity=".85"/><path d="M256 404C214 348 140 290 140 220a116 116 0 0 1 232 0c0 70-74 128-116 184Z" fill="#fff"/><path d="M203 222l37 37 70-72" fill="none" stroke="#18693F" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const brand = (cls = '') => `<span class="brandmark ${cls}">${LOGO}</span>`;
+const IMG_RE = /^image\//;
+const IMG_NAME_RE = /\.(jpe?g|png|webp|heic|heif|gif)$/i;
+const isImageFile = (f) => IMG_RE.test(f.type || '') || IMG_NAME_RE.test(f.name || '');
+
+// Opens the phone's camera or photo library. On phones you get two big buttons; on a computer it opens the file picker.
+function choosePhotos({ multiple = true, title = 'Add photos', selfie = false } = {}) {
+  return new Promise((resolve) => {
+    const finish = (files) => {
+      const list = [...(files || [])];
+      const ok = list.filter(isImageFile);
+      if (list.length && !ok.length) toast('That isn’t a photo — pick a picture from your camera roll', true);
+      if (ok.length) resolve(multiple ? ok : ok.slice(0, 1));
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that image')); };
+    if (!isTouch()) {
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = multiple; inp.style.display = 'none';
+      inp.onchange = () => { finish(inp.files); inp.remove(); };
+      document.body.appendChild(inp); inp.click();
+      return;
+    }
+    sheet(`${sheetHead(title)}
+      <div class="pick-options">
+        <label class="pick-btn">${ic('camera')}<span>Take photo</span><small>Open the camera</small>
+          <input type="file" accept="image/*" capture="${selfie ? 'user' : 'environment'}" data-pick aria-label="Take a photo with the camera"></label>
+        <label class="pick-btn">${ic('gallery')}<span>Photo library</span><small>${multiple ? 'Choose one or more' : 'Choose a photo'}</small>
+          <input type="file" accept="image/*" ${multiple ? 'multiple' : ''} data-pick aria-label="Choose from your photo library"></label>
+      </div>`, (sh, close) => {
+      $$('[data-pick]', sh).forEach((inp) => inp.addEventListener('change', () => { const files = [...inp.files]; close(); finish(files); }));
+    });
+  });
+}
+
+// Shrinks a photo on the phone before upload (fast on mobile data) and fixes sideways photos.
+async function loadBitmap(file) {
+  if (window.createImageBitmap) {
+    try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (_) { /* fall back below */ }
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file); const img = new Image();
+    img.onload = () => { resolve(img); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(/hei[cf]/i.test(file.type + file.name) ? 'This browser can’t open HEIC photos — try from your phone, or save it as JPEG' : 'Could not read that photo')); };
     img.src = url;
   });
 }
-function pickImage(max, square, cb) {
-  const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'image/*';
-  inp.onchange = () => { const f = inp.files[0]; if (f) resizeImage(f, max, square).then(cb).catch((e) => toast(e.message, true)); };
-  inp.click();
+function drawScaled(src, max, square = false, quality = 0.82) {
+  const W = src.width, H = src.height;
+  let sx = 0, sy = 0, sw = W, sh = H;
+  if (square) { const m = Math.min(W, H); sx = (W - m) / 2; sy = (H - m) / 2; sw = sh = m; }
+  const k = Math.min(1, max / Math.max(sw, sh));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(sw * k)); c.height = Math.max(1, Math.round(sh * k));
+  const g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
+  g.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  return { data: c.toDataURL('image/jpeg', quality), w: c.width, h: c.height };
+}
+async function processPhoto(file, { max = 1600, thumb = 480, square = false } = {}) {
+  const bmp = await loadBitmap(file);
+  const full = drawScaled(bmp, max, square);
+  const small = thumb ? drawScaled(bmp, thumb, square, 0.74) : null;
+  if (bmp.close) bmp.close();
+  return { data: full.data, w: full.w, h: full.h, thumb: small && small.data, takenAt: file.lastModified || 0 };
+}
+// JSON upload with a progress bar (fetch can't report upload progress)
+function sendWithProgress(method, path, body, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open(method, path); x.setRequestHeader('Content-Type', 'application/json');
+    if (S.token) x.setRequestHeader('Authorization', 'Bearer ' + S.token);
+    x.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (_) {} x.status < 300 ? resolve(j) : reject(new Error(j.error || 'Upload failed')); };
+    x.onerror = () => reject(new Error('No connection — photo not uploaded'));
+    x.send(JSON.stringify(body));
+  });
+}
+
+// ---- job photo uploads (queue, 2 at a time, with live tiles)
+S.uploads = {}; // jobId -> [{ key, preview, progress, failed, file }]
+let uploadActive = 0; const uploadQueue = [];
+function queueJobPhotos(jobId, files) {
+  if (!files.length) return;
+  const list = S.uploads[jobId] = S.uploads[jobId] || [];
+  for (const file of files) {
+    const u = { key: Math.random().toString(36).slice(2), jobId, file, preview: URL.createObjectURL(file), progress: 0, failed: '' };
+    list.push(u); uploadQueue.push(u);
+  }
+  toast(files.length === 1 ? 'Uploading photo…' : `Uploading ${files.length} photos…`);
+  refreshPhotoViews(jobId); pumpUploads();
+}
+async function pumpUploads() {
+  while (uploadActive < 2 && uploadQueue.length) {
+    const u = uploadQueue.shift(); uploadActive++;
+    uploadOne(u).finally(() => { uploadActive--; pumpUploads(); });
+  }
+}
+async function uploadOne(u) {
+  try {
+    u.failed = ''; u.progress = 0.02; paintUpload(u);
+    const p = await processPhoto(u.file);
+    const r = await sendWithProgress('POST', `/api/c/${S.cid}/photos`, { jobId: u.jobId, image: p.data, thumb: p.thumb, w: p.w, h: p.h, takenAt: p.takenAt },
+      (f) => { u.progress = 0.05 + f * 0.93; paintUpload(u); });
+    S.photos[r.item.id] = r.item;
+    const list = S.uploads[u.jobId] || [];
+    list.splice(list.indexOf(u), 1);
+    URL.revokeObjectURL(u.preview);
+    refreshPhotoViews(u.jobId);
+  } catch (e) {
+    u.failed = e.message; paintUpload(u);
+  }
+}
+function paintUpload(u) {
+  const el = document.querySelector(`[data-upload="${u.key}"]`);
+  if (!el) return;
+  const bar = el.querySelector('.prog i'); if (bar) bar.style.width = Math.round(u.progress * 100) + '%';
+  el.classList.toggle('failed', !!u.failed);
+  const f = el.querySelector('.fail');
+  if (u.failed && !f) el.insertAdjacentHTML('beforeend', `<span class="fail">${esc(u.failed)}<br>Tap to retry</span>`);
+  if (!u.failed && f) f.remove();
+}
+function refreshPhotoViews(jobId) {
+  const box = document.getElementById('photo-gallery');
+  if (box && box.dataset.job === jobId) box.innerHTML = photoGalleryInner(jobId);
+  const strip = document.getElementById('photo-strip');
+  if (strip && strip.dataset.job === jobId) strip.innerHTML = photoStripInner(jobId);
+}
+function jobPhotos(jobId) { return Object.values(S.photos).filter((p) => p.jobId === jobId).sort((a, b) => b.createdAt - a.createdAt); }
+function photoAlt(p, i) {
+  const j = S.jobs[p.jobId];
+  return p.caption ? p.caption : `Photo ${i + 1}${j ? ' of ' + j.title : ''}, added by ${member(p.createdBy).name}`;
+}
+function photoTile(p, i) {
+  return `<button class="photo-tile" data-act="photo-open" data-id="${p.id}" aria-label="Open photo: ${esc(photoAlt(p, i))}">
+    <img src="${esc(p.thumb || p.url)}" alt="${esc(photoAlt(p, i))}" loading="lazy" decoding="async">${p.caption ? `<span class="cap" aria-hidden="true">${esc(p.caption)}</span>` : ''}</button>`;
+}
+function uploadTile(u) {
+  return `<button class="photo-tile uploading ${u.failed ? 'failed' : ''}" data-upload="${u.key}" data-act="upload-retry" aria-label="${u.failed ? 'Upload failed, tap to retry' : 'Uploading photo'}">
+    <img src="${esc(u.preview)}" alt=""><span class="prog"><i style="width:${Math.round(u.progress * 100)}%"></i></span>${u.failed ? `<span class="fail">${esc(u.failed)}<br>Tap to retry</span>` : ''}</button>`;
+}
+function photoGalleryInner(jobId) {
+  const ps = jobPhotos(jobId); const ups = S.uploads[jobId] || [];
+  return `<div class="photo-grid">
+      <button class="add-photo-tile" data-act="photos-add" data-job="${jobId}">${ic('camera')}<span>Add photos</span></button>
+      ${ups.map(uploadTile).join('')}${ps.map(photoTile).join('')}</div>
+    ${!ps.length && !ups.length ? `<p class="small muted" style="text-align:center;margin:14px 0 0">No photos yet. Snap the site before, during and after the job — everyone on the job can see them.</p>` : ''}`;
+}
+function photoStripInner(jobId) {
+  const ps = jobPhotos(jobId).slice(0, 8); const ups = S.uploads[jobId] || [];
+  return `<div class="photo-strip"><button class="add-photo-tile" style="width:72px;flex:none" data-act="photos-add" data-job="${jobId}" aria-label="Add photos">${ic('camera')}<span>Add</span></button>
+    ${ups.map(uploadTile).join('')}${ps.map(photoTile).join('')}</div>`;
+}
+
+// ---- full-screen viewer (job photos and chat photos)
+let viewer = null;
+function openViewer(items, index = 0, opts = {}) {
+  closeViewer();
+  const back = document.activeElement;
+  const el = document.createElement('div');
+  el.className = 'viewer'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Photo viewer');
+  document.body.appendChild(el);
+  viewer = { el, items, i: Math.max(0, Math.min(index, items.length - 1)), back, opts };
+  paintViewer();
+  const onKey = (e) => {
+    if (!viewer) return;
+    if (e.key === 'Escape') closeViewer();
+    else if (e.key === 'ArrowRight' && !e.target.matches('input')) stepViewer(1);
+    else if (e.key === 'ArrowLeft' && !e.target.matches('input')) stepViewer(-1);
+  };
+  document.addEventListener('keydown', onKey); viewer.onKey = onKey;
+  let sx = null, sy = 0;
+  el.addEventListener('pointerdown', (e) => { if (e.target.closest('.viewer-stage')) { sx = e.clientX; sy = e.clientY; } });
+  el.addEventListener('pointerup', (e) => {
+    if (sx == null) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) stepViewer(dx < 0 ? 1 : -1);
+    else if (dy > 90 && Math.abs(dy) > Math.abs(dx) * 1.5) closeViewer();
+  });
+}
+function paintViewer() {
+  if (!viewer) return;
+  const it = viewer.items[viewer.i]; if (!it) return closeViewer();
+  const who = member(it.by);
+  const canEdit = it.id && S.photos[it.id] && (isAdmin() || it.by === S.user.id);
+  const many = viewer.items.length > 1;
+  viewer.el.innerHTML = `
+    <div class="viewer-top">
+      <button class="vbtn" data-vact="close" aria-label="Close photo">${ic('x')}</button>
+      <div class="who"><b>${esc(who.name)}</b><span>${esc(new Date(it.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}${it.where ? ' · ' + esc(it.where) : ''}</span></div>
+      <a class="vbtn" href="${esc(it.url)}" download aria-label="Download photo">${ic('download')}</a>
+      ${canEdit ? `<button class="vbtn" data-vact="delete" aria-label="Delete photo">${ic('trash')}</button>` : ''}
+    </div>
+    <div class="viewer-stage">
+      <img src="${esc(it.url)}" alt="${esc(it.alt || it.caption || 'Photo')}">
+      ${many ? `<button class="vbtn nav prev" data-vact="prev" aria-label="Previous photo">${ic('back')}</button><button class="vbtn nav next" data-vact="next" aria-label="Next photo">${ic('right')}</button>` : ''}
+    </div>
+    <div class="viewer-bottom">
+      ${canEdit ? `<label class="sr-only" for="vcap">Caption</label><input id="vcap" value="${esc(it.caption || '')}" placeholder="Add a caption… e.g. Before: kitchen wall" maxlength="300" enterkeyhint="done">`
+        : it.caption ? `<div class="caption">${esc(it.caption)}</div>` : ''}
+      ${many ? `<div class="count">${viewer.i + 1} of ${viewer.items.length}${isTouch() ? ' · swipe for more' : ''}</div>` : ''}
+    </div>`;
+  viewer.el.onclick = async (e) => {
+    const b = e.target.closest('[data-vact]'); if (!b) return;
+    const a = b.dataset.vact;
+    if (a === 'close') closeViewer();
+    if (a === 'prev') stepViewer(-1);
+    if (a === 'next') stepViewer(1);
+    if (a === 'delete') {
+      if (!(await confirmBox('Delete this photo?', 'It will be removed for everyone on the job.'))) return;
+      try { await capi('DELETE', `/photos/${it.id}`); delete S.photos[it.id]; refreshPhotoViews(it.jobId); toast('Photo deleted');
+        viewer.items.splice(viewer.i, 1); if (!viewer.items.length) closeViewer(); else { viewer.i = Math.min(viewer.i, viewer.items.length - 1); paintViewer(); } }
+      catch (err) { toast(err.message, true); }
+    }
+  };
+  const cap = viewer.el.querySelector('#vcap');
+  if (cap) {
+    const saveCap = async () => {
+      const v = cap.value.trim(); if (v === (it.caption || '')) return;
+      try { const r = await capi('PATCH', `/photos/${it.id}`, { caption: v }); S.photos[it.id] = r.item; it.caption = r.item.caption; refreshPhotoViews(it.jobId); toast('Caption saved'); }
+      catch (err) { toast(err.message, true); }
+    };
+    cap.addEventListener('change', saveCap);
+    cap.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); cap.blur(); } });
+  }
+  const closeBtn = viewer.el.querySelector('[data-vact="close"]'); if (closeBtn && !viewer.el.contains(document.activeElement)) closeBtn.focus({ preventScroll: true });
+}
+function stepViewer(d) { if (!viewer || viewer.items.length < 2) return; viewer.i = (viewer.i + d + viewer.items.length) % viewer.items.length; paintViewer(); }
+function closeViewer() {
+  if (!viewer) return;
+  document.removeEventListener('keydown', viewer.onKey);
+  const back = viewer.back; viewer.el.remove(); viewer = null;
+  if (back && back.isConnected) back.focus({ preventScroll: true });
+}
+function viewerItemsForJob(jobId) {
+  return jobPhotos(jobId).map((p, i) => ({ id: p.id, jobId, url: p.url, caption: p.caption, by: p.createdBy, at: p.createdAt, alt: photoAlt(p, i) }));
+}
+
+// ---- chat photo attachments
+S.pendingImgs = {}; // channel -> [{ data, key }]
+async function addChatPhotos(ch, files) {
+  const list = S.pendingImgs[ch] = S.pendingImgs[ch] || [];
+  const room = 6 - list.length;
+  if (room <= 0) return toast('You can send up to 6 photos at once', true);
+  if (files.length > room) toast(`Only the first ${room} photo${room === 1 ? '' : 's'} added (6 max per message)`);
+  for (const f of files.slice(0, room)) {
+    try { const p = await processPhoto(f, { thumb: 0 }); list.push({ data: p.data, key: Math.random().toString(36).slice(2) }); }
+    catch (e) { toast(e.message, true); }
+  }
+  paintAttach(ch);
+}
+function paintAttach(ch) {
+  const pane = document.querySelector(`.chat-pane[data-ch="${CSS.escape(ch)}"]`); if (!pane) return;
+  const box = pane.querySelector('[data-attach]'); const list = S.pendingImgs[ch] || [];
+  box.classList.toggle('hidden', !list.length);
+  box.innerHTML = list.map((p, i) => `<span class="attach-thumb"><img src="${p.data}" alt="Photo ${i + 1} ready to send"><button type="button" data-act="unattach" data-ch="${esc(ch)}" data-key="${p.key}" aria-label="Remove photo ${i + 1}">${ic('x')}</button></span>`).join('')
+    + (list.length ? `<span class="small muted" style="flex:none">${list.length} photo${list.length === 1 ? '' : 's'} ready</span>` : '');
 }
 
 // ============================================================ auth & onboarding screens
 function renderAuth(mode = 'login') {
   stopAll();
   $('#app').innerHTML = `<div class="auth"><div class="auth-card">
-    <div class="auth-brand"><div class="brandmark">C</div><div><h1>Crewdesk</h1><div class="muted small">Jobs, crews and chat in one place</div></div></div>
+    <div class="auth-brand">${brand()}<div><h1>Crewdesk</h1><div class="muted small">Jobs, photos and team chat in one place</div></div></div>
     <div class="card">
       <div class="seg"><button class="${mode === 'login' ? 'on' : ''}" data-act="auth-mode" data-mode="login">Sign in</button><button class="${mode === 'register' ? 'on' : ''}" data-act="auth-mode" data-mode="register">Create account</button></div>
       <form data-form="${mode}" class="stack">
         ${mode === 'register' ? `<label class="field"><span>Your name</span><input name="name" autocomplete="name" required></label>` : ''}
         <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required></label>
-        <label class="field"><span>Password</span><input name="password" type="password" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}" minlength="6" required></label>
-        <div class="err-msg" id="auth-err"></div>
+        <label class="field"><span>Password</span><input name="password" type="password" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}" minlength="6" required aria-describedby="${mode === 'register' ? 'pw-hint' : ''}"></label>
+        ${mode === 'register' ? `<div class="tiny muted" id="pw-hint" style="margin-top:-6px">At least 6 characters.</div>
+        <label class="consent"><input type="checkbox" name="agree" required><span>I agree to the <a href="#/terms">Terms</a> and have read the <a href="#/privacy">Privacy Policy</a>.</span></label>` : ''}
+        <div class="err-msg" id="auth-err" role="alert"></div>
         <button class="btn primary block">${mode === 'login' ? 'Sign in' : 'Create account'}</button>
       </form>
     </div>
     <p class="pwa-tip" style="text-align:center;margin-top:16px">Tip: on your phone, use “Add to Home Screen” to install Crewdesk like an app.</p>
+    ${footLinks()}
   </div></div>`;
 }
 function renderOnboard() {
   stopAll();
   $('#app').innerHTML = `<div class="auth"><div class="auth-card" style="max-width:520px">
-    <div class="auth-brand"><div class="brandmark">C</div><div><h1>Hi ${esc(S.user.name.split(' ')[0])}</h1><div class="muted small">Join your company’s board, or set one up for your crew.</div></div></div>
+    <div class="auth-brand">${brand()}<div><h1>Hi ${esc(S.user.name.split(' ')[0])}</h1><div class="muted small">Join your company’s board, or set one up for your crew.</div></div></div>
     <div class="stack">${companyForms()}
       <button class="btn ghost" data-act="logout">${ic('logout')} Sign out</button></div>
+    ${footLinks()}
   </div></div>`;
+}
+function footLinks() {
+  return `<nav class="foot-links" aria-label="Legal"><a href="#/privacy">Privacy</a><a href="#/terms">Terms</a>${S.info && S.info.operator && S.info.operator.email ? `<a href="mailto:${esc(S.info.operator.email)}">Contact</a>` : ''}</nav>`;
 }
 function companyForms() {
   return `<form class="card stack" data-form="join-co">
@@ -278,13 +524,17 @@ function companyForms() {
 }
 
 // ============================================================ boot & realtime
+const isLegal = (name) => name === 'privacy' || name === 'terms';
+let standalone = false;
 async function boot() {
-  if (!S.token) return renderAuth();
+  if (!S.info) { try { S.info = await api('GET', '/api/info'); } catch (_) { S.info = { operator: {} }; } }
+  const r0 = parseHash();
+  if (!S.token) return isLegal(r0.name) ? renderLegalStandalone(r0.name) : renderAuth();
   try {
     const r = await api('GET', '/api/me');
     S.user = r.user; S.companies = r.companies;
   } catch (e) { return renderAuth(); }
-  if (!S.companies.length) return renderOnboard();
+  if (!S.companies.length) return isLegal(r0.name) ? renderLegalStandalone(r0.name) : renderOnboard();
   if (!S.companies.some((c) => c.id === S.cid)) S.cid = S.companies[0].id;
   await loadCompany();
 }
@@ -294,7 +544,7 @@ async function loadCompany(keepView = false) {
   try { st = await capi('GET', '/state'); }
   catch (e) { toast(e.message, true); S.cid = null; store.set('cd_cid', null); return boot(); }
   Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, jobs: st.jobs, tasks: st.tasks, clients: st.clients,
-    announcements: st.announcements, locations: st.locations, unread: st.unread, lastMsg: st.lastMsg });
+    announcements: st.announcements, photos: st.photos || {}, locations: st.locations, unread: st.unread, lastMsg: st.lastMsg });
   if (!keepView) { S.msgs = {}; S.msgsMore = {}; }
   S.members = Object.fromEntries(st.members.map((m) => [m.id, m]));
   const me = S.companies.find((c) => c.id === S.cid); if (me) { me.name = st.company.name; me.role = st.role; }
@@ -361,10 +611,12 @@ function handleEvent(ev) {
   }
 }
 
+const msgImages = (m) => (m.images && m.images.length ? m.images : m.image ? [m.image] : []);
+function msgPreview(m) { const n = msgImages(m).length; return m.text || (n > 1 ? `📷 ${n} photos` : n ? '📷 Photo' : ''); }
 function onMessage(m) {
   const list = S.msgs[m.channel];
   if (list && !list.some((x) => x.id === m.id)) list.push(m);
-  S.lastMsg[m.channel] = { at: m.at, text: m.image && !m.text ? '📷 Photo' : m.text, userId: m.userId, system: m.system };
+  S.lastMsg[m.channel] = { at: m.at, text: msgPreview(m), userId: m.userId, system: m.system };
   const viewing = currentChannel() === m.channel && !document.hidden;
   if (m.userId !== S.user.id && !m.system) {
     if (viewing) markRead(m.channel);
@@ -373,7 +625,7 @@ function onMessage(m) {
       const who = member(m.userId).name.split(' ')[0];
       const where = m.channel === 'general' ? 'Company chat' : (S.jobs[m.channel.slice(4)] || {}).title || 'Job chat';
       const r = parseHash();
-      if (r.name !== 'chat') toast(`${who} · ${where}: ${m.image && !m.text ? '📷 Photo' : m.text}`.slice(0, 120), false, '#/chat/' + m.channel);
+      if (r.name !== 'chat') toast(`${who} · ${where}: ${msgPreview(m)}`.slice(0, 120), false, '#/chat/' + m.channel);
       systemNotify(`${who} in ${where}`, '#/chat/' + m.channel, m.text);
     }
   }
@@ -441,8 +693,8 @@ function loadLeaflet() {
   if (window.L) return Promise.resolve();
   return leafletP || (leafletP = new Promise((res, rej) => {
     const css = document.createElement('link'); css.rel = 'stylesheet';
-    css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'; document.head.appendChild(css);
-    const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+    css.href = '/vendor/leaflet/leaflet.css'; document.head.appendChild(css);
+    const s = document.createElement('script'); s.src = '/vendor/leaflet/leaflet.js';
     s.onload = res; s.onerror = () => { leafletP = null; rej(new Error('Map could not load — check internet')); }; document.head.appendChild(s);
   }));
 }
@@ -453,7 +705,7 @@ async function drawMap() {
   if (map && map.getContainer() !== el) { map.remove(); map = null; }
   if (!map) {
     map = L.map(el, { zoomControl: true, attributionControl: true }).setView([54.5, -3], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' }).addTo(map);
     mapLayer = L.layerGroup().addTo(map); mapFitted = false;
   }
   updateMap();
@@ -486,20 +738,21 @@ const SIDE_EXTRA = [['clients', 'Clients', 'contacts'], ['news', 'Announcements'
 function renderShell() {
   $('#app').innerHTML = `<div class="shell">
     <aside class="sidebar">
-      <div class="row" style="padding:4px 8px 16px"><div class="brandmark">C</div><b style="font:800 18px var(--head)">Crewdesk</b></div>
+      <div class="row" style="padding:4px 8px 16px">${brand()}<b class="wordmark">Crewdesk</b></div>
       ${NAV.concat(SIDE_EXTRA).map(([k, l, i]) => `<a class="navbtn" data-nav="${k}" href="#/${k}">${ic(i)}<span>${l}</span>${k === 'chat' ? '<span class="badge hidden" data-badge="chat"></span>' : ''}</a>`).join('')}
       <div class="grow"></div>
       <a class="navbtn" data-nav="profile" href="#/profile" id="side-me"></a>
+      <nav class="foot-links" style="justify-content:flex-start;margin:8px 12px 0" aria-label="Legal"><a href="#/privacy">Privacy</a><a href="#/terms">Terms</a></nav>
     </aside>
     <div style="min-width:0">
       <header class="topbar">
-        <div class="brandmark">C</div>
+        ${brand()}
         <button class="co-switch" data-act="switcher"><span class="name ellipsis" id="co-name"></span>${ic('down').replace('<svg', '<svg width="16" height="16"')}</button>
         <div class="grow"></div>
         <a href="#/team" class="pill nodot" id="online-pill" style="text-decoration:none"></a>
         <a href="#/profile" id="top-me" aria-label="My profile"></a>
       </header>
-      <main id="view"></main>
+      <main id="view" tabindex="-1"></main>
     </div>
     <nav class="bottomnav">
       ${NAV.map(([k, l, i]) => `<a class="navbtn" data-nav="${k}" href="#/${k}">${ic(i)}<span>${l}</span>${k === 'chat' ? '<span class="badge hidden" data-badge="chat"></span>' : ''}</a>`).join('')}
@@ -522,7 +775,11 @@ function updateChrome() {
   const r = parseHash();
   const moreKeys = ['more', 'clients', 'client', 'news', 'settings', 'profile'];
   const active = r.name === 'job' ? 'jobs' : r.name === 'client' ? 'clients' : r.name;
-  $$('.navbtn').forEach((b) => b.classList.toggle('on', b.dataset.nav === active || (b.dataset.nav === 'more' && moreKeys.includes(r.name) && !b.closest('.sidebar'))));
+  $$('.navbtn').forEach((b) => {
+    const on = b.dataset.nav === active || (b.dataset.nav === 'more' && moreKeys.concat(['privacy', 'terms']).includes(r.name) && !b.closest('.sidebar'));
+    b.classList.toggle('on', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
 }
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
@@ -556,7 +813,15 @@ function scheduleRender() {
   if (rafPending) return; rafPending = true;
   requestAnimationFrame(() => { rafPending = false; if (!S.company) return; updateChrome(); renderView(true); });
 }
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => {
+  const r = parseHash();
+  if (!S.company) {
+    if (isLegal(r.name)) return renderLegalStandalone(r.name);
+    if (standalone) { standalone = false; boot(); }
+    return;
+  }
+  route();
+});
 
 // ============================================================ HOME
 VIEWS.home = {
@@ -646,7 +911,8 @@ function jobCard(j) {
     <div class="row between"><span class="ref">${esc(j.ref)}</span><span class="row" style="gap:6px">${j.priority === 'urgent' || j.priority === 'high' ? `<span class="pill nodot pr-${j.priority}">${PRIORITY[j.priority]}</span>` : ''}${unread ? `<span class="badge">${unread}</span>` : ''}</span></div>
     <div><h3>${esc(j.title)}</h3>${client || j.address ? `<div class="small muted ellipsis" style="margin-top:2px">${esc([client && client.name, j.address].filter(Boolean).join(' · '))}</div>` : ''}</div>
     <div class="row wrap" style="gap:8px"><span class="pill st-${j.status}">${STATUS[j.status]}</span>${dueHtml(j.deadline, j.status === 'done')}</div>
-    <div class="row">${p.total ? `<div class="grow"><div class="progress"><i style="width:${(p.done / p.total) * 100}%"></i></div><div class="tiny muted" style="margin-top:4px">${p.done}/${p.total} tasks</div></div>` : '<div class="grow tiny muted">No tasks yet</div>'}${avatarStack(j.assignees)}</div>
+    <div class="row">${p.total ? `<div class="grow"><div class="progress"><i style="width:${(p.done / p.total) * 100}%"></i></div><div class="tiny muted" style="margin-top:4px">${p.done}/${p.total} tasks</div></div>` : '<div class="grow tiny muted">No tasks yet</div>'}
+      ${(() => { const n = jobPhotos(j.id).length; return n ? `<span class="meta-icons"><span title="${n} photos">${ic('camera')}${n}<span class="sr-only"> photos</span></span></span>` : ''; })()}${avatarStack(j.assignees)}</div>
   </a>`;
 }
 VIEWS.jobs = {
@@ -690,7 +956,8 @@ VIEWS.job = {
   top(j, tab) {
     const p = progress(j.id);
     const unread = S.unread['job:' + j.id] || 0;
-    const tabs = [['overview', 'Overview'], ['tasks', `Tasks${p.total ? ` <span class="muted">${p.done}/${p.total}</span>` : ''}`]];
+    const nPhotos = jobPhotos(j.id).length;
+    const tabs = [['overview', 'Overview'], ['tasks', `Tasks${p.total ? ` <span class="muted">${p.done}/${p.total}</span>` : ''}`], ['photos', `Photos${nPhotos ? ` <span class="muted">${nPhotos}</span>` : ''}`]];
     if (S.company.canSeeMoney) tabs.push(['money', 'Money']);
     tabs.push(['chat', `Chat${unread ? ` <span class="badge">${unread}</span>` : ''}`]);
     return `<a class="back" href="#/jobs">${ic('back')}Jobs</a>
@@ -702,10 +969,13 @@ VIEWS.job = {
         <div class="status-picker">${Object.entries(STATUS).map(([k, l]) => `<button class="${j.status === k ? 'on st-' + k : ''}" data-act="job-status" data-id="${j.id}" data-s="${k}">${l}</button>`).join('')}</div>
         ${p.total ? `<div><div class="progress"><i style="width:${(p.done / p.total) * 100}%"></i></div></div>` : ''}
       </div>
-      <nav class="tabs" style="margin-top:14px">${tabs.map(([k, l]) => `<a class="tab ${tab === k ? 'on' : ''}" href="#/job/${j.id}/${k}">${l}</a>`).join('')}</nav>`;
+      <nav class="tabs" style="margin-top:14px" aria-label="Job sections">${tabs.map(([k, l]) => `<a class="tab ${tab === k ? 'on' : ''}" href="#/job/${j.id}/${k}" ${tab === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
   },
   tab(j, tab) {
     if (tab === 'tasks') return tasksTab(j);
+    if (tab === 'photos') return `<div class="section-head"><div><h2>Photos</h2><div class="small muted">${isTouch() ? 'Take photos on site or pick from your camera roll.' : 'Click to add, or drag photos onto this page.'}</div></div>
+      <button class="btn primary" data-act="photos-add" data-job="${j.id}">${ic('camera')}<span>Add photos</span></button></div>
+      <div id="photo-gallery" data-job="${j.id}" data-drop="${j.id}">${photoGalleryInner(j.id)}</div>`;
     if (tab === 'money' && S.company.canSeeMoney) return moneyTab(j);
     if (tab === 'chat') return chatPane('job:' + j.id, true);
     return overviewTab(j);
@@ -727,6 +997,8 @@ function overviewTab(j) {
         <dt>Created</dt><dd class="small">${esc(member(j.createdBy).name)} · ${timeAgo(j.createdAt)}</dd>
       </dl></div>
       <div class="card"><h3 style="margin-bottom:8px">Description</h3>${j.description ? `<div style="white-space:pre-wrap">${linkify(j.description)}</div>` : `<div class="muted small">No description. <a href="#" data-act="edit-job" data-id="${j.id}">Add one</a></div>`}</div>
+      <div class="card"><div class="section-head" style="margin-bottom:8px"><h3>Photos</h3><a class="small muted" href="#/job/${j.id}/photos">See all${jobPhotos(j.id).length ? ' ' + jobPhotos(j.id).length : ''}</a></div>
+        <div id="photo-strip" data-job="${j.id}" data-drop="${j.id}">${photoStripInner(j.id)}</div></div>
     </div>
     <div class="stack">
       <div class="card"><h3>Who’s on this job</h3><p class="small muted" style="margin:4px 0 10px">Tap to add or remove people. They’ll get a notification.</p>
@@ -747,16 +1019,16 @@ function taskHtml(t) {
   const cl = t.checklist || [];
   const clDone = cl.filter((x) => x.done).length;
   return `<div class="task">
-    <div class="task-row" data-act="task-open" data-id="${t.id}">
-      <button class="check round ${t.done ? 'on' : ''}" data-act="task-toggle" data-id="${t.id}" aria-label="Toggle done">${ic('check')}</button>
-      <div class="grow"><div class="t ${t.done ? 'struck' : ''}">${esc(t.title)}</div>
+    <div class="task-row">
+      <button class="check round ${t.done ? 'on' : ''}" data-act="task-toggle" data-id="${t.id}" aria-pressed="${t.done}" aria-label="${t.done ? 'Mark not done' : 'Mark done'}: ${esc(t.title)}">${ic('check')}</button>
+      <button class="task-main" data-act="task-open" data-id="${t.id}" aria-expanded="${open}"><div class="t ${t.done ? 'struck' : ''}">${esc(t.title)}</div>
         <div class="row wrap small muted" style="gap:10px;margin-top:3px">${avatarStack(t.assignees, 3)}${dueHtml(t.deadline, t.done)}${cl.length ? `<span class="row" style="gap:4px">${ic('list').replace('<svg', '<svg width="14" height="14"')}${clDone}/${cl.length}</span>` : ''}${t.notes ? '<span>Notes</span>' : ''}</div></div>
-      <span class="muted" style="transform:rotate(${open ? 90 : 0}deg);transition:.2s;display:flex">${ic('right').replace('<svg', '<svg width="18" height="18"')}</span>
+      </button><span class="muted" aria-hidden="true" style="transform:rotate(${open ? 90 : 0}deg);transition:.2s;display:flex">${ic('right').replace('<svg', '<svg width="18" height="18"')}</span>
     </div>
     ${open ? `<div class="task-body">
       <div><div class="eyebrow" style="margin-bottom:6px">Checklist</div>
         ${cl.map((x) => `<div class="cl-item"><button class="check ${x.done ? 'on' : ''}" data-act="cl-toggle" data-id="${t.id}" data-item="${x.id}">${ic('check')}</button><span class="${x.done ? 'struck' : ''}">${esc(x.text)}</span><button class="btn ghost sm icon x" data-act="cl-del" data-id="${t.id}" data-item="${x.id}" aria-label="Remove">${ic('x')}</button></div>`).join('')}
-        <form class="inline-add" data-form="cl-add" data-id="${t.id}" style="margin-top:6px"><input class="input" name="text" placeholder="Add checklist item" required><button class="btn sm">${ic('plus')}</button></form></div>
+        <form class="inline-add" data-form="cl-add" data-id="${t.id}" style="margin-top:6px"><input class="input" name="text" placeholder="Add checklist item" aria-label="New checklist item" required><button class="btn sm" aria-label="Add checklist item">${ic('plus')}</button></form></div>
       <div><div class="eyebrow" style="margin-bottom:6px">Assigned to</div>
         <div class="people-pick">${Object.values(S.members).sort((a, b) => a.name.localeCompare(b.name)).map((m) => `<button class="person-chip ${(t.assignees || []).includes(m.id) ? 'on' : ''}" data-act="task-assign" data-id="${t.id}" data-uid="${m.id}">${avatar(m, 'sm')}${esc(m.name.split(' ')[0])}</button>`).join('')}</div></div>
       <div class="form-grid"><label class="field"><span>Deadline</span><input type="date" value="${esc(t.deadline)}" data-change="task-due" data-id="${t.id}"></label><div></div>
@@ -833,14 +1105,14 @@ function chatTitle(ch) {
 function chatPane(ch, embedded = false) {
   const t = chatTitle(ch);
   return `<div class="chat-pane ${embedded ? 'embedded' : ''}" data-ch="${esc(ch)}">
-    ${embedded ? '' : `<div class="chat-top"><a class="btn ghost sm icon" href="#/chat" style="${matchMedia('(min-width:900px)').matches ? 'display:none' : ''}">${ic('back')}</a>
+    ${embedded ? '' : `<div class="chat-top"><a class="btn ghost sm icon" href="#/chat" aria-label="All chats" style="${matchMedia('(min-width:900px)').matches ? 'display:none' : ''}">${ic('back')}</a>
       <span class="chan-ico ${ch === 'general' ? 'gen' : ''}" style="width:36px;height:36px">${ic(t.icon)}</span>
       <div class="grow"><b class="ellipsis" style="display:block">${esc(t.name)}</b><span class="tiny muted" data-chat-sub>${esc(t.sub)}</span></div>
       ${t.job ? `<a class="btn sm" href="#/job/${t.job.id}">Open job</a>` : ''}</div>`}
-    <div class="msgs" data-msgs><div class="empty small">Loading…</div></div>
+    <div class="msgs" data-msgs role="log" aria-live="polite" aria-label="Messages"><div class="empty small">Loading…</div></div>
     <div class="attach-preview hidden" data-attach></div>
     <form class="composer" data-form="send" data-ch="${esc(ch)}">
-      <button type="button" class="btn ghost icon" data-act="attach" data-ch="${esc(ch)}" aria-label="Attach photo">${ic('image')}</button>
+      <button type="button" class="btn ghost icon" data-act="attach" data-ch="${esc(ch)}" aria-label="Add photos">${ic('camera')}</button>
       <textarea name="text" rows="1" placeholder="Message${ch === 'general' ? ' everyone' : ' the job crew'}…" data-input="autosize" enterkeyhint="send"></textarea>
       <button class="btn primary" aria-label="Send">${ic('send')}</button>
     </form>
@@ -852,7 +1124,7 @@ async function mountChat(ch) {
     try { const r = await capi('GET', `/messages?channel=${encodeURIComponent(ch)}`); S.msgs[ch] = r.items; S.msgsMore[ch] = r.more; }
     catch (e) { $('[data-msgs]', pane).innerHTML = `<div class="empty small">${esc(e.message)}</div>`; return; }
   }
-  renderMsgs(pane, ch, true);
+  renderMsgs(pane, ch, true); paintAttach(ch);
   if (S.unread[ch]) { markRead(ch); scheduleRender(); }
 }
 function refreshPanes(ch) {
@@ -876,7 +1148,7 @@ function renderMsgs(pane, ch, forceBottom = false) {
     if (startRun && !mine) html += `<div class="who" style="margin-left:${40}px;font-size:11.5px;font-weight:700;color:var(--muted);margin-top:10px">${esc(who.name)}</div>`;
     html += `<div class="msg ${mine ? 'mine' : ''} ${endRun ? 'last' : ''}" style="${startRun && mine ? 'margin-top:8px' : ''}">
       ${mine ? '' : avatar(who, 'sm')}
-      <div class="bubble">${m.image ? `<img src="${esc(m.image)}" alt="Photo" data-act="lightbox" data-src="${esc(m.image)}" loading="lazy">` : ''}${m.text ? linkify(m.text) : ''}</div>
+      <div class="bubble">${(() => { const imgs = msgImages(m); return imgs.length ? `<div class="bubble-photos ${imgs.length === 1 ? 'one' : ''}">${imgs.map((u, k) => `<button type="button" data-act="chat-photo" data-ch="${esc(ch)}" data-msg="${m.id}" data-i="${k}" aria-label="Open photo ${k + 1} from ${esc(who.name)}"><img src="${esc(u)}" alt="Photo from ${esc(who.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''; })()}${m.text ? linkify(m.text) : ''}</div>
       <span class="msg-time">${clock(m.at)}</span></div>`;
   });
   box.innerHTML = html;
@@ -1052,6 +1324,8 @@ VIEWS.more = {
         <a href="#/settings">${ic('settings')}<span class="grow">Company &amp; invites</span>${ic('right')}</a>
         <a href="#/profile">${ic('user')}<span class="grow">My profile</span>${ic('right')}</a>
         <button data-act="switcher">${ic('building')}<span class="grow">Switch or join company</span>${ic('right')}</button>
+        <a href="#/privacy">${ic('shield')}<span class="grow">Privacy policy</span>${ic('right')}</a>
+        <a href="#/terms">${ic('file')}<span class="grow">Terms of use</span>${ic('right')}</a>
         <button data-act="logout">${ic('logout')}<span class="grow">Sign out</span></button>
       </div></div>
       <div class="card section row">${ic('phoneapp').replace('<svg', '<svg width="26" height="26" style="color:var(--accent);flex:none"')}<div class="small"><b>Install on your phone</b><br><span class="muted">iPhone: Safari → Share → Add to Home Screen. Android: Chrome menu → Install app.</span></div></div>`;
@@ -1117,11 +1391,93 @@ VIEWS.profile = {
           <label class="field"><span>Current password</span><input name="currentPassword" type="password" autocomplete="current-password" required></label>
           <label class="field"><span>New password</span><input name="newPassword" type="password" autocomplete="new-password" minlength="6" required></label>
           <button class="btn">Update password</button></form>
+        <div class="card stack"><h3>Your data</h3>
+          <p class="small muted" style="margin:0">Download a copy of everything Crewdesk holds about you, or delete your account. See the <a href="#/privacy">Privacy Policy</a>.</p>
+          <div class="row wrap"><button class="btn sm" data-act="export-data">${ic('download')}Download my data</button>
+          <button class="btn sm danger" data-act="delete-account">${ic('trash')}Delete my account</button></div></div>
         <button class="btn danger" data-act="logout">${ic('logout')}Sign out</button>
       </div>
     </div>`;
   },
 };
+
+// ============================================================ PRIVACY & TERMS
+const LEGAL_DATE = '3 November 2026';
+function operatorLine() {
+  const o = (S.info && S.info.operator) || {};
+  if (o.name) return `${esc(o.name)}${o.address ? ', ' + esc(o.address) : ''}${o.email ? ` — <a href="mailto:${esc(o.email)}">${esc(o.email)}</a>` : ''}`;
+  return 'the person or business that invited you to Crewdesk (this copy is a test version, so contact them directly)';
+}
+function legalHtml(kind) {
+  const op = operatorLine();
+  if (kind === 'terms') return `<article class="legal">
+    <h1>Terms of use</h1><p class="updated">Last updated ${LEGAL_DATE}</p>
+    <p>These terms cover your use of Crewdesk, a job tracker and team chat app run by ${op} (“we”).</p>
+    <h2>The service</h2>
+    <p>Crewdesk is currently offered free of charge as a test service. It may change, have downtime, or lose data, so keep your own copies of anything critical. Because nothing is paid for, there are no charges to refund. If paid plans are added later, prices and a refund policy will be shown before you pay.</p>
+    <h2>Your account</h2>
+    <ul><li>Give your real name and an email address you control, and keep your password private.</li>
+    <li>You are responsible for what happens under your account.</li>
+    <li>Company owners and admins control their company’s board: they can change settings, remove members and delete the company and its content.</li></ul>
+    <h2>What you put in Crewdesk</h2>
+    <ul><li>You keep ownership of your photos, messages and job details. You let us store and show them to the people in your company so the app can work.</li>
+    <li>Only upload photos you took or have the right to share, and don’t photograph people without their permission.</li>
+    <li>If you add customer contact details, make sure you are allowed to use them for the job.</li>
+    <li>Don’t use Crewdesk for anything illegal, abusive, or to harass anyone, and don’t try to break or overload it.</li></ul>
+    <h2>Location sharing</h2>
+    <p>Sharing your live location is optional and off by default. Only switch it on if you’re happy for your company to see where you are while the app is open. Employers should agree this with staff and not use it to track people outside working time.</p>
+    <h2>Ending your account</h2>
+    <p>You can delete your account at any time from your profile. We may suspend accounts that break these terms.</p>
+    <h2>Liability</h2>
+    <p>We provide Crewdesk “as is” and can’t promise it will always be available or error-free. We are not liable for indirect losses, such as lost profits or business, arising from use of the app. Nothing in these terms limits liability that can’t be limited by law, including for death or personal injury caused by negligence, or for fraud.</p>
+    <h2>Changes and law</h2>
+    <p>We may update these terms and will show the date of the latest version here. These terms are governed by the law of England and Wales.</p>
+    <h2>Contact</h2><p>${op}.</p>
+  </article>`;
+  return `<article class="legal">
+    <h1>Privacy policy</h1><p class="updated">Last updated ${LEGAL_DATE}</p>
+    <p>This explains what personal information Crewdesk collects, why, and your rights under UK data protection law (UK GDPR). Crewdesk is run by ${op}, who is responsible for your data.</p>
+    <h2>What we collect</h2>
+    <ul><li><b>Account:</b> your name, email address and password (stored only as a secure scrambled “hash”, never readable).</li>
+    <li><b>Profile (optional):</b> phone number, job title, a short bio and a profile picture, if you add them.</li>
+    <li><b>Your work:</b> jobs, tasks, checklists, photos, messages, announcements, and any customer contact details your company adds.</li>
+    <li><b>Live location (optional, off by default):</b> only if you switch on “Share my live location”, and only while Crewdesk is open on your device. Turning it off deletes your position straight away, and old positions are deleted automatically after 12 hours.</li>
+    <li><b>Technical:</b> when you were last online, and your IP address, which is used briefly to block repeated failed sign-ins and is not stored.</li></ul>
+    <p>We don’t collect anything else, and we don’t use advertising, analytics or tracking tools.</p>
+    <h2>Why we use it</h2>
+    <ul><li>To run the app for you and your company: this is necessary to provide the service you signed up for.</li>
+    <li>To keep accounts secure and prevent misuse: this is in our legitimate interests.</li>
+    <li>Live location is used only because you chose to switch it on (your consent), which you can withdraw at any time.</li></ul>
+    <h2>Who can see it</h2>
+    <ul><li>People in the same company can see your name, profile, the jobs and photos you’re part of, and messages in chats you share. Your location is shown only to your companies, only while sharing is on.</li>
+    <li>Our hosting providers store data for us under contract: Render (web hosting) and Neon (database), both in the EU (Frankfurt).</li>
+    <li>When you open the team map, map images load from OpenStreetMap, which sees your IP address. If you tap “Directions”, Google Maps opens and its own privacy policy applies.</li>
+    <li>We never sell your data.</li></ul>
+    <h2>Cookies and storage</h2>
+    <p>Crewdesk doesn’t use cookies. It saves your sign-in, your chosen company and your theme in your browser’s storage so the app works. These are strictly necessary, so no cookie banner is needed. Signing out removes your sign-in.</p>
+    <h2>How long we keep it</h2>
+    <p>We keep your data while your account is open. If you delete your account, your profile, picture, sign-ins and location are deleted. Messages and photos you posted in a company’s jobs stay part of that company’s job records, shown as from a “Former member”, unless the company deletes them. Deleting a company deletes all its jobs, photos and chats.</p>
+    <h2>Your rights</h2>
+    <ul><li><b>See your data:</b> use “Download my data” on your profile page.</li>
+    <li><b>Correct it:</b> edit your profile at any time.</li>
+    <li><b>Delete it:</b> use “Delete my account” on your profile page.</li>
+    <li>You can also object to how we use your data or ask us to limit it by contacting us.</li>
+    <li>If you’re unhappy, you can complain to the Information Commissioner’s Office: <a href="https://ico.org.uk/make-a-complaint/" target="_blank" rel="noopener">ico.org.uk</a>.</li></ul>
+    <h2>Security</h2>
+    <p>Connections are encrypted (https), passwords are hashed, and only members of a company can open its board.</p>
+    <h2>Children</h2><p>Crewdesk is a work tool and isn’t meant for anyone under 16.</p>
+    <h2>Contact</h2><p>${op}.</p>
+  </article>`;
+}
+VIEWS.privacy = { manual: true, render() { return `<a class="back" href="#/more">${ic('back')}Back</a>${legalHtml('privacy')}`; } };
+VIEWS.terms = { manual: true, render() { return `<a class="back" href="#/more">${ic('back')}Back</a>${legalHtml('terms')}`; } };
+function renderLegalStandalone(kind) {
+  stopAll(); standalone = true;
+  $('#app').innerHTML = `<div class="legal-wrap"><main class="stack" style="max-width:720px;width:100%" id="view" tabindex="-1">
+    <div class="row">${brand()}<b class="wordmark">Crewdesk</b></div>
+    <a class="back" href="#/">${ic('back')}Back</a>${legalHtml(kind)}${footLinks()}</main></div>`;
+  window.scrollTo(0, 0);
+}
 function switcherSheet() {
   sheet(`${sheetHead('Your companies')}
     <div class="card flush"><div class="list">${S.companies.map((c) => `<button class="item" data-act="switch-co" data-id="${c.id}" data-close>
@@ -1151,7 +1507,7 @@ const A = {
     const sel = el.closest('form').querySelector('select[name=clientId]');
     clientSheet(null, (c) => { sel.insertAdjacentHTML('beforeend', `<option value="${c.id}">${esc(c.name)}</option>`); sel.value = c.id; });
   },
-  'task-open': (el, e) => { if (e.target.closest('[data-act="task-toggle"]')) return; S.openTask = S.openTask === el.dataset.id ? null : el.dataset.id; renderView(false); },
+  'task-open': (el) => { S.openTask = S.openTask === el.dataset.id ? null : el.dataset.id; renderView(false); },
   'task-toggle': (el) => { const t = S.tasks[el.dataset.id]; el.classList.toggle('on'); saveItem('tasks', t.id, { done: !t.done }); },
   'task-assign': (el) => { const t = S.tasks[el.dataset.id]; const a = new Set(t.assignees || []); a.has(el.dataset.uid) ? a.delete(el.dataset.uid) : a.add(el.dataset.uid); saveItem('tasks', t.id, { assignees: [...a] }); },
   'task-rename': (el) => { const t = S.tasks[el.dataset.id]; sheet(`${sheetHead('Rename task')}<form class="stack" data-form="task-rename" data-id="${t.id}"><input class="input" name="title" value="${esc(t.title)}" required><div class="sheet-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`); },
@@ -1159,13 +1515,38 @@ const A = {
   'cl-toggle': (el) => { const t = S.tasks[el.dataset.id]; saveItem('tasks', t.id, { checklist: t.checklist.map((x) => x.id === el.dataset.item ? Object.assign({}, x, { done: !x.done }) : x) }); },
   'cl-del': (el) => { const t = S.tasks[el.dataset.id]; saveItem('tasks', t.id, { checklist: t.checklist.filter((x) => x.id !== el.dataset.item) }); },
   'cost-del': (el) => { const j = S.jobs[el.dataset.id]; saveItem('jobs', j.id, { costs: j.costs.filter((c) => c.id !== el.dataset.cost) }); },
-  attach: (el) => pickImage(1600, false, (data) => {
-    const ch = el.dataset.ch; S.pendingImg[ch] = data;
-    const box = $('[data-attach]', el.closest('.chat-pane'));
-    box.innerHTML = `<img src="${data}" alt=""><span class="small muted grow">Photo ready to send</span><button class="btn ghost sm icon" data-act="unattach" data-ch="${esc(ch)}">${ic('x')}</button>`;
-    box.classList.remove('hidden');
-  }),
-  unattach: (el) => { delete S.pendingImg[el.dataset.ch]; const b = el.closest('[data-attach]'); b.innerHTML = ''; b.classList.add('hidden'); },
+  attach: async (el) => {
+    const ch = el.dataset.ch;
+    const files = await choosePhotos({ multiple: true, title: 'Send photos' });
+    addChatPhotos(ch, files);
+  },
+  'photos-add': async (el) => { const jobId = el.dataset.job; const files = await choosePhotos({ multiple: true, title: 'Add job photos' }); queueJobPhotos(jobId, files); },
+  'photo-open': (el) => { const p = S.photos[el.dataset.id]; if (!p) return; const items = viewerItemsForJob(p.jobId); openViewer(items, items.findIndex((x) => x.id === p.id)); },
+  'upload-retry': (el) => {
+    for (const list of Object.values(S.uploads)) { const u = list.find((x) => x.key === el.dataset.upload); if (u && u.failed) { u.failed = ''; u.progress = 0; uploadQueue.push(u); paintUpload(u); pumpUploads(); } }
+  },
+  'chat-photo': (el) => {
+    const m = (S.msgs[el.dataset.ch] || []).find((x) => x.id === el.dataset.msg); if (!m) return;
+    const where = el.dataset.ch === 'general' ? 'Company chat' : ((S.jobs[el.dataset.ch.slice(4)] || {}).title || 'Job chat');
+    openViewer(msgImages(m).map((u, k) => ({ url: u, by: m.userId, at: m.at, caption: k === 0 ? m.text : '', where, alt: `Photo from ${member(m.userId).name}` })), Number(el.dataset.i) || 0);
+  },
+  'export-data': async () => {
+    try {
+      const r = await fetch('/api/me/export', { headers: { Authorization: 'Bearer ' + S.token } });
+      if (!r.ok) throw new Error('Could not prepare your data');
+      const blob = await r.blob(); const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'crewdesk-my-data.json'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000); toast('Your data is downloading');
+    } catch (e) { toast(e.message, true); }
+  },
+  'delete-account': () => sheet(`${sheetHead('Delete your account?')}
+    <form class="stack" data-form="delete-account">
+      <p class="small" style="margin:0">This permanently deletes your profile, picture, sign-ins and location. Messages and photos you posted stay in your companies’ job records as from a “Former member”. If you’re the only person in a company, that company is deleted too.</p>
+      <label class="field"><span>Type your password to confirm</span><input name="password" type="password" autocomplete="current-password" required></label>
+      <div class="err-msg" data-err role="alert"></div>
+      <div class="sheet-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn danger">Delete my account</button></div>
+    </form>`),
+  unattach: (el) => { const ch = el.dataset.ch; S.pendingImgs[ch] = (S.pendingImgs[ch] || []).filter((p) => p.key !== el.dataset.key); paintAttach(ch); },
   older: async (el) => {
     const ch = el.dataset.ch; const first = (S.msgs[ch] || [])[0]; if (!first) return;
     el.disabled = true;
@@ -1176,7 +1557,6 @@ const A = {
       renderMsgs(pane, ch); box.scrollTop = box.scrollHeight - h;
     } catch (e) { toast(e.message, true); el.disabled = false; }
   },
-  lightbox: (el) => { const d = document.createElement('div'); d.className = 'lightbox'; d.innerHTML = `<img src="${esc(el.dataset.src)}" alt="">`; d.onclick = () => d.remove(); document.body.appendChild(d); },
   member: (el) => memberSheet(el.dataset.id),
   'map-focus': (el) => { const l = S.locations[el.dataset.id]; if (!l) return; if (parseHash().name !== 'team') location.hash = '#/team'; setTimeout(() => { if (map) map.setView([l.lat, l.lng], 16); }, 400); },
   'set-role': async (el) => { try { await capi('PATCH', `/members/${el.dataset.id}`, { role: el.dataset.role }); toast('Role updated'); } catch (e) { toast(e.message, true); } },
@@ -1199,7 +1579,11 @@ const A = {
   'new-code': async () => { if (!(await confirmBox('Make a new code?', 'The old code will stop working for new joiners.', 'New code', false))) return; try { const r = await capi('PATCH', '', { newCode: true }); S.company = r.company; renderView(false); } catch (e) { toast(e.message, true); } },
   'del-company': async () => { if (!(await confirmBox('Delete the whole company?', 'Every job, task, client, announcement and chat will be permanently deleted for everyone. This cannot be undone.', 'Delete everything'))) return; try { const r = await capi('DELETE', ''); S.companies = r.companies; S.cid = null; stopAll(); boot(); } catch (e) { toast(e.message, true); } },
   'leave-company': async () => { if (!(await confirmBox(`Leave ${S.company.name}?`, 'You’ll need the code and password to rejoin.', 'Leave'))) return; try { const r = await capi('POST', '/leave'); S.companies = r.companies; S.cid = null; stopAll(); boot(); } catch (e) { toast(e.message, true); } },
-  avatar: () => pickImage(400, true, async (data) => { try { const r = await api('PUT', '/api/me', { avatar: data }); updateMe(r.user); toast('Picture updated'); } catch (e) { toast(e.message, true); } }),
+  avatar: async () => {
+    const [file] = await choosePhotos({ multiple: false, title: 'Profile picture', selfie: true });
+    try { const p = await processPhoto(file, { max: 400, thumb: 0, square: true }); const r = await api('PUT', '/api/me', { avatar: p.data }); updateMe(r.user); toast('Picture updated'); }
+    catch (e) { toast(e.message, true); }
+  },
   'avatar-remove': async () => { try { const r = await api('PUT', '/api/me', { avatar: '' }); updateMe(r.user); } catch (e) { toast(e.message, true); } },
   'enable-notif': async () => { try { await Notification.requestPermission(); } catch {} renderView(false); },
   pick: (el) => el.classList.toggle('on'),
@@ -1226,7 +1610,7 @@ const F = {
     S.token = r.token; store.set('cd_token', r.token); boot();
   },
   async register(f, d) {
-    const r = await api('POST', '/api/register', d);
+    const r = await api('POST', '/api/register', Object.assign({}, d, { agree: !!d.agree }));
     S.token = r.token; store.set('cd_token', r.token); boot();
   },
   async 'create-co'(f, d) {
@@ -1266,17 +1650,22 @@ const F = {
     renderView(false); const inp = $('form[data-form="cost-add"] input'); if (inp) inp.focus();
   },
   async send(f, d) {
-    const ch = f.dataset.ch; const text = (d.text || '').trim(); const image = S.pendingImg[ch];
-    if (!text && !image) return;
+    const ch = f.dataset.ch; const text = (d.text || '').trim(); const imgs = S.pendingImgs[ch] || [];
+    if (!text && !imgs.length) return;
     const ta = f.querySelector('textarea'); const btn = f.querySelector('button:not([type=button])');
     btn.disabled = true;
     try {
-      const r = await capi('POST', '/messages', { channel: ch, text, image });
-      ta.value = ''; ta.style.height = ''; delete S.pendingImg[ch];
-      const at = $('[data-attach]', f.closest('.chat-pane')); at.innerHTML = ''; at.classList.add('hidden');
+      const r = imgs.length
+        ? await sendWithProgress('POST', `/api/c/${S.cid}/messages`, { channel: ch, text, images: imgs.map((p) => p.data) }, (x) => { btn.style.opacity = String(0.4 + x * 0.6); })
+        : await capi('POST', '/messages', { channel: ch, text });
+      ta.value = ''; ta.style.height = ''; delete S.pendingImgs[ch]; paintAttach(ch);
       onMessage(r.item);
       const box = $('[data-msgs]', f.closest('.chat-pane')); box.scrollTop = box.scrollHeight;
-    } finally { btn.disabled = false; if (matchMedia('(hover:hover)').matches) ta.focus(); }
+    } finally { btn.disabled = false; btn.style.opacity = ''; if (matchMedia('(hover:hover)').matches) ta.focus(); }
+  },
+  async 'delete-account'(f, d, close) {
+    await api('DELETE', '/api/me', { password: d.password });
+    close(); signOutLocal(); toast('Your account has been deleted');
   },
   async team(f, d, close) {
     const body = { name: d.name, color: d.color, members: picked(f) };
@@ -1294,6 +1683,7 @@ const F = {
 };
 
 document.addEventListener('click', (e) => {
+  if (e.target.closest('.skip-link')) { e.preventDefault(); const v = $('#view'); if (v) v.focus(); return; }
   const el = e.target.closest('[data-act]');
   if (!el) return;
   const fn = A[el.dataset.act]; if (!fn) return;
@@ -1333,3 +1723,24 @@ setInterval(() => { if (S.company && ['home', 'team', 'chat'].includes(parseHash
 applyTheme();
 boot();
 })();
+
+// ---- drag photos onto a job's photo area or a chat (computers), paste photos into chat
+document.addEventListener('dragover', (e) => {
+  if (!S.company || !e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+  if (e.target.closest('[data-drop], .chat-pane') || parseHash().name === 'job') { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
+});
+document.addEventListener('drop', (e) => {
+  if (!S.company || !e.dataTransfer || !e.dataTransfer.files.length) return;
+  const files = [...e.dataTransfer.files].filter(isImageFile);
+  const pane = e.target.closest('.chat-pane');
+  if (pane) { e.preventDefault(); if (files.length) addChatPhotos(pane.dataset.ch, files); return; }
+  const r = parseHash();
+  const zone = e.target.closest('[data-drop]');
+  const jobId = zone ? zone.dataset.drop : r.name === 'job' ? r.args[0] : null;
+  if (jobId && S.jobs[jobId]) { e.preventDefault(); if (files.length) queueJobPhotos(jobId, files); else toast('Only photos can be added here', true); }
+});
+document.addEventListener('paste', (e) => {
+  const ta = e.target.closest && e.target.closest('.composer textarea'); if (!ta || !e.clipboardData) return;
+  const files = [...e.clipboardData.files].filter(isImageFile);
+  if (files.length) { e.preventDefault(); addChatPhotos(ta.form.dataset.ch, files); }
+});

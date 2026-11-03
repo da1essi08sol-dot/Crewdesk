@@ -18,6 +18,14 @@ const DATA = path.join(ROOT, 'data');
 const UPLOADS = path.join(DATA, 'uploads');
 const DB_FILE = path.join(DATA, 'db.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';
+// Who runs this copy of Crewdesk. Shown on the Privacy and Terms pages — set these on your host.
+const OPERATOR = {
+  name: process.env.OPERATOR_NAME || '',
+  email: process.env.OPERATOR_EMAIL || '',
+  address: process.env.OPERATOR_ADDRESS || '',
+};
+const LEGAL_VERSION = '2026-11-03';
+const LOCATION_MAX_AGE = 12 * 60 * 60 * 1000; // live positions older than 12 hours are dropped
 
 // ---------------------------------------------------------------- storage
 // The whole app state lives in memory as one object and is written out (debounced) after
@@ -32,6 +40,7 @@ const fileStore = {
   },
   async write(json) { const tmp = DB_FILE + '.tmp'; fs.writeFileSync(tmp, json); fs.renameSync(tmp, DB_FILE); },
   async putFile(name, type, buf) { fs.writeFileSync(path.join(UPLOADS, name), buf); },
+  async delFile(name) { try { fs.unlinkSync(path.join(UPLOADS, path.basename(name))); } catch (_) {} },
   async getFile(name) {
     const f = path.join(UPLOADS, path.basename(name));
     return fs.existsSync(f) ? { type: TYPES[path.extname(f).toLowerCase()] || 'application/octet-stream', data: fs.readFileSync(f) } : null;
@@ -52,6 +61,7 @@ const pgStore = {
   },
   async putFile(name, type, buf) { await pool.query('INSERT INTO crewdesk_files (name, type, data) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING', [name, type, buf]); },
   async getFile(name) { const r = await pool.query('SELECT type, data FROM crewdesk_files WHERE name = $1', [name]); return r.rows[0] || null; },
+  async delFile(name) { await pool.query('DELETE FROM crewdesk_files WHERE name = $1', [path.basename(name)]); },
 };
 const storage = DATABASE_URL ? pgStore : fileStore;
 
@@ -93,7 +103,7 @@ function companyCode() {
 function cdata(cid) {
   if (!db.data[cid]) db.data[cid] = {};
   const d = db.data[cid];
-  for (const k of ['teams', 'jobs', 'tasks', 'clients', 'announcements']) d[k] = d[k] || {};
+  for (const k of ['teams', 'jobs', 'tasks', 'clients', 'announcements', 'photos']) d[k] = d[k] || {};
   d.messages = d.messages || {};
   return d;
 }
@@ -172,6 +182,12 @@ async function saveImage(dataUrl, maxBytes = 4 * 1024 * 1024) {
   await storage.putFile(name, 'image/' + m[1], buf);
   return '/uploads/' + name;
 }
+function dropFile(url) {
+  if (typeof url === 'string' && url.startsWith('/uploads/')) storage.delFile(url.slice(9)).catch((e) => console.error('Could not delete file:', e.message));
+}
+function dropMessageFiles(list) {
+  for (const m of list || []) { dropFile(m.image); for (const u of m.images || []) dropFile(u); }
+}
 
 // ---------------------------------------------------------------- messages
 function channelOk(cid, ch) {
@@ -179,15 +195,32 @@ function channelOk(cid, ch) {
   const m = /^job:(.+)$/.exec(ch || '');
   return !!(m && cdata(cid).jobs[m[1]]);
 }
-function postMessage(cid, channel, userId, text, image, system = false) {
+function postMessage(cid, channel, userId, text, images, system = false) {
   const d = cdata(cid);
   const list = d.messages[channel] = d.messages[channel] || [];
-  const msg = { id: uid(), channel, userId, text: str(text, 4000), image: image || '', at: now(), system };
+  const msg = { id: uid(), channel, userId, text: str(text, 4000), images: images || [], at: now(), system };
   list.push(msg);
   if (list.length > 3000) list.splice(0, list.length - 3000);
   save();
   broadcast(cid, { t: 'msg', item: msg });
   return msg;
+}
+function msgImages(m) { return m.images && m.images.length ? m.images : m.image ? [m.image] : []; }
+function msgPreview(m) {
+  const n = msgImages(m).length;
+  return m.text || (n > 1 ? `📷 ${n} photos` : n ? '📷 Photo' : '');
+}
+// a batch of job photos from one person becomes one tidy line in the job chat
+const photoNotes = new Map();
+function notePhotoAdded(cid, jobId, user) {
+  const key = cid + '|' + jobId + '|' + user.id;
+  const e = photoNotes.get(key) || { n: 0, t: null };
+  e.n++; clearTimeout(e.t);
+  e.t = setTimeout(() => {
+    photoNotes.delete(key);
+    if (cdata(cid).jobs[jobId]) postMessage(cid, 'job:' + jobId, user.id, `${user.name.split(' ')[0]} added ${e.n === 1 ? 'a photo' : e.n + ' photos'}`, [], true);
+  }, 5000);
+  photoNotes.set(key, e);
 }
 function unreadFor(cid, user) {
   const d = cdata(cid); const out = {}; const last = {};
@@ -198,7 +231,7 @@ function unreadFor(cid, user) {
     let n = 0; for (let i = list.length - 1; i >= 0 && list[i].at > since; i--) if (list[i].userId !== user.id && !list[i].system) n++;
     out[ch] = n;
     const l = list[list.length - 1];
-    last[ch] = { at: l.at, text: l.image && !l.text ? '📷 Photo' : l.text, userId: l.userId, system: l.system };
+    last[ch] = { at: l.at, text: msgPreview(l), userId: l.userId, system: l.system };
   }
   return { unread: out, lastMsg: last };
 }
@@ -281,11 +314,11 @@ const RULES = {
     clean(input, c) {
       const o = {};
       if ('name' in input) o.name = str(input.name, 60) || bad('Give the team a name');
-      if ('color' in input) o.color = /^#[0-9a-f]{6}$/i.test(input.color) ? input.color : '#e8590c';
+      if ('color' in input) o.color = /^#[0-9a-f]{6}$/i.test(input.color) ? input.color : '#18693f';
       if ('members' in input) o.members = memberIds(c, input.members);
       return o;
     },
-    defaults: () => ({ name: '', color: '#e8590c', members: [] }),
+    defaults: () => ({ name: '', color: '#18693f', members: [] }),
   },
 };
 
@@ -296,15 +329,15 @@ function afterChange(cid, coll, before, after, user) {
     const added = (after.assignees || []).filter(id => !(before && before.assignees || []).includes(id) && id !== user.id);
     notify(cid, added, `${who} added you to job ${after.ref}: ${after.title}`, '#/job/' + after.id);
     if (before && before.status !== after.status)
-      postMessage(cid, 'job:' + after.id, user.id, `${who} moved this job to ${STATUS_LABEL[after.status]}`, '', true);
-    if (!before) postMessage(cid, 'job:' + after.id, user.id, `${who} created this job`, '', true);
+      postMessage(cid, 'job:' + after.id, user.id, `${who} moved this job to ${STATUS_LABEL[after.status]}`, [], true);
+    if (!before) postMessage(cid, 'job:' + after.id, user.id, `${who} created this job`, [], true);
   }
   if (coll === 'tasks') {
     const added = (after.assignees || []).filter(id => !(before && before.assignees || []).includes(id) && id !== user.id);
     const job = cdata(cid).jobs[after.jobId];
     notify(cid, added, `${who} gave you a task: ${after.title}`, '#/job/' + after.jobId + '/tasks');
     if (before && !before.done && after.done && job)
-      postMessage(cid, 'job:' + job.id, user.id, `${who} completed “${after.title}”`, '', true);
+      postMessage(cid, 'job:' + job.id, user.id, `${who} completed “${after.title}”`, [], true);
   }
   if (coll === 'announcements' && !before) {
     notify(cid, Object.keys(c.members).filter(id => id !== user.id), `📣 ${after.title}`, '#/news');
@@ -372,9 +405,11 @@ async function api(req, res, url) {
     if (!name) bad('Enter your name');
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) bad('Enter a valid email');
     if (String(b.password || '').length < 6) bad('Password must be at least 6 characters');
+    if (b.agree !== true) bad('Please agree to the Terms and Privacy Policy to create an account');
     if (Object.values(db.users).some(u => u.email === email)) bad('An account with that email already exists');
     const h = hash(b.password);
-    const u = { id: uid(), email, name, salt: h.salt, hash: h.hash, title: '', phone: '', bio: '', avatar: '', shareLocation: false, reads: {}, createdAt: now(), lastSeen: now() };
+    const u = { id: uid(), email, name, salt: h.salt, hash: h.hash, title: '', phone: '', bio: '', avatar: '', shareLocation: false, reads: {}, createdAt: now(), lastSeen: now(),
+      agreedAt: now(), agreedVersion: LEGAL_VERSION };
     db.users[u.id] = u;
     const token = uid(32); db.sessions[token] = { userId: u.id, createdAt: now(), seen: now() };
     save();
@@ -391,6 +426,7 @@ async function api(req, res, url) {
     return json(res, 200, { token, user: publicUser(u), companies: companiesFor(u.id) });
   }
 
+  if (p === '/api/info' && M === 'GET') return json(res, 200, { operator: OPERATOR, legalVersion: LEGAL_VERSION });
   if (p === '/api/stream' && M === 'GET') return stream(req, res, url);
 
   const { user, token } = authUser(req, url);
@@ -402,7 +438,7 @@ async function api(req, res, url) {
     if ('name' in b) user.name = str(b.name, 80) || bad('Name cannot be empty');
     for (const k of ['title', 'phone']) if (k in b) user[k] = str(b[k], 80);
     if ('bio' in b) user.bio = str(b.bio, 500);
-    if ('avatar' in b) user.avatar = b.avatar ? await saveImage(b.avatar, 1024 * 1024) : '';
+    if ('avatar' in b) { const old = user.avatar; user.avatar = b.avatar ? await saveImage(b.avatar, 1024 * 1024) : ''; if (old !== user.avatar) dropFile(old); }
     if ('shareLocation' in b) {
       user.shareLocation = !!b.shareLocation;
       if (!user.shareLocation) { delete db.locations[user.id]; broadcastUser(user.id, { t: 'loc', userId: user.id, loc: null }); }
@@ -416,6 +452,45 @@ async function api(req, res, url) {
     const pu = publicUser(user);
     broadcastUser(user.id, { t: 'member', item: pu });
     return json(res, 200, { user: pu });
+  }
+  if (p === '/api/me/export' && M === 'GET') {
+    // everything Crewdesk holds that is about this person (UK GDPR right of access)
+    const out = { exportedAt: new Date().toISOString(), profile: Object.assign(publicUser(user), { createdAt: user.createdAt, agreedAt: user.agreedAt }),
+      location: db.locations[user.id] || null, companies: [] };
+    for (const c of Object.values(db.companies)) {
+      if (!c.members[user.id]) continue;
+      const d = cdata(c.id); const mine = [];
+      for (const [ch, list] of Object.entries(d.messages)) for (const msg of list) if (msg.userId === user.id && !msg.system) mine.push({ channel: ch, at: new Date(msg.at).toISOString(), text: msg.text, photos: msgImages(msg) });
+      out.companies.push({ name: c.name, role: c.members[user.id].role, joinedAt: new Date(c.members[user.id].joinedAt).toISOString(), messages: mine,
+        photos: Object.values(d.photos).filter((ph) => ph.createdBy === user.id).map((ph) => ({ url: ph.url, caption: ph.caption, at: new Date(ph.createdAt).toISOString() })) });
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="crewdesk-my-data.json"', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify(out, null, 2));
+  }
+  if (p === '/api/me' && M === 'DELETE') {
+    const b = await readBody(req);
+    if (!verify(b.password || '', user.salt, user.hash)) bad('Password is wrong');
+    const blocking = Object.values(db.companies).filter((c) => c.members[user.id] && c.members[user.id].role === 'owner' && Object.keys(c.members).length > 1);
+    if (blocking.length) bad(`You own ${blocking.map((c) => c.name).join(', ')}. Make someone else the owner (Team page) or delete the company first.`);
+    for (const c of Object.values(db.companies)) {
+      if (!c.members[user.id]) continue;
+      if (Object.keys(c.members).length === 1) { // they were the only person left: remove the company and its files
+        const d = cdata(c.id);
+        for (const ph of Object.values(d.photos)) { dropFile(ph.url); dropFile(ph.thumb); }
+        for (const list of Object.values(d.messages)) dropMessageFiles(list);
+        broadcast(c.id, { t: 'kicked', cid: c.id });
+        delete db.companies[c.id]; delete db.data[c.id];
+      } else {
+        delete c.members[user.id];
+        for (const t of Object.values(cdata(c.id).teams)) t.members = (t.members || []).filter((x) => x !== user.id);
+        broadcast(c.id, { t: 'memberRemoved', id: user.id });
+      }
+    }
+    dropFile(user.avatar);
+    for (const [tok, sess] of Object.entries(db.sessions)) if (sess.userId === user.id) delete db.sessions[tok];
+    delete db.locations[user.id]; delete db.users[user.id];
+    save();
+    return json(res, 200, { ok: true });
   }
   if (p === '/api/me/location' && M === 'POST') {
     if (!user.shareLocation) bad('Location sharing is off');
@@ -437,7 +512,7 @@ async function api(req, res, url) {
     const c = { id: uid(), name, code: companyCode(), joinSalt: h.salt, joinHash: h.hash, ownerId: user.id, createdAt: now(), jobSeq: 0,
       settings: { membersSeeMoney: false, membersCreateJobs: true, currency: '£' }, members: { [user.id]: { role: 'owner', joinedAt: now() } } };
     db.companies[c.id] = c; cdata(c.id);
-    postMessage(c.id, 'general', user.id, `${user.name} created ${c.name}. Welcome to the team chat!`, '', true);
+    postMessage(c.id, 'general', user.id, `${user.name} created ${c.name}. Welcome to the team chat!`, [], true);
     save();
     return json(res, 200, { company: { id: c.id, name: c.name, role: 'owner' }, companies: companiesFor(user.id) });
   }
@@ -451,7 +526,7 @@ async function api(req, res, url) {
       c.members[user.id] = { role: 'member', joinedAt: now() };
       save();
       broadcast(c.id, { t: 'member', item: Object.assign(publicUser(user), { role: 'member', joinedAt: now() }) });
-      postMessage(c.id, 'general', user.id, `${user.name} joined the company 👋`, '', true);
+      postMessage(c.id, 'general', user.id, `${user.name} joined the company 👋`, [], true);
     }
     return json(res, 200, { company: { id: c.id, name: c.name, role: c.members[user.id].role }, companies: companiesFor(user.id) });
   }
@@ -462,9 +537,9 @@ async function api(req, res, url) {
 
     if (sub === '/state' && M === 'GET') {
       const jobs = {}; for (const [k, j] of Object.entries(d.jobs)) jobs[k] = shapeJob(j, c, role);
-      const locs = {}; for (const id of Object.keys(c.members)) if (db.users[id] && db.users[id].shareLocation && db.locations[id]) locs[id] = db.locations[id];
+      const locs = {}; for (const id of Object.keys(c.members)) if (db.users[id] && db.users[id].shareLocation && db.locations[id] && now() - db.locations[id].at < LOCATION_MAX_AGE) locs[id] = db.locations[id];
       return json(res, 200, Object.assign({ company: publicCompany(c, role), role, me: publicUser(user), members: memberList(c),
-        teams: d.teams, jobs, tasks: d.tasks, clients: d.clients, announcements: d.announcements, locations: locs }, unreadFor(cid, user)));
+        teams: d.teams, jobs, tasks: d.tasks, clients: d.clients, announcements: d.announcements, photos: d.photos, locations: locs }, unreadFor(cid, user)));
     }
     if (sub === '' && M === 'PATCH') {
       if (!isAdmin(role)) deny();
@@ -487,6 +562,8 @@ async function api(req, res, url) {
     if (sub === '' && M === 'DELETE') {
       if (role !== 'owner') deny('Only the owner can delete the company');
       broadcast(cid, { t: 'kicked', cid });
+      for (const ph of Object.values(d.photos)) { dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); }
+      for (const list of Object.values(d.messages)) dropMessageFiles(list);
       delete db.companies[cid]; delete db.data[cid]; save();
       return json(res, 200, { ok: true, companies: companiesFor(user.id) });
     }
@@ -541,11 +618,43 @@ async function api(req, res, url) {
     if (sub === '/messages' && M === 'POST') {
       const b = await readBody(req);
       if (!channelOk(cid, b.channel)) bad('Unknown chat');
-      const image = b.image ? await saveImage(b.image) : '';
-      if (!str(b.text) && !image) bad('Message is empty');
-      const msg = postMessage(cid, b.channel, user.id, b.text, image);
+      const raw = Array.isArray(b.images) ? b.images : b.image ? [b.image] : [];
+      if (raw.length > 6) bad('You can send up to 6 photos at once');
+      const images = [];
+      for (const img of raw) images.push(await saveImage(img));
+      if (!str(b.text) && !images.length) bad('Message is empty');
+      const msg = postMessage(cid, b.channel, user.id, b.text, images);
       markRead(user, cid, b.channel, msg.at);
       return json(res, 200, { item: msg });
+    }
+    // job photos
+    if (sub === '/photos' && M === 'POST') {
+      const b = await readBody(req, 12 * 1024 * 1024);
+      const job = d.jobs[b.jobId] || bad('That job no longer exists');
+      const url = await saveImage(b.image, 6 * 1024 * 1024);
+      const thumb = b.thumb ? await saveImage(b.thumb, 600 * 1024) : url;
+      const item = { id: uid(), jobId: job.id, url, thumb, caption: str(b.caption, 300), w: Math.round(Number(b.w) || 0), h: Math.round(Number(b.h) || 0),
+        takenAt: Number(b.takenAt) || 0, createdBy: user.id, createdAt: now() };
+      d.photos[item.id] = item; save();
+      upsert(cid, 'photos', item);
+      notePhotoAdded(cid, job.id, user);
+      return json(res, 200, { item });
+    }
+    if ((m = /^\/photos\/([^/]+)$/.exec(sub))) {
+      const ph = d.photos[m[1]];
+      if (!ph) throw new HttpError(404, 'That photo was already deleted');
+      if (!(isAdmin(role) || ph.createdBy === user.id)) deny('Only the person who added it, or an admin, can change this photo');
+      if (M === 'PATCH') {
+        const b = await readBody(req);
+        if ('caption' in b) ph.caption = str(b.caption, 300);
+        save(); upsert(cid, 'photos', ph);
+        return json(res, 200, { item: ph });
+      }
+      if (M === 'DELETE') {
+        delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb);
+        save(); remove(cid, 'photos', ph.id);
+        return json(res, 200, { ok: true });
+      }
     }
     if (sub === '/read' && M === 'POST') {
       const b = await readBody(req);
@@ -588,6 +697,8 @@ async function api(req, res, url) {
           delete store[id];
           if (coll === 'jobs') {
             for (const t of Object.values(d.tasks)) if (t.jobId === id) { delete d.tasks[t.id]; remove(cid, 'tasks', t.id); }
+            for (const ph of Object.values(d.photos)) if (ph.jobId === id) { delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); remove(cid, 'photos', ph.id); }
+            dropMessageFiles(d.messages['job:' + id]);
             delete d.messages['job:' + id];
           }
           if (coll === 'clients') for (const j of Object.values(d.jobs)) if (j.clientId === id) { j.clientId = ''; upsert(cid, 'jobs', j); }
@@ -632,12 +743,22 @@ function stream(req, res, url) {
 // ---------------------------------------------------------------- static files
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.jpg': 'image/jpeg',
-  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8' };
+// Everything the app needs is served from this site. The only outside requests are map tiles from OpenStreetMap.
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; font-src 'self'; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'same-origin',
+  'Permissions-Policy': 'geolocation=(self), camera=(self), microphone=()',
+  'X-Frame-Options': 'DENY',
+};
+if (process.env.RENDER || process.env.FORCE_HSTS) SECURITY_HEADERS['Strict-Transport-Security'] = 'max-age=31536000';
 function serveFile(res, file, cache) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); return res.end('Not found'); }
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream',
-      'Content-Length': st.size, 'Cache-Control': cache ? 'public, max-age=31536000, immutable' : 'no-cache' });
+    const ext = path.extname(file).toLowerCase();
+    res.writeHead(200, Object.assign({ 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Content-Length': st.size,
+      'Cache-Control': cache || ext === '.woff2' || file.includes(path.sep + 'vendor' + path.sep) ? 'public, max-age=31536000, immutable' : 'no-cache' }, SECURITY_HEADERS));
     fs.createReadStream(file).pipe(res);
   });
 }
@@ -649,7 +770,7 @@ async function handler(req, res) {
     if (url.pathname.startsWith('/uploads/')) {
       const f = await storage.getFile(path.basename(url.pathname));
       if (!f) { res.writeHead(404); return res.end('Not found'); }
-      res.writeHead(200, { 'Content-Type': f.type, 'Content-Length': f.data.length, 'Cache-Control': 'public, max-age=31536000, immutable' });
+      res.writeHead(200, { 'Content-Type': f.type, 'Content-Length': f.data.length, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
       return res.end(f.data);
     }
     let rel = decodeURIComponent(url.pathname);
@@ -668,6 +789,11 @@ async function handler(req, res) {
 // ---------------------------------------------------------------- start
 async function main() {
   await storage.init();
+  setInterval(() => { // forget old live positions
+    let changed = false;
+    for (const [id, loc] of Object.entries(db.locations)) if (now() - loc.at > LOCATION_MAX_AGE) { delete db.locations[id]; changed = true; }
+    if (changed) save();
+  }, 30 * 60 * 1000).unref();
   http.createServer(handler).listen(PORT, '0.0.0.0', () => {
     console.log(`\n  Crewdesk is running on port ${PORT} (storage: ${DATABASE_URL ? 'Postgres database' : 'data folder'})\n`);
     if (DATABASE_URL) return;

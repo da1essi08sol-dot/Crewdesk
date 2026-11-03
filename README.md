@@ -10,10 +10,13 @@ An all-in-one job tracker and team chat for your company. It runs on your own co
 - Optional money tracking per job (price, cost lines, profit and margin). Only admins see money unless you turn it on for everyone.
 - Client contacts list with tap-to-call, text, email and directions
 - Announcements for the whole company (everyone gets notified)
-- A live **group chat for every job** plus a **company-wide chat**, with photo sharing
+- **Photos on every job**: take them with the camera or pick several from the photo library, add captions, swipe through them full screen
+- A live **group chat for every job** plus a **company-wide chat**, with up to 6 photos per message
 - See who's online, and live GPS positions on a map for anyone who switches sharing on
 - Notifications when you're added to a job, given a task, or a new announcement goes up
-- Works in light and dark mode, and installs on phones like an app
+- Works in light and dark mode, fits any phone screen, and installs on phones like an app
+- Privacy policy, terms, sign-up consent, "download my data" and "delete my account" built in (UK GDPR)
+- No tracking or third-party scripts: fonts and the map library are served from the app itself
 
 ---
 
@@ -50,6 +53,16 @@ Crewdesk runs on **Render** (free web hosting) with a **Neon** Postgres database
 4. Render gives you a link like `https://crewdesk-xxxx.onrender.com`. It's https, so GPS works.
 
 On Render's free plan the app sleeps after 15 minutes without visitors, and the next visit takes about a minute to wake it up. A paid plan keeps it awake.
+
+**Your business details.** The Privacy and Terms pages show who runs the app. On Render, open the service, go to **Environment**, and add:
+
+| Key | Example |
+|---|---|
+| `OPERATOR_NAME` | Northside Builds Ltd |
+| `OPERATOR_EMAIL` | hello@northsidebuilds.co.uk |
+| `OPERATOR_ADDRESS` | 12 High Street, Newcastle NE1 1AA (optional) |
+
+Until these are set, the pages tell people to contact whoever invited them.
 
 ## 3. Get your crew in
 
