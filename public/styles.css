@@ -1034,3 +1034,7 @@ html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .w
 .flow-mini i.done { background: #34c759; }
 .page-head > .grow { flex: 1 1 60%; min-width: min(100%, 220px); }
 .page-head h1 { overflow-wrap: break-word; }
+/* bigger finger target for the job tick box (Apple recommends 44px) */
+.job-tick { position: relative; }
+.job-tick::after { content: ""; position: absolute; inset: -9px; }
+@media (pointer: coarse) { .job-tick { width: 28px; height: 28px; } }
