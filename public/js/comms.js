@@ -430,16 +430,17 @@ VIEWS.team = {
     const sharing = !!S.user.shareLocation;
     return `<div class="page-head"><div><h1>Team</h1><div class="sub">${plural(Object.keys(S.members).length, 'person', 'people')} in ${esc(S.company.name)}</div></div>${canInvite() ? `<button class="btn primary" data-act="invite-new">${ic('userplus')}<span>Invite people</span></button>` : ''}</div>
       <div class="stack">
-        <label class="loc-banner">${ic('locate')}<div class="grow"><b>Share my live location</b><div class="small muted">Your company sees where you are while Crewdesk is open on your phone. Turn it off any time.</div></div>
-          <span class="switch"><input type="checkbox" ${sharing ? 'checked' : ''} data-change="share-loc" aria-label="Share my live location"><i></i></span></label>
-        ${!window.isSecureContext ? `<div class="warn">Location needs a secure <b>https://</b> link.</div>` : ''}
-        <div class="row between wrap" style="gap:8px"><span class="small muted">Zoom right in to see buildings, house numbers and footpaths.</span>
-          <div class="seg" role="radiogroup" aria-label="Map style">${Object.entries(MAP_STYLES).map(([k, l]) => `<button type="button" class="${mapStyle() === k ? 'on' : ''}" data-act="map-style" data-s="${k}" role="radio" aria-checked="${mapStyle() === k}">${l}</button>`).join('')}</div></div>
-        <div id="map" role="region" aria-label="Map of people and job sites"></div>
         <div class="grid halves">
           <div><div class="section-head"><h2>People</h2></div><div class="card flush" id="team-people">${this.people()}</div></div>
           <div><div class="section-head"><h2>Teams</h2>${isAdmin() ? `<button class="btn sm" data-act="team-edit">${ic('plus')}New team</button>` : ''}</div><div id="team-teams">${this.teams()}</div></div>
         </div>
+        <div class="section-head" style="margin:14px 0 0"><h2>Map</h2>
+          <div class="seg" role="radiogroup" aria-label="Map style">${Object.entries(MAP_STYLES).map(([k, l]) => `<button type="button" class="${mapStyle() === k ? 'on' : ''}" data-act="map-style" data-s="${k}" role="radio" aria-checked="${mapStyle() === k}">${l}</button>`).join('')}</div></div>
+        <label class="loc-banner">${ic('locate')}<div class="grow"><b>Share my live location</b><div class="small muted">Your company sees where you are while Crewdesk is open on your phone. Turn it off any time.</div></div>
+          <span class="switch"><input type="checkbox" ${sharing ? 'checked' : ''} data-change="share-loc" aria-label="Share my live location"><i></i></span></label>
+        ${!window.isSecureContext ? `<div class="warn">Location needs a secure <b>https://</b> link.</div>` : ''}
+        <div id="map" role="region" aria-label="Map of people and job sites"></div>
+        <span class="small muted">Zoom right in to see buildings, house numbers and footpaths.</span>
       </div>`;
   },
   mount() { drawMap(); },
@@ -563,7 +564,7 @@ function updateMap() {
   }
 }
 function focusMap(lat, lng) { if (!map) return; if (mapKind === 'gl') map.jumpTo({ center: [lng, lat], zoom: 15 }); else map.setView([lat, lng], 16); }
-A['map-focus'] = (el) => { const l = S.locations[el.dataset.id]; if (!l) return; mapFitted = true; if (parseHash().name !== 'team') location.hash = '#/team'; setTimeout(() => focusMap(l.lat, l.lng), 600); };
+A['map-focus'] = (el) => { const l = S.locations[el.dataset.id]; if (!l) return; mapFitted = true; if (parseHash().name !== 'team') location.hash = '#/team'; setTimeout(() => { const m = $('#map'); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' }); focusMap(l.lat, l.lng); }, 600); };
 
 // ============================================================ PERSON PROFILE
 // Someone outside your company: loaded from the server, shown only if they've made their profile public.
