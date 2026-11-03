@@ -142,7 +142,7 @@ A['upload-retry'] = (el) => {
   for (const arr of Object.values(uploads)) { const u = arr.find((x) => x.key === el.dataset.upload); if (u && u.failed) { u.failed = ''; u.progress = 0; uploadQueue.push(u); paintUpload(u); pumpUploads(); } }
 };
 
-// ---- full-screen photo viewer: opens from the thumbnail, pinch or double-tap to zoom, swipe sideways for the next one,
+// ---- full-screen photo viewer: opens from the thumbnail, pinch to zoom, swipe sideways for the next one,
 // swipe down (or tap outside the photo, press Esc, or use the phone's back gesture) to close.
 let viewer = null;
 function openViewer(items, index = 0) {
@@ -227,17 +227,13 @@ function viewerGestures(el) {
       if (img) { img.classList.remove('no-anim'); img.style.transform = ''; } mode = null; return;
     }
     if (moved) return;
-    // taps: double tap zooms; a single tap outside the photo closes, on the photo shows or hides the buttons
+    // taps: a second quick tap is ignored (no double-tap zoom — pinch to zoom instead);
+    // a single tap outside the photo closes it, on the photo shows or hides the buttons
     const now = Date.now();
-    if (now - lastTap < 300) {
-      clearTimeout(tapTimer); lastTap = 0;
-      if (viewer.z > 1) { viewer.z = 1; viewer.tx = viewer.ty = 0; }
-      else if (img) { const r = img.getBoundingClientRect(); viewer.z = 2.5; viewer.tx = (r.left + r.width / 2 - e.clientX) * 1.5; viewer.ty = (r.top + r.height / 2 - e.clientY) * 1.5; clampPan(); }
-      applyZoom(true); return;
-    }
+    if (now - lastTap < 350) { clearTimeout(tapTimer); lastTap = now; return; }
     lastTap = now;
     const onPhoto = e.target.tagName === 'IMG';
-    tapTimer = setTimeout(() => { if (!viewer) return; if (onPhoto) viewer.el.classList.toggle('chrome-off'); else if (viewer.z === 1) closeViewer(); }, 260);
+    tapTimer = setTimeout(() => { if (!viewer) return; if (onPhoto) viewer.el.classList.toggle('chrome-off'); else if (viewer.z === 1) closeViewer(); }, 280);
   };
   el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
   el.addEventListener('wheel', (e) => { if (!e.ctrlKey || !viewer) return; e.preventDefault(); viewer.z = Math.max(1, Math.min(5, viewer.z * (1 - e.deltaY / 200))); if (viewer.z === 1) viewer.tx = viewer.ty = 0; clampPan(); applyZoom(false); }, { passive: false });

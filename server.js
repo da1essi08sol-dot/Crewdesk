@@ -1030,6 +1030,12 @@ async function api(req, res, url) {
       if (old !== user.avatar) dropFile(old);
     }
     if (b.prefs && typeof b.prefs === 'object') for (const k of ['popups', 'desktop', 'sound']) if (k in b.prefs) user.prefs[k] = !!b.prefs[k];
+    if (b.prefs && Array.isArray(b.prefs.tabs)) { // the phone's bottom tab bar, as the person arranged it
+      const ok = ['home', 'projects', 'jobs', 'calendar', 'chat', 'pings', 'team', 'clients', 'sheets'];
+      const tabs = [...new Set(b.prefs.tabs.map(String))].filter((k) => ok.includes(k)).slice(0, 4);
+      if (!tabs.length) bad('Keep at least one tab');
+      user.prefs.tabs = tabs;
+    } else if (b.prefs && b.prefs.tabs === null) delete user.prefs.tabs;
     if (b.privacy && typeof b.privacy === 'object') for (const k of ['showPhone', 'showEmail', 'showCompanies', 'profilePublic']) if (k in b.privacy) user.privacy[k] = !!b.privacy[k];
     if ('shareLocation' in b) {
       user.shareLocation = !!b.shareLocation;

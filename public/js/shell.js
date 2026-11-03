@@ -58,7 +58,17 @@ function signOutLocal(msg) {
 // ============================================================ frame
 const SIDE_NAV = [['home', 'Home', 'home'], ['projects', 'Projects', 'folder'], ['jobs', 'Jobs', 'jobs'], ['calendar', 'Calendar', 'cal'], ['chat', 'Chat', 'chat'],
   ['pings', 'Pings', 'ping'], ['team', 'Team & map', 'team'], ['clients', 'Clients', 'contacts']];
-const BOTTOM_NAV = [['home', 'Home', 'home'], ['projects', 'Projects', 'folder'], ['chat', 'Chat', 'chat'], ['pings', 'Pings', 'ping'], ['more', 'More', 'more']];
+// Everything that can go in the phone's bottom tab bar; people choose up to four, and the rest live under More.
+const TAB_ITEMS = { home: ['Home', 'home'], projects: ['Projects', 'folder'], jobs: ['Jobs', 'jobs'], calendar: ['Calendar', 'cal'], chat: ['Chat', 'chat'],
+  pings: ['Pings', 'ping'], team: ['Team', 'team'], clients: ['Clients', 'contacts'], sheets: ['Sheets', 'sheet'] };
+const DEFAULT_TABS = ['home', 'projects', 'chat', 'pings'];
+const tabAllowed = (k) => !!TAB_ITEMS[k] && (k !== 'sheets' || isAdmin());
+function myTabs() {
+  const t = (S.user && S.user.prefs && Array.isArray(S.user.prefs.tabs) ? S.user.prefs.tabs : DEFAULT_TABS).filter(tabAllowed).slice(0, 4);
+  return t.length ? t : DEFAULT_TABS;
+}
+const moreTabs = () => Object.keys(TAB_ITEMS).filter((k) => tabAllowed(k) && !myTabs().includes(k));
+const bottomNav = () => myTabs().map((k) => [k, TAB_ITEMS[k][0], TAB_ITEMS[k][1]]).concat([['more', 'More', 'more']]);
 function navLink([k, l, i], extra = '') {
   return `<a class="navbtn" data-nav="${k}" href="#/${k}" ${extra}>${ic(i)}<span>${l}</span>${k === 'chat' || k === 'pings' || k === 'more' ? `<span class="count hidden" data-badge="${k}"></span>` : ''}</a>`;
 }
@@ -86,7 +96,7 @@ function renderShell() {
       </header>
       <main id="view" tabindex="-1"></main>
     </div>
-    <nav class="bottomnav" aria-label="Sections">${BOTTOM_NAV.map((n) => navLink(n)).join('')}</nav>
+    <nav class="bottomnav" aria-label="Sections">${bottomNav().map((n) => navLink(n)).join('')}</nav>
   </div>`;
   updateChrome();
 }
@@ -105,13 +115,12 @@ function updateChrome() {
   const r = parseHash();
   const map = { job: 'jobs', project: 'projects', client: 'clients', person: 'team', ping: 'pings', company: 'companies' };
   let active = map[r.name] || r.name;
-  const inBottom = BOTTOM_NAV.some((n) => n[0] === active);
+  const tabs = myTabs();
+  if (active === 'jobs' && !tabs.includes('jobs') && tabs.includes('projects')) active = 'projects';
+  const inBottom = tabs.includes(active);
   $$('.navbtn').forEach((b) => {
     let on = b.dataset.nav === active;
-    if (b.closest('.bottomnav')) {
-      if (active === 'jobs' && b.dataset.nav === 'projects') on = true;
-      else if (!inBottom && active !== 'jobs' && b.dataset.nav === 'more') on = true;
-    }
+    if (b.closest('.bottomnav') && !inBottom && b.dataset.nav === 'more') on = true;
     b.classList.toggle('on', on);
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });

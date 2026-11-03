@@ -377,6 +377,7 @@ VIEWS.profile = {
           ${sw('desktop', !!u.prefs.desktop && perm === 'granted', 'Alerts when the app is in the background', perm === 'denied' ? 'Blocked in your browser settings' : perm === 'unsupported' ? 'Not supported on this browser' : 'Uses your device’s notifications', `data-change="pref" data-k="desktop" ${perm === 'denied' || perm === 'unsupported' ? 'disabled' : ''}`)}
           ${sw('sound', !!u.prefs.sound, 'Play a sound', 'A short tone with each notification', 'data-change="pref" data-k="sound"')}</div>
         <div class="card stack"><h2>Appearance</h2>
+          <div class="row between"><div><b style="display:block">Tab bar</b><span class="small muted">Choose and arrange the buttons along the bottom of the app on your phone.</span></div><button class="btn sm" data-act="edit-tabs">${ic('edit')}Edit</button></div>
           <label class="field"><span>Theme</span><select data-change="theme"><option value="auto" ${theme === 'auto' ? 'selected' : ''}>Match my device</option><option value="light" ${theme === 'light' ? 'selected' : ''}>Light</option><option value="dark" ${theme === 'dark' ? 'selected' : ''}>Dark</option></select></label></div>
         <form class="card stack" data-form="password"><h2>Change password</h2>
           ${pwField('currentPassword', 'Current password')}
@@ -442,11 +443,8 @@ VIEWS.more = {
   render() {
     return `<h1 style="margin-bottom:14px">More</h1>
       <div class="card" style="padding:6px"><div class="menu">
-        <a href="#/jobs">${ic('jobs')}<span class="grow">Jobs</span>${ic('right')}</a>
-        <a href="#/calendar">${ic('cal')}<span class="grow">Calendar</span>${ic('right')}</a>
-        <a href="#/team">${ic('team')}<span class="grow">Team &amp; map</span>${ic('right')}</a>
-        <a href="#/clients">${ic('contacts')}<span class="grow">Clients</span>${ic('right')}</a>
-        ${isAdmin() ? `<a href="#/sheets">${ic('sheet')}<span class="grow">Spreadsheets</span><span class="tiny muted">Admins</span>${ic('right')}</a>` : ''}
+        ${moreTabs().map((k) => `<a href="#/${k}">${ic(TAB_ITEMS[k][1])}<span class="grow">${k === 'sheets' ? 'Spreadsheets' : k === 'team' ? 'Team &amp; map' : TAB_ITEMS[k][0]}</span>${k === 'sheets' ? '<span class="tiny muted">Admins</span>' : ''}${ic('right')}</a>`).join('')}
+        <button data-act="edit-tabs">${ic('edit')}<span class="grow">Edit tab bar</span>${ic('right')}</button>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
         ${canInvite() ? `<button data-act="invite-new">${ic('userplus')}<span class="grow">Invite people</span>${ic('right')}</button>` : ''}

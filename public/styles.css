@@ -953,3 +953,51 @@ html[data-nav="tab"]::view-transition-new(main) { animation: .36s var(--spring) 
 #toasts { z-index: 330; }
 body:has(.viewer, .docview) #toasts .nbanner { display: none; }
 body:has(.viewer, .docview) #toasts { top: auto; bottom: calc(76px + var(--safe-b)); }
+
+/* ------------------------------------------------ tab bar editor (jiggle mode) */
+.tab-editor { position: fixed; inset: 0; z-index: 260; background: var(--bg); display: flex; flex-direction: column; animation: sheet-up .5s var(--spring); }
+.tab-editor.leaving { animation: sheet-down .3s var(--ease-out) forwards; }
+.te-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: calc(10px + var(--safe-t)) 14px 10px; background: var(--glass); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); border-bottom: .5px solid var(--line); }
+.te-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 18px 16px calc(24px + var(--safe-b)); }
+@media (min-width: 760px) { .te-body { flex-direction: row; justify-content: center; align-items: flex-start; gap: 40px; padding-top: 34px; } }
+.te-phone { width: min(330px, 100%); border-radius: 38px; padding: 10px; background: #1c1c1e; box-shadow: 0 30px 60px rgba(0,0,0,.25), inset 0 0 0 2px #3a3a3c; flex: none; }
+.te-screen { height: min(330px, 40vh); border-radius: 28px 28px 0 0; background: var(--bg); overflow: hidden; position: relative; }
+.te-mock-top { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px; font-weight: 700; font-size: 14px; background: var(--surface); border-bottom: .5px solid var(--line); }
+.te-mock-top .brandmark { width: 20px; height: 20px; }
+.te-mock-main { padding: 12px 14px; }
+.te-mock-sub { font-size: 10px; color: var(--muted); }
+.te-mock-h { font: 700 20px var(--font-display); letter-spacing: -.02em; margin-bottom: 10px; }
+.te-mock-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.te-mock-kpis i, .te-mock-card { display: block; height: 44px; border-radius: 10px; background: var(--surface); box-shadow: var(--card-shadow); }
+.te-mock-card { height: 70px; margin-bottom: 8px; } .te-mock-card.short { height: 40px; }
+.te-bar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; padding: 8px 4px 14px; border-radius: 0 0 28px 28px; background: var(--glass-2); border-top: .5px solid var(--line); min-height: 76px; }
+.te-side { width: min(420px, 100%); }
+.te-help { margin: 0 4px 16px; }
+.te-tray { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 8px; padding: 16px 10px; border-radius: 20px; background: var(--surface); box-shadow: var(--card-shadow); min-height: 96px; }
+.te-item { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px 0; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  animation: te-wiggle .26s ease-in-out infinite alternate; animation-delay: var(--d, 0s); }
+.te-item.fixed { animation: none; cursor: default; opacity: .6; }
+.te-item .te-ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: var(--accent-text); background: var(--accent-soft); transition: transform .3s var(--bounce), box-shadow .2s; }
+.te-item.tray .te-ico { width: 54px; height: 54px; border-radius: 14px; background: var(--accent); color: var(--accent-ink); box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 30%, transparent); }
+.te-item.bar .te-ico { background: transparent; width: 36px; height: 30px; }
+.te-item .te-ico svg { width: 22px; height: 22px; }
+.te-item.tray .te-ico svg { width: 26px; height: 26px; }
+.te-item .te-lbl { font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.te-item.bar .te-lbl { font-size: 10.5px; color: var(--muted); }
+.te-item.ghost { visibility: hidden; }
+.te-item.swap .te-ico { transform: scale(.85); box-shadow: 0 0 0 2px var(--accent); background: var(--accent-soft); }
+.te-badge { position: absolute; top: -2px; left: calc(50% - 30px); z-index: 2; width: 22px; height: 22px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center;
+  font: 700 17px/1 var(--font); cursor: pointer; color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .3s var(--bounce); }
+.te-item.bar .te-badge { left: calc(50% - 24px); top: -6px; width: 20px; height: 20px; font-size: 16px; }
+.te-badge:active { transform: scale(.8); }
+.te-badge.minus { background: #8e8e93; } .te-badge.plus { background: #34c759; }
+.te-float { position: fixed; left: 0; top: 0; z-index: 400; pointer-events: none; animation: none; transform-origin: center; filter: drop-shadow(0 12px 18px rgba(0,0,0,.25)); }
+.te-float .te-badge { display: none; }
+.tab-editor.dragging .te-item { cursor: grabbing; }
+@keyframes te-wiggle { from { transform: rotate(-1.6deg); } to { transform: rotate(1.6deg); } }
+@media (prefers-reduced-motion: reduce) { .te-item { animation: none; } }
+
+/* No double-tap-to-zoom anywhere (pinch to zoom still works) */
+html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .wk-day { touch-action: manipulation; }
+.viewer-stage, .te-item, .cal-surface, .sheet .grab { touch-action: none; }
+.cal-surface { touch-action: pan-y; }

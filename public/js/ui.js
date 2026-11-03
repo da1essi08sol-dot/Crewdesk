@@ -40,8 +40,9 @@ function paintSegs(root = document) {
     if (!on || !on.offsetWidth) { if (th) th.remove(); seg.classList.remove('has-thumb'); return; }
     if (!th) { th = document.createElement('span'); th.className = 'seg-thumb'; th.setAttribute('aria-hidden', 'true'); seg.prepend(th); }
     const key = segKey(seg); const to = { x: on.offsetLeft, w: on.offsetWidth }; const from = segPos[key];
-    if (from && (from.x !== to.x || from.w !== to.w) && !th.dataset.placed && motionOK()) {
-      th.style.transition = 'none'; th.style.transform = `translateX(${from.x}px)`; th.style.width = from.w + 'px'; void th.offsetWidth; th.style.transition = '';
+    if (!th.dataset.placed) { // a freshly drawn control: put the thumb where it was (or straight where it belongs) with no slide
+      const start = from && motionOK() ? from : to;
+      th.style.transition = 'none'; th.style.transform = `translateX(${start.x}px)`; th.style.width = start.w + 'px'; void th.offsetWidth; th.style.transition = '';
     }
     th.style.transform = `translateX(${to.x}px)`; th.style.width = to.w + 'px'; th.dataset.placed = '1';
     seg.classList.add('has-thumb'); segPos[key] = to;
