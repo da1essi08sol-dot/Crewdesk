@@ -426,6 +426,7 @@ async function api(req, res, url) {
     return json(res, 200, { token, user: publicUser(u), companies: companiesFor(u.id) });
   }
 
+  if (p === '/api/health' && M === 'GET') return json(res, 200, { ok: true, uptime: Math.round(process.uptime()) });
   if (p === '/api/info' && M === 'GET') return json(res, 200, { operator: OPERATOR, legalVersion: LEGAL_VERSION });
   if (p === '/api/stream' && M === 'GET') return stream(req, res, url);
 
@@ -789,6 +790,18 @@ async function handler(req, res) {
 // ---------------------------------------------------------------- start
 async function main() {
   await storage.init();
+  // Keep-awake: free hosting plans put the app to sleep after 15 minutes with no visitors, and the next
+  // visitor then waits about a minute. When hosted, the app visits its own public address every 10 minutes
+  // so it never goes to sleep. The visit only loads /api/health, which never touches the database.
+  const publicUrl = process.env.KEEP_AWAKE_URL || process.env.RENDER_EXTERNAL_URL;
+  if (publicUrl && process.env.KEEP_AWAKE !== 'off' && typeof fetch === 'function') {
+    const ping = () => fetch(publicUrl.replace(/\/$/, '') + '/api/health', { headers: { 'User-Agent': 'Crewdesk keep-awake' } })
+      .then((r) => { if (!r.ok) console.warn('Keep-awake check returned', r.status); })
+      .catch((e) => console.warn('Keep-awake check failed:', e.message));
+    setInterval(ping, 10 * 60 * 1000).unref();
+    setTimeout(ping, 60 * 1000).unref();
+    console.log('  Keep-awake is on: checking', publicUrl, 'every 10 minutes');
+  }
   setInterval(() => { // forget old live positions
     let changed = false;
     for (const [id, loc] of Object.entries(db.locations)) if (now() - loc.at > LOCATION_MAX_AGE) { delete db.locations[id]; changed = true; }

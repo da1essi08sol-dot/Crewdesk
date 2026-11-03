@@ -6,7 +6,7 @@ services:
     region: frankfurt
     buildCommand: npm install --omit=dev
     startCommand: node server.js
-    healthCheckPath: /manifest.webmanifest
+    healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
         sync: false

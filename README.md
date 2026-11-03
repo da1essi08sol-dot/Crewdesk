@@ -52,7 +52,7 @@ Crewdesk runs on **Render** (free web hosting) with a **Neon** Postgres database
 3. On render.com, choose **New → Blueprint**, pick the repository, and paste the Neon connection string when it asks for `DATABASE_URL`.
 4. Render gives you a link like `https://crewdesk-xxxx.onrender.com`. It's https, so GPS works.
 
-On Render's free plan the app sleeps after 15 minutes without visitors, and the next visit takes about a minute to wake it up. A paid plan keeps it awake.
+Render's free plan normally puts an app to sleep after 15 minutes without visitors. Crewdesk stops this by visiting its own address every 10 minutes ("keep-awake"), which uses about 744 of the 750 free hours Render gives each workspace per month. That means any **other** free service in the same Render workspace would run out of hours, so keep Crewdesk as your only free Render service, or set `KEEP_AWAKE=off` in its Environment to turn this off.
 
 **Your business details.** The Privacy and Terms pages show who runs the app. On Render, open the service, go to **Environment**, and add:
 
