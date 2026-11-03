@@ -435,6 +435,8 @@ A['delete-account'] = () => sheet(`${sheetHead('Delete your account?')}
 F['delete-account'] = async (f, d, close) => { await api('DELETE', '/api/me', { password: d.password }); close(); signOutLocal('Your account has been deleted'); };
 
 // ============================================================ MORE (phones)
+// Already added to the home screen? Then there's no need to explain how.
+const installedApp = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
 VIEWS.more = {
   render() {
     return `<h1 style="margin-bottom:14px">More</h1>
@@ -458,7 +460,7 @@ VIEWS.more = {
         <a href="mailto:${esc(S.info.supportEmail || '')}">${ic('mail')}<span class="grow">Contact support</span>${ic('right')}</a>
         <button data-act="logout">${ic('logout')}<span class="grow">Sign out</span></button>
       </div></div>
-      <div class="card section row">${icSize('phoneapp', 24, 'color:var(--accent-text);flex:none')}<div class="small"><b>Install on your phone</b><br><span class="muted">iPhone: Safari → Share → Add to Home Screen. Android: Chrome menu → Install app.</span></div></div>`;
+      ${installedApp() ? '' : `<div class="card section row">${icSize('phoneapp', 24, 'color:var(--accent-text);flex:none')}<div class="small"><b>Install on your phone</b><br><span class="muted">iPhone: Safari → Share → Add to Home Screen. Android: Chrome menu → Install app.</span></div></div>`}`;
   },
 };
 

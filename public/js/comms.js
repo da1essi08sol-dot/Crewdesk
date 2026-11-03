@@ -506,10 +506,12 @@ async function drawMap() {
     el.innerHTML = '';
     let ok = false, gaveUp = false;
     const m = new maplibregl.Map({ container: el, style: styleUrl(), center: [-3, 54.5], zoom: 4.6, maxZoom: 20,
-      attributionControl: { compact: true }, cooperativeGestures: isTouch(), dragRotate: false, pitchWithRotate: false });
+      attributionControl: { compact: true }, cooperativeGestures: isTouch() && !store.get('cd_mapHint'), dragRotate: false, pitchWithRotate: false });
     map = m; mapKind = 'gl'; mapFitted = false;
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     m.touchZoomRotate.disableRotation();
+    // "Use two fingers to move the map" is shown once; after that one finger moves the map.
+    m.on('cooperativegestureprevented', () => { if (store.get('cd_mapHint')) return; store.set('cd_mapHint', '1'); setTimeout(() => { try { m.cooperativeGestures.disable(); } catch (_) {} }, 2500); });
     m.on('load', () => { ok = true; updateMap(); });
     const giveUp = () => { if (ok || gaveUp || map !== m) return; gaveUp = true; try { m.remove(); } catch (_) {} map = null; drawLeaflet(el); };
     m.on('error', (e) => { if (!ok && /style|fetch|network|load/i.test(String((e && e.error && e.error.message) || ''))) giveUp(); });
