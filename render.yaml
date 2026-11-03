@@ -3,6 +3,7 @@ services:
     name: crewdesk
     runtime: node
     plan: free
+    region: frankfurt
     buildCommand: npm install --omit=dev
     startCommand: node server.js
     healthCheckPath: /manifest.webmanifest
