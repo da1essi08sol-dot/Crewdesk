@@ -499,6 +499,7 @@ const RULES = {
       if ('title' in b) o.title = str(b.title, 140) || bad('Give the job a title');
       if ('description' in b) o.description = str(b.description, 5000);
       if ('status' in b) o.status = STATUSES.includes(b.status) ? b.status : 'planned';
+      if ('reopenAs' in b) o.reopenAs = STATUSES.includes(b.reopenAs) && b.reopenAs !== 'done' ? b.reopenAs : 'active'; // what unticking a finished job goes back to
       if ('priority' in b) o.priority = ['low', 'normal', 'high', 'urgent'].includes(b.priority) ? b.priority : 'normal';
       if ('clientId' in b) o.clientId = x.d.clients[b.clientId] ? b.clientId : '';
       if ('teamId' in b) o.teamId = x.d.teams[b.teamId] ? b.teamId : '';

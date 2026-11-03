@@ -1001,3 +1001,36 @@ body:has(.viewer, .docview) #toasts { top: auto; bottom: calc(76px + var(--safe-
 html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .wk-day { touch-action: manipulation; }
 .viewer-stage, .te-item, .cal-surface, .sheet .grab { touch-action: none; }
 .cal-surface { touch-action: pan-y; }
+
+/* ------------------------------------------------ job tick box, summary, photos; project flow */
+.job-tick { width: 26px; height: 26px; flex: none; border-radius: 8px; border: 2px solid var(--line-2); background: var(--surface); display: grid; place-items: center; padding: 0; cursor: pointer;
+  color: #fff; transition: background-color .25s, border-color .25s, transform .4s var(--bounce); touch-action: manipulation; }
+.job-tick svg { width: 16px; height: 16px; stroke-width: 3; opacity: 0; transform: scale(.4); transition: opacity .2s, transform .4s var(--bounce); }
+.job-tick:hover { border-color: var(--ok); }
+.job-tick:active { transform: scale(.85); }
+.job-tick.on { background: #34c759; border-color: #34c759; }
+.job-tick.on svg { opacity: 1; transform: none; }
+.jobcard.is-done { background: color-mix(in srgb, #34c759 7%, var(--surface)); }
+.jobcard.is-done h3 { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.job-sum { font-size: 13.5px; color: var(--ink-2); margin-top: 5px; line-height: 1.4; }
+.job-media { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.job-media .jm { position: relative; aspect-ratio: 4 / 3; border-radius: 9px; overflow: hidden; background: var(--surface-2); }
+.job-media img { width: 100%; height: 100%; object-fit: cover; }
+.job-media b { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.45); color: #fff; font-size: 15px; }
+.flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.flow-step { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start; }
+.flow-step::before { content: ""; position: absolute; left: 16px; top: 34px; bottom: -16px; width: 2.5px; border-radius: 2px; background: color-mix(in srgb, #ff3b30 35%, var(--line)); }
+.flow-step:last-child::before { display: none; }
+.flow-step.link-done::before { background: #34c759; }
+.flow-dot { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; margin-top: 12px; position: relative; z-index: 1;
+  background: #ff3b30; color: #fff; font: 700 13px var(--font); box-shadow: 0 0 0 4px var(--bg), 0 2px 8px color-mix(in srgb, #ff3b30 40%, transparent);
+  transition: background-color .35s, box-shadow .35s; }
+.flow-step.done .flow-dot { background: #34c759; box-shadow: 0 0 0 4px var(--bg), 0 2px 8px color-mix(in srgb, #34c759 40%, transparent); animation: check-pop .5s var(--bounce); }
+.flow-dot svg { width: 17px; height: 17px; stroke-width: 3; }
+.flow-mini { display: flex; align-items: center; gap: 0; flex-wrap: wrap; row-gap: 6px; }
+.flow-mini i { width: 11px; height: 11px; border-radius: 50%; background: #ff3b30; flex: none; position: relative; margin-right: 9px; transition: background-color .3s; }
+.flow-mini i::after { content: ""; position: absolute; left: 11px; top: 4.5px; width: 9px; height: 2px; background: var(--line-2); }
+.flow-mini i:last-of-type::after { display: none; }
+.flow-mini i.done { background: #34c759; }
+.page-head > .grow { flex: 1 1 60%; min-width: min(100%, 220px); }
+.page-head h1 { overflow-wrap: break-word; }

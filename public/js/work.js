@@ -4,6 +4,8 @@
 const jobCosts = (j) => (j.costs || []).reduce((a, c) => a + (Number(c.amount) || 0), 0);
 function jobTasks(jobId) { return Object.values(S.tasks).filter((t) => t.jobId === jobId).sort((a, b) => (a.done - b.done) || ((a.order || 0) - (b.order || 0))); }
 function progress(jobId) { const t = jobTasks(jobId); return { done: t.filter((x) => x.done).length, total: t.length }; }
+// A project's jobs in the order the work happens: by start date, then deadline, then when they were added.
+function flowOrder(js) { const key = (j) => (j.start || j.deadline || '9999') + (j.deadline || '9999') + String(j.createdAt || 0).padStart(14, '0'); return js.slice().sort((a, b) => key(a).localeCompare(key(b))); }
 function byDeadline(a, b) { return (a.deadline || '9999') < (b.deadline || '9999') ? -1 : (a.deadline || '9999') > (b.deadline || '9999') ? 1 : (b.updatedAt || 0) - (a.updatedAt || 0); }
 const favFirst = (kind) => (a, b) => { const fa = S.favs[kind] || []; const ia = fa.indexOf(a.id), ib = fa.indexOf(b.id); return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib); };
 function dirLink(job) {
@@ -77,7 +79,8 @@ function projectCard(p) {
     <div class="row between top"><h3 class="grow">${esc(p.name)}</h3>${starBtn('projects', p.id)}</div>
     ${p.description ? `<div class="desc clamp2">${esc(p.description)}</div>` : ''}
     <div class="row wrap tight">${lockPill(p)}${p.archived ? '<span class="pill">Archived</span>' : ''}${S.clients[p.clientId] ? `<span class="pill">${esc(S.clients[p.clientId].name)}</span>` : ''}</div>
-    <div class="foot"><span>${plural(openN, 'open job')}${js.length - openN ? ` · ${js.length - openN} done` : ''}</span>${avatarStack(people, 5)}</div></a>`;
+    ${js.length ? `<div class="flow-mini" aria-label="${js.length - openN} of ${js.length} jobs done">${flowOrder(js).slice(0, 14).map((j) => `<i class="${j.status === 'done' ? 'done' : ''}" title="${esc(j.title)}${j.status === 'done' ? ' — done' : ''}"></i>`).join('')}${js.length > 14 ? `<span class="tiny muted">+${js.length - 14}</span>` : ''}</div>` : ''}
+    <div class="foot"><span>${js.length ? `${js.length - openN} of ${plural(js.length, 'job')} done` : 'No jobs yet'}</span>${avatarStack(people, 5)}</div></a>`;
 }
 VIEWS.projects = {
   render() {
@@ -126,9 +129,11 @@ VIEWS.project = {
       <div class="grid two">
         <div class="stack loose">
           ${p.description ? `<div class="card pre">${linkify(p.description)}</div>` : ''}
-          <div><div class="section-head"><h2>Jobs <span class="muted" style="font-weight:500">${open.length}</span></h2>${canCreateJobs() && !p.archived ? `<button class="btn sm primary" data-act="new-job" data-project="${id}">${ic('plus')}Add job</button>` : ''}</div>
-            ${open.length ? `<div class="stack tight">${open.map(jobCard).join('')}</div>` : `<div class="card empty small">No open jobs in this project.</div>`}
-            ${done.length ? `<details style="margin-top:12px"><summary class="small bold" style="cursor:pointer">${plural(done.length, 'finished job')}</summary><div class="stack tight" style="margin-top:8px">${done.map(jobCard).join('')}</div></details>` : ''}</div>
+          <div><div class="section-head"><h2>Jobs <span class="muted" style="font-weight:500">${done.length} of ${js.length} done</span></h2>${canCreateJobs() && !p.archived ? `<button class="btn sm primary" data-act="new-job" data-project="${id}">${ic('plus')}Add job</button>` : ''}</div>
+            ${js.length ? `<div class="progress" style="margin:-2px 0 16px"><i style="width:${(done.length / js.length) * 100}%"></i></div>
+              <ol class="flow">${flowOrder(js).map((j, i, arr) => `<li class="flow-step ${j.status === 'done' ? 'done' : ''} ${i < arr.length - 1 && j.status === 'done' && arr[i + 1].status === 'done' ? 'link-done' : ''}" data-step="${j.id}">
+                <span class="flow-dot" aria-hidden="true">${j.status === 'done' ? ic('check') : `<b>${i + 1}</b>`}</span>${jobCard(j, true)}</li>`).join('')}</ol>`
+            : `<div class="card empty small">No jobs in this project yet.${canCreateJobs() && !p.archived ? ` <a href="#" data-act="new-job" data-project="${id}">Add the first one</a>` : ''}</div>`}</div>
         </div>
         <div class="stack">
           <div class="card"><h3 style="margin-bottom:8px">${p.visibility === 'selected' ? 'People in this project' : 'Who can see it'}</h3>
@@ -193,13 +198,26 @@ function jobMatches(j, f) {
     default: return j.status === f;
   }
 }
-function jobCard(j) {
+// The tick box in the corner of a job: ticking marks the job done (and unticking reopens it).
+function jobTick(j) {
+  const done = j.status === 'done';
+  return `<button type="button" class="job-tick ${done ? 'on' : ''}" data-act="job-tick" data-id="${j.id}" role="checkbox" aria-checked="${done}" aria-label="${done ? 'Reopen' : 'Mark done'}: ${esc(j.title)}" title="${done ? 'Done — tap to reopen' : 'Mark as done'}">${ic('check')}</button>`;
+}
+// Up to three photos from the job, so you can see the work at a glance.
+function jobMedia(j, max = 3) {
+  const ph = jobPhotos(j.id); if (!ph.length) return '';
+  return `<div class="job-media">${ph.slice(0, max).map((x, i) => `<span class="jm"><img src="${esc(x.thumb || x.url)}" alt="${esc(photoAlt(x, i))}" loading="lazy" decoding="async">${i === max - 1 && ph.length > max ? `<b>+${ph.length - max}</b>` : ''}</span>`).join('')}</div>`;
+}
+function jobCard(j, inProject = false) {
   const p = progress(j.id);
   const client = S.clients[j.clientId]; const proj = S.projects[j.projectId];
   const unread = S.unread['job:' + j.id] || 0; const nPh = jobPhotos(j.id).length;
-  return `<a class="jobcard" href="#/job/${j.id}"><span class="bar" style="background:${STATUS_COLOR[j.status]}"></span>
-    <div class="row between"><span class="ref">${esc(j.ref)}${proj ? ` · ${esc(proj.name)}` : ''}</span><span class="row tight">${j.priority === 'urgent' || j.priority === 'high' ? `<span class="pill pr-${j.priority}">${PRIORITY[j.priority]}</span>` : ''}${unread ? `<span class="count" title="${unread} unread messages">${unread}</span>` : ''}${starBtn('jobs', j.id)}</span></div>
-    <div><h3>${esc(j.title)}</h3>${client || j.address ? `<div class="small muted ellipsis" style="margin-top:2px">${esc([client && client.name, j.address].filter(Boolean).join(' · '))}</div>` : ''}</div>
+  const done = j.status === 'done';
+  return `<a class="jobcard ${done ? 'is-done' : ''}" href="#/job/${j.id}" data-job="${j.id}"><span class="bar" style="background:${done ? 'var(--ok)' : STATUS_COLOR[j.status]}"></span>
+    <div class="row between"><span class="ref">${esc(j.ref)}${proj && !inProject ? ` · ${esc(proj.name)}` : ''}</span><span class="row tight">${j.priority === 'urgent' || j.priority === 'high' ? `<span class="pill pr-${j.priority}">${PRIORITY[j.priority]}</span>` : ''}${unread ? `<span class="count" title="${unread} unread messages">${unread}</span>` : ''}${starBtn('jobs', j.id)}${jobTick(j)}</span></div>
+    <div><h3>${esc(j.title)}</h3>${client || j.address ? `<div class="small muted ellipsis" style="margin-top:2px">${esc([client && client.name, j.address].filter(Boolean).join(' · '))}</div>` : ''}
+      ${j.description ? `<div class="job-sum clamp2">${esc(j.description)}</div>` : ''}</div>
+    ${jobMedia(j)}
     <div class="row wrap tight"><span class="pill st-${j.status}">${STATUS[j.status]}</span>${lockPill(j)}${dueHtml(j.deadline, j.status === 'done')}</div>
     <div class="row">${p.total ? `<div class="grow"><div class="progress"><i style="width:${(p.done / p.total) * 100}%"></i></div><div class="tiny muted" style="margin-top:4px">${p.done}/${p.total} tasks</div></div>` : '<div class="grow tiny muted">No tasks yet</div>'}
       ${nPh ? `<span class="meta" title="${nPh} photos">${ic('camera')}${nPh}</span>` : ''}${avatarStack(j.assignees)}</div>
@@ -403,6 +421,15 @@ A['new-job'] = (el) => jobSheet(null, { clientId: el.dataset.client || '', proje
 A['edit-job'] = (el) => jobSheet(S.jobs[el.dataset.id]);
 A['del-job'] = async (el) => { const j = S.jobs[el.dataset.id]; if (await confirmBox('Delete this job?', `“${j.title}”, its tasks, photos and chat will be deleted for everyone. This can’t be undone.`)) { if (await deleteItem('jobs', j.id)) location.hash = '#/jobs'; } };
 A['job-status'] = (el) => saveItem('jobs', el.dataset.id, { status: el.dataset.s });
+A['job-tick'] = async (el) => {
+  const j = S.jobs[el.dataset.id]; if (!j) return;
+  const was = j.status; const next = was === 'done' ? (j.reopenAs && j.reopenAs !== 'done' ? j.reopenAs : 'active') : 'done';
+  S.jobs[j.id] = Object.assign({}, j, { status: next }); // show it straight away
+  renderView(false);
+  const card = $(`.jobcard[data-job="${j.id}"]`); if (card && motionOK()) card.animate([{ transform: 'scale(.97)' }, { transform: 'scale(1.015)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.34,1.4,.64,1)' });
+  try { await saveItem('jobs', j.id, next === 'done' ? { status: 'done', reopenAs: was } : { status: next }); if (next === 'done') toast(`“${j.title}” marked done`); }
+  catch (_) { S.jobs[j.id] = j; renderView(false); }
+};
 A['job-assign'] = (el) => { const j = S.jobs[el.dataset.id]; const a = new Set(j.assignees || []); a.has(el.dataset.uid) ? a.delete(el.dataset.uid) : a.add(el.dataset.uid); saveItem('jobs', j.id, { assignees: [...a] }); };
 A['job-here'] = (el) => {
   if (!window.isSecureContext || !navigator.geolocation) return toast('Location needs a secure https:// link', true);
