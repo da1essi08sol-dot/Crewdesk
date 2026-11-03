@@ -505,6 +505,12 @@ function agItem(it) {
   const body = `<span class="bar" style="--c:${c}"></span><span class="tm">${tm}</span><span class="grow" style="min-width:0"><span class="ti ellipsis" style="display:block">${esc(itTitle(it))}</span><span class="tiny muted ellipsis" style="display:block">${esc(it.sub || '')}</span></span>${it.kind === 'event' && (it.ev.participants || []).length ? avatarStack(it.ev.participants, 3) : ''}`;
   return it.kind === 'event' ? `<button class="ag-item" data-act="event-open" data-id="${it.id}">${body}</button>` : `<a class="ag-item" href="${it.link}">${body}</a>`;
 }
+// Coloured bars under a date (one per item, up to three; with more, two bars and "+N") — easier to spot than dots.
+function calMarks(its, always = false) {
+  if (!its.length) return `<span class="cal-marks ${always ? 'always' : ''}"></span>`;
+  const shown = its.length > 3 ? its.slice(0, 2) : its.slice(0, 3);
+  return `<span class="cal-marks ${always ? 'always' : ''}" aria-hidden="true">${shown.map((it) => `<i style="--c:${esc(itColor(it))}"></i>`).join('')}${its.length > 3 ? `<em>+${its.length - 2}</em>` : ''}</span>`;
+}
 const monday = (d) => { const x = new Date(d); const k = (x.getDay() + 6) % 7; x.setDate(x.getDate() - k); return x; };
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const calWide = () => matchMedia('(min-width: 700px)').matches;
@@ -520,7 +526,7 @@ function weekStrip(sel) {
   const st = monday(parseD(sel));
   return `<div class="wk-strip">${[0, 1, 2, 3, 4, 5, 6].map((i) => { const d = addDays(st, i); const ds = dstr(d); const n = calendarItems(ds, ds).length;
     return `<button class="wk-day ${ds === todayStr() ? 'today' : ''} ${ds === sel ? 'sel' : ''}" data-act="cal-pick" data-d="${ds}" aria-pressed="${ds === sel}" aria-label="${esc(d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))}${n ? ', ' + plural(n, 'item') : ''}">
-      <span class="dw">${d.toLocaleDateString('en-GB', { weekday: 'narrow' })}</span><span class="dn">${d.getDate()}</span><span class="cal-dots" style="display:flex">${calendarItems(ds, ds).slice(0, 3).map((it) => `<i style="--c:${esc(itColor(it))}"></i>`).join('')}</span></button>`; }).join('')}</div>`;
+      <span class="dw">${d.toLocaleDateString('en-GB', { weekday: 'narrow' })}</span><span class="dn">${d.getDate()}</span>${calMarks(calendarItems(ds, ds), true)}</button>`; }).join('')}</div>`;
 }
 // Hour-by-hour timeline for one or more days.
 const HOUR_PX = 52;
@@ -567,7 +573,7 @@ VIEWS.calendar = {
           return `<div class="cal-cell ${d.getMonth() !== cur.getMonth() ? 'other' : ''} ${ds === todayStr() ? 'today' : ''} ${ds === sel ? 'sel' : ''} ${wk ? 'we' : ''}" role="gridcell" data-act="cal-pick" data-d="${ds}" tabindex="0" aria-selected="${ds === sel}" aria-label="${esc(d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))}${its.length ? ', ' + plural(its.length, 'item') : ''}">
             <span class="dn">${d.getDate()}</span>
             <span class="evs">${its.slice(0, max).map(calPill).join('')}${its.length > max && max ? `<span class="cal-more">${its.length - max} more</span>` : ''}</span>
-            <span class="cal-dots">${its.slice(0, 3).map((it) => `<i style="--c:${esc(itColor(it))}"></i>`).join('')}</span></div>`; }).join('')}</div></div>
+            ${calMarks(its)}</div>`; }).join('')}</div></div>
         ${dayAgenda(sel)}`;
     } else if (view === 'week') {
       const st = monday(cur); const en = addDays(st, 6);

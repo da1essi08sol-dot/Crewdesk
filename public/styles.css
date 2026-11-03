@@ -1038,3 +1038,10 @@ html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .w
 .job-tick { position: relative; }
 .job-tick::after { content: ""; position: absolute; inset: -9px; }
 @media (pointer: coarse) { .job-tick { width: 28px; height: 28px; } }
+/* calendar markers: short coloured bars instead of dots */
+.cal-marks { display: none; flex-direction: column; align-items: center; gap: 2px; width: 100%; min-height: 0; }
+.cal-marks.always { display: flex; min-height: 20px; }
+.cal-marks i { display: block; width: 72%; max-width: 30px; height: 5px; border-radius: 3px; background: var(--c); }
+.cal-marks em { font: 700 10px/1 var(--font); font-style: normal; color: var(--ink-2); background: rgba(120,120,128,.18); border-radius: 6px; padding: 1px 5px; }
+@media (max-width: 699px) { .cal-marks { display: flex; min-height: 20px; } .cal-cell { min-height: 64px; } }
+.wk-day .cal-marks { width: 80%; }
