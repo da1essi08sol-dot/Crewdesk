@@ -34,7 +34,10 @@ function companyProfileHtml(c, back) {
           ${c.visibility === 'public' ? '<span class="pill">Public</span>' : `<span class="pill lock">${ic('lock')}Private</span>`}
           ${c.website ? `<a class="small" href="${esc(c.website)}" target="_blank" rel="noopener noreferrer">${esc(c.website.replace(/^https?:\/\//, ''))}</a>` : ''}</div>
         ${c.description ? `<p class="pre" style="margin:16px 0 0">${linkify(c.description)}</p>` : '<p class="muted small" style="margin:16px 0 0">No description yet.</p>'}
-      </div></div>`;
+      </div></div>
+    ${(c.people || []).length ? `<div class="card section"><h3 style="margin-bottom:10px">People${c.isMember ? '' : ' with public profiles'}</h3><div class="stack tight">${c.people.map((p) => {
+      const inner = `${avatar(p, 'sm', { link: false })}<span class="grow ellipsis"><b>${esc(p.name)}</b>${p.title ? ` <span class="muted small">· ${esc(p.title)}</span>` : ''}</span>${p.role === 'owner' ? '<span class="pill">Owner</span>' : ''}`;
+      return S.company ? `<a href="#/person/${p.id}" class="row" style="text-decoration:none;color:inherit;padding:4px 0">${inner}</a>` : `<div class="row" style="padding:4px 0">${inner}</div>`; }).join('')}</div></div>` : ''}`;
 }
 const dirState = { q: '', items: null, total: 0, timer: null };
 async function loadDirectory(q) {

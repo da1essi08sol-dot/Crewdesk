@@ -367,6 +367,7 @@ VIEWS.profile = {
         <div class="card"><h2 style="margin-bottom:4px">Privacy</h2>
           ${sw('showPhone', u.privacy.showPhone !== false, 'Show my phone number', 'To people in my companies', 'data-change="privacy" data-k="showPhone"')}
           ${sw('showEmail', u.privacy.showEmail !== false, 'Show my email address', 'To people in my companies', 'data-change="privacy" data-k="showEmail"')}
+          ${sw('profilePublic', !!u.privacy.profilePublic, 'Let people outside my companies see my profile', 'Anyone signed in to Crewdesk can see your name, picture, job title, bio and public companies — never your phone, email or location', 'data-change="privacy" data-k="profilePublic"')}
           ${sw('showCompanies', u.privacy.showCompanies !== false, 'Show the companies I’m in on my profile', 'Public companies are shown to anyone who can see your profile; private ones only to people who are in them too', 'data-change="privacy" data-k="showCompanies"')}
           ${sw('share', !!u.shareLocation, 'Share my live location', 'While Crewdesk is open on my phone. Positions are deleted after 12 hours.', 'data-change="share-loc"')}</div>
       </div>
@@ -523,6 +524,7 @@ function legalHtml(kind) {
     <li>Uploaded photos and documents can only be opened by signed-in people who are allowed to see the item they’re attached to.</li>
     <li><b>Company profiles</b> are private by default. If an owner or admin makes one public, its name, picture, banner, description, trade, area, website and member count can be found by anyone signed in to Crewdesk. A company’s jobs, chats, files and member list are never public.</li>
     <li>If you ask to join a company, its owners and admins see your name, email address, profile picture and any message you add.</li>
+    <li>Your profile is only visible to people in your companies, unless you choose to let people outside them see it. If you do, anyone signed in to Crewdesk can see your name, picture, job title, department, bio and public companies — never your phone number, email address, location or when you’re online.</li>
     <li>Your profile can show which companies you’re in: public ones to people who can see your profile, private ones only to people who are in them too. You can turn this off in your settings.</li></ul>
     <h2>Services we use</h2>
     <ul><li><b>Hosting:</b> Render (web hosting) and Neon (database), both in the EU (Frankfurt), store data for us under contract.</li>

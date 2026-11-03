@@ -176,7 +176,7 @@ function migrate() {
   }
   for (const u of Object.values(db.users)) {
     u.prefs = Object.assign({ popups: true, desktop: false, sound: false }, u.prefs || {});
-    u.privacy = Object.assign({ showPhone: true, showEmail: true, showCompanies: true }, u.privacy || {});
+    u.privacy = Object.assign({ showPhone: true, showEmail: true, showCompanies: true, profilePublic: false }, u.privacy || {});
     u.favs = u.favs || {}; u.reads = u.reads || {};
   }
   for (const c of Object.values(db.companies)) {
@@ -233,8 +233,18 @@ function directoryCard(c, viewerId, full = false) {
   const o = { id: c.id, name: c.name, logo: c.logo || '', banner: c.banner || '', bannerPos: c.bannerPos != null ? c.bannerPos : 50, description: full ? (p.description || '') : (p.description || '').slice(0, 220),
     location: p.location || '', industry: p.industry || '', website: p.website || '', visibility: p.visibility || 'private', membersCount: Object.keys(c.members).length,
     createdAt: c.createdAt, isMember: !!c.members[viewerId], requested: !!(c.requests && c.requests[viewerId]) };
-  if (full) o.owner = (db.users[c.ownerId] || {}).name || '';
+  if (full) {
+    o.owner = (db.users[c.ownerId] || {}).name || '';
+    // people who've chosen to show their profile outside their companies (or everyone, if you're in it too)
+    o.people = Object.keys(c.members).map((id) => db.users[id]).filter((u) => u && (c.members[viewerId] || (u.privacy && u.privacy.profilePublic)))
+      .slice(0, 48).map((u) => ({ id: u.id, name: u.name, avatar: u.avatar || '', title: u.title || '', role: c.members[u.id].role }));
+  }
   return o;
+}
+function sharesCompany(a, b) { return Object.values(db.companies).some((c) => c.members[a] && c.members[b]); }
+// A profile as someone outside your companies sees it: never contact details, location or online status.
+function outsideProfile(u, viewerId) {
+  return { id: u.id, name: u.name, avatar: u.avatar || '', title: u.title || '', dept: u.dept || '', bio: u.bio || '', companies: profileCompanies(u, viewerId), outside: true };
 }
 function myRequests(userId) {
   return Object.values(db.companies).filter((c) => c.requests && c.requests[userId]).map((c) => ({ id: c.id, name: c.name, logo: c.logo || '', at: c.requests[userId].at }));
@@ -394,7 +404,7 @@ function dropCompanyFiles(cid) {
 }
 function canReadFile(user, e) {
   if (!e) return false;
-  if (e.kind === 'avatar') return e.owner === user.id || Object.values(db.companies).some((c) => c.members[user.id] && c.members[e.owner]);
+  if (e.kind === 'avatar') return e.owner === user.id || sharesCompany(user.id, e.owner) || !!(db.users[e.owner] && db.users[e.owner].privacy && db.users[e.owner].privacy.profilePublic);
   if (e.kind === 'banner' || e.kind === 'logo') { const c = db.companies[e.cid]; return !!(c && (c.members[user.id] || (c.profile && c.profile.visibility === 'public'))); }
   const c = db.companies[e.cid]; if (!c) return false;
   const x = ctxFor(c, user.id); if (!x) return false;
@@ -866,7 +876,7 @@ async function api(req, res, url) {
     if (existing) { delete db.users[existing.id]; for (const [k, t] of Object.entries(db.tokens)) if (t.userId === existing.id) delete db.tokens[k]; }
     const h = await passwords.hash(b.password);
     const u = { id: uid(), email, name, salt: h.salt, hash: h.hash, kdf: h.kdf, verified: false, title: '', dept: '', phone: '', bio: '', avatar: '', shareLocation: false,
-      reads: {}, favs: {}, prefs: { popups: true, desktop: false, sound: false }, privacy: { showPhone: true, showEmail: true, showCompanies: true },
+      reads: {}, favs: {}, prefs: { popups: true, desktop: false, sound: false }, privacy: { showPhone: true, showEmail: true, showCompanies: true, profilePublic: false },
       createdAt: now(), lastSeen: 0, agreedAt: now(), agreedVersion: LEGAL_VERSION, pendingInvite: invite };
     db.users[u.id] = u; save();
     const r = await sendVerify(u);
@@ -968,6 +978,15 @@ async function api(req, res, url) {
   if (p === '/api/logout-others' && M === 'POST') { endSessions(user.id, cur.key); return json(res, 200, { ok: true }); }
   if (p === '/api/me' && M === 'GET') return json(res, 200, { user: meUser(user), companies: companiesFor(user.id), requests: myRequests(user.id), sessions: Object.values(db.sessions).filter((s) => s.userId === user.id).length });
 
+  // --- someone's profile: people in your companies, or anyone who has made their profile public
+  if ((m = /^\/api\/people\/([A-Za-z0-9]+)$/.exec(p)) && M === 'GET') {
+    throttle('people:' + user.id, 120, 60e3);
+    const u = db.users[m[1]];
+    if (!u || u.deleted) notFound('That profile isn’t available');
+    if (u.id === user.id || sharesCompany(user.id, u.id)) return json(res, 200, { person: Object.assign(publicUser(u, user.id), { companies: profileCompanies(u, user.id), outside: false }) });
+    if (!(u.privacy && u.privacy.profilePublic)) notFound('This profile is private');
+    return json(res, 200, { person: outsideProfile(u, user.id) });
+  }
   // --- company directory: public companies can be found by anyone signed in, and asked to join
   if (p === '/api/directory' && M === 'GET') {
     throttle('dir:' + user.id, 120, 60e3);
@@ -1011,7 +1030,7 @@ async function api(req, res, url) {
       if (old !== user.avatar) dropFile(old);
     }
     if (b.prefs && typeof b.prefs === 'object') for (const k of ['popups', 'desktop', 'sound']) if (k in b.prefs) user.prefs[k] = !!b.prefs[k];
-    if (b.privacy && typeof b.privacy === 'object') for (const k of ['showPhone', 'showEmail', 'showCompanies']) if (k in b.privacy) user.privacy[k] = !!b.privacy[k];
+    if (b.privacy && typeof b.privacy === 'object') for (const k of ['showPhone', 'showEmail', 'showCompanies', 'profilePublic']) if (k in b.privacy) user.privacy[k] = !!b.privacy[k];
     if ('shareLocation' in b) {
       user.shareLocation = !!b.shareLocation;
       if (!user.shareLocation) { delete db.locations[user.id]; broadcastUser(user.id, { t: 'loc', userId: user.id, loc: null }); }

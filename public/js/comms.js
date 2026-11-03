@@ -566,10 +566,32 @@ function focusMap(lat, lng) { if (!map) return; if (mapKind === 'gl') map.jumpTo
 A['map-focus'] = (el) => { const l = S.locations[el.dataset.id]; if (!l) return; mapFitted = true; if (parseHash().name !== 'team') location.hash = '#/team'; setTimeout(() => focusMap(l.lat, l.lng), 600); };
 
 // ============================================================ PERSON PROFILE
+// Someone outside your company: loaded from the server, shown only if they've made their profile public.
+const outsiders = {};
+function outsiderProfile(id) {
+  const o = outsiders[id];
+  if (!o || (o.at && Date.now() - o.at > 60000 && !o.loading)) {
+    outsiders[id] = { loading: true };
+    api('GET', '/api/people/' + encodeURIComponent(id)).then((r) => { outsiders[id] = Object.assign(r.person, { at: Date.now() }); }, (e) => { outsiders[id] = { error: e.message, at: Date.now() }; })
+      .then(() => { if (parseHash().name === 'person' && parseHash().args[0] === id) renderView(false); });
+  }
+  const p = outsiders[id];
+  const back = `<a class="back" href="#/companies" data-act="hist-back">${ic('back')}Back</a>`;
+  if (p.loading) return back + '<div class="skeleton" style="height:180px"></div>';
+  if (p.error) return back + `<div class="card empty">${ic('lock')}<h3>${esc(p.error)}</h3><div class="small">They haven’t made their profile visible outside their companies.</div></div>`;
+  return `${back}<div class="card"><div class="row top wrap" style="gap:18px">${avatar(p, 'xl', { link: false })}
+      <div class="grow stack tight"><h1>${esc(p.name)}</h1>
+        ${p.title || p.dept ? `<div class="muted">${esc([p.title, p.dept].filter(Boolean).join(' · '))}</div>` : ''}
+        <div><span class="pill">${icSize('search', 11)}Public profile</span></div>
+        ${p.bio ? `<p class="pre" style="margin:6px 0 0">${esc(p.bio)}</p>` : ''}</div></div></div>
+    ${(p.companies || []).length ? `<div class="card section"><h3 style="margin-bottom:8px">Companies</h3><div class="stack tight">${p.companies.map((c) => `<a href="#/company/${c.id}" class="row" style="text-decoration:none;color:inherit">${coLogo(c, 28)}<span class="grow ellipsis">${esc(c.name)}</span></a>`).join('')}</div></div>` : ''}
+    <p class="small muted" style="margin-top:12px">${esc(p.name.split(' ')[0])} isn’t in ${esc(S.company.name)}, so you can only see what they’ve chosen to share publicly.</p>`;
+}
+A['hist-back'] = () => { if (history.length > 1) history.back(); else location.hash = '#/home'; };
 VIEWS.person = {
   render(id) {
     const m = S.members[id];
-    if (!m) return `<a class="back" href="#/team">${ic('back')}Team</a><div class="card empty"><h3>Person not found</h3><div class="small">They may have left the company.</div></div>`;
+    if (!m) return outsiderProfile(id);
     const me = id === S.user.id; const loc = S.locations[id];
     const projects = Object.values(S.projects).filter((p) => !p.archived && (p.createdBy === id || (p.members || []).includes(id) || projectJobs(p.id).some((j) => (j.assignees || []).includes(id))));
     const jobs = Object.values(S.jobs).filter((j) => j.status !== 'done' && (j.assignees || []).includes(id)).sort(byDeadline);
