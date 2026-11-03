@@ -324,6 +324,8 @@ VIEWS.team = {
         <label class="loc-banner">${ic('locate')}<div class="grow"><b>Share my live location</b><div class="small muted">Your company sees where you are while Crewdesk is open on your phone. Turn it off any time.</div></div>
           <span class="switch"><input type="checkbox" ${sharing ? 'checked' : ''} data-change="share-loc" aria-label="Share my live location"><i></i></span></label>
         ${!window.isSecureContext ? `<div class="warn">Location needs a secure <b>https://</b> link.</div>` : ''}
+        <div class="row between wrap" style="gap:8px"><span class="small muted">Zoom right in to see buildings, house numbers and footpaths.</span>
+          <div class="seg" role="radiogroup" aria-label="Map style">${Object.entries(MAP_STYLES).map(([k, l]) => `<button type="button" class="${mapStyle() === k ? 'on' : ''}" data-act="map-style" data-s="${k}" role="radio" aria-checked="${mapStyle() === k}">${l}</button>`).join('')}</div></div>
         <div id="map" role="region" aria-label="Map of people and job sites"></div>
         <div class="grid halves">
           <div><div class="section-head"><h2>People</h2></div><div class="card flush" id="team-people">${this.people()}</div></div>
@@ -373,6 +375,15 @@ let map = null, mapKind = '', mapMarkers = [], mapFitted = false, glP = null, le
 function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Map could not load')); document.head.appendChild(s); }); }
 function loadCss(href) { if ($(`link[href="${href}"]`)) return; const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); }
 function webglOK() { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; } }
+// OpenFreeMap styles: "liberty" is the most detailed (buildings, shops, house numbers, paths).
+const MAP_STYLES = { liberty: 'Detailed', bright: 'Bright', positron: 'Light', dark: 'Dark' };
+const mapStyle = () => { const s = store.get('cd_mapStyle'); return MAP_STYLES[s] ? s : 'liberty'; };
+const styleUrl = () => `https://tiles.openfreemap.org/styles/${mapStyle()}`;
+A['map-style'] = (el) => {
+  store.set('cd_mapStyle', el.dataset.s);
+  $$('[data-act="map-style"]').forEach((b) => { b.classList.toggle('on', b === el); b.setAttribute('aria-checked', b === el); });
+  if (map && mapKind === 'gl') map.setStyle(styleUrl()); // markers are separate, so they stay put
+};
 const darkMode = () => document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
 async function drawMap() {
   const el = $('#map'); if (!el) return;
@@ -385,7 +396,7 @@ async function drawMap() {
     if (!el.isConnected) return;
     el.innerHTML = '';
     let ok = false, gaveUp = false;
-    const m = new maplibregl.Map({ container: el, style: `https://tiles.openfreemap.org/styles/${darkMode() ? 'dark' : 'positron'}`, center: [-3, 54.5], zoom: 4.6,
+    const m = new maplibregl.Map({ container: el, style: styleUrl(), center: [-3, 54.5], zoom: 4.6, maxZoom: 20,
       attributionControl: { compact: true }, cooperativeGestures: isTouch(), dragRotate: false, pitchWithRotate: false });
     map = m; mapKind = 'gl'; mapFitted = false;
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
