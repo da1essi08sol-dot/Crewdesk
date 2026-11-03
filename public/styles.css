@@ -1025,7 +1025,10 @@ html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .w
 .flow-dot { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; margin-top: 12px; position: relative; z-index: 1;
   background: #ff3b30; color: #fff; font: 700 13px var(--font); box-shadow: 0 0 0 4px var(--bg), 0 2px 8px color-mix(in srgb, #ff3b30 40%, transparent);
   transition: background-color .35s, box-shadow .35s; }
-.flow-step.done .flow-dot { background: #34c759; box-shadow: 0 0 0 4px var(--bg), 0 2px 8px color-mix(in srgb, #34c759 40%, transparent); animation: check-pop .5s var(--bounce); }
+.flow-step.done .flow-dot { background: #34c759; box-shadow: 0 0 0 4px var(--bg), 0 2px 8px color-mix(in srgb, #34c759 40%, transparent); }
+.flow-step.just-done .flow-dot { animation: check-pop .5s var(--bounce); }
+.flow-step::before { transition: background-color .35s; }
+.jobcard { transition: background-color .35s, transform .4s var(--spring), box-shadow .4s var(--spring); }
 .flow-dot svg { width: 17px; height: 17px; stroke-width: 3; }
 .flow-mini { display: flex; align-items: center; gap: 0; flex-wrap: wrap; row-gap: 6px; }
 .flow-mini i { width: 11px; height: 11px; border-radius: 50%; background: #ff3b30; flex: none; position: relative; margin-right: 9px; transition: background-color .3s; }

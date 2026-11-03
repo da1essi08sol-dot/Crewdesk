@@ -203,7 +203,9 @@ function renderView(auto = false, scrollTop = false) {
   if (auto && current.v.manual) return;
   if (auto && main.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   const y = window.scrollY;
-  main.innerHTML = current.v.render(...current.args);
+  const html = current.v.render(...current.args);
+  if (auto && html === main._html) return; // live update with nothing new to show: leave the page alone (no flicker)
+  main.innerHTML = html; main._html = html;
   if (current.v.mount) current.v.mount(...current.args);
   window.scrollTo(0, scrollTop ? 0 : y);
   placeTabInk(null);

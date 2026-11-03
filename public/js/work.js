@@ -422,14 +422,44 @@ A['edit-job'] = (el) => jobSheet(S.jobs[el.dataset.id]);
 A['del-job'] = async (el) => { const j = S.jobs[el.dataset.id]; if (await confirmBox('Delete this job?', `“${j.title}”, its tasks, photos and chat will be deleted for everyone. This can’t be undone.`)) { if (await deleteItem('jobs', j.id)) location.hash = '#/jobs'; } };
 A['job-status'] = (el) => saveItem('jobs', el.dataset.id, { status: el.dataset.s });
 A['job-tick'] = async (el) => {
-  const j = S.jobs[el.dataset.id]; if (!j) return;
+  const j = S.jobs[el.dataset.id]; if (!j || el.dataset.busy) return;
   const was = j.status; const next = was === 'done' ? (j.reopenAs && j.reopenAs !== 'done' ? j.reopenAs : 'active') : 'done';
-  S.jobs[j.id] = Object.assign({}, j, { status: next }); // show it straight away
-  renderView(false);
-  const card = $(`.jobcard[data-job="${j.id}"]`); if (card && motionOK()) card.animate([{ transform: 'scale(.97)' }, { transform: 'scale(1.015)' }, { transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.34,1.4,.64,1)' });
-  try { await saveItem('jobs', j.id, next === 'done' ? { status: 'done', reopenAs: was } : { status: next }); if (next === 'done') toast(`“${j.title}” marked done`); }
-  catch (_) { S.jobs[j.id] = j; renderView(false); }
+  S.jobs[j.id] = Object.assign({}, j, { status: next });
+  paintJobDone(j.id, next === 'done'); // update just this job on screen, straight away
+  $$(`.job-tick[data-id="${j.id}"]`).forEach((b) => { b.dataset.busy = '1'; });
+  try {
+    const item = await capi('PATCH', `/jobs/${j.id}`, next === 'done' ? { status: 'done', reopenAs: was } : { status: next });
+    S.jobs[j.id] = item.item; settleView();
+  } catch (e) { S.jobs[j.id] = j; paintJobDone(j.id, was === 'done'); settleView(); toast(e.message, true); }
+  finally { $$(`.job-tick[data-id="${j.id}"]`).forEach((b) => { delete b.dataset.busy; }); }
 };
+// Flip a job between done / not done everywhere it's on screen, without redrawing the page.
+function paintJobDone(id, done) {
+  const j = S.jobs[id];
+  $$(`.job-tick[data-id="${id}"]`).forEach((b) => { b.classList.toggle('on', done); b.setAttribute('aria-checked', done); b.title = done ? 'Done — tap to reopen' : 'Mark as done'; });
+  $$(`.jobcard[data-job="${id}"]`).forEach((c) => {
+    c.classList.toggle('is-done', done);
+    const bar = c.querySelector('.bar'); if (bar) bar.style.background = done ? 'var(--ok)' : STATUS_COLOR[j.status];
+    const pill = c.querySelector('.pill[class*="st-"]'); if (pill) { pill.className = `pill st-${j.status}`; pill.textContent = STATUS[j.status]; }
+  });
+  const step = $(`.flow-step[data-step="${id}"]`);
+  if (step) {
+    step.classList.toggle('done', done); step.classList.toggle('just-done', done);
+    const steps = $$('.flow-step');
+    steps.forEach((st, i) => { const dot = st.querySelector('.flow-dot'); const d = st.classList.contains('done');
+      if (dot) dot.innerHTML = d ? ic('check') : `<b>${i + 1}</b>`;
+      st.classList.toggle('link-done', d && !!steps[i + 1] && steps[i + 1].classList.contains('done')); });
+    const n = steps.filter((st) => st.classList.contains('done')).length;
+    const head = step.closest('div').querySelector('.section-head h2 .muted'); if (head) head.textContent = `${n} of ${steps.length} done`;
+    const prog = step.closest('div').querySelector('.progress i'); if (prog) prog.style.width = (n / steps.length * 100) + '%';
+  }
+}
+// After a tick, the page already shows the right thing: remember that, so the live update doesn't redraw it.
+function settleView() {
+  const main = $('#view'); if (!main || !current.v) return;
+  if (current.name === 'project') { main._html = current.v.render(...current.args); return; }
+  scheduleRender(); // lists (e.g. "Open jobs") may need the job to move or disappear
+}
 A['job-assign'] = (el) => { const j = S.jobs[el.dataset.id]; const a = new Set(j.assignees || []); a.has(el.dataset.uid) ? a.delete(el.dataset.uid) : a.add(el.dataset.uid); saveItem('jobs', j.id, { assignees: [...a] }); };
 A['job-here'] = (el) => {
   if (!window.isSecureContext || !navigator.geolocation) return toast('Location needs a secure https:// link', true);
