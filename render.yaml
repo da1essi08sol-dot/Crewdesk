@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: crewdesk
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /manifest.webmanifest
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: NODE_VERSION
+        value: "22"
