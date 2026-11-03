@@ -9,7 +9,7 @@ async function boot() {
   let me = null;
   try { me = await api('GET', '/api/me'); } catch (_) {}
   if (!me) { S.user = null; return publicRoute(r0); }
-  S.user = me.user; S.companies = me.companies;
+  S.user = me.user; S.companies = me.companies; S.myRequests = me.requests || [];
   if (r0.name === 'verify') history.replaceState(null, '', '/#/home');
   if (r0.name === 'invite' && r0.args[0]) setPendingInvite(r0.args[0]);
   await enterApp();
@@ -51,7 +51,7 @@ async function loadCompany(keepView = false) {
 }
 function signOutLocal(msg) {
   stopAll(); destroyMap(); closeViewer(); closeMenu();
-  S.user = null; S.company = null; S.cid = null; S.companies = [];
+  S.user = null; S.company = null; S.cid = null; S.companies = []; S.myRequests = undefined;
   $('#sheet-root').innerHTML = ''; history.replaceState(null, '', '/#/login'); renderLogin(msg ? esc(msg) : '');
 }
 
@@ -63,7 +63,7 @@ function navLink([k, l, i], extra = '') {
   return `<a class="navbtn" data-nav="${k}" href="#/${k}" ${extra}>${ic(i)}<span>${l}</span>${k === 'chat' || k === 'pings' || k === 'more' ? `<span class="count hidden" data-badge="${k}"></span>` : ''}</a>`;
 }
 function coButton(cls = '') {
-  return `<button class="co-btn ${cls}" data-act="co-menu" aria-haspopup="menu" aria-label="Company menu: ${esc(S.company.name)}">${brand()}<span class="name ellipsis" data-co-name>${esc(S.company.name)}</span>${icSize('down', 15, 'flex:none;color:var(--muted)')}</button>`;
+  return `<button class="co-btn ${cls}" data-act="co-menu" aria-haspopup="menu" aria-label="Company menu: ${esc(S.company.name)}">${S.company.logo ? coLogo(S.company, 30) : brand()}<span class="name ellipsis" data-co-name>${esc(S.company.name)}</span>${icSize('down', 15, 'flex:none;color:var(--muted)')}</button>`;
 }
 function renderShell() {
   $('#app').innerHTML = `<div class="shell">
@@ -105,7 +105,7 @@ function updateChrome() {
   setBadge('chat', chatN); setBadge('pings', pingN);
   document.title = (chatN + pingN ? `(${chatN + pingN}) ` : '') + 'Crewdesk';
   const r = parseHash();
-  const map = { job: 'jobs', project: 'projects', client: 'clients', person: 'team', ping: 'pings' };
+  const map = { job: 'jobs', project: 'projects', client: 'clients', person: 'team', ping: 'pings', company: 'companies' };
   let active = map[r.name] || r.name;
   const inBottom = BOTTOM_NAV.some((n) => n[0] === active);
   $$('.navbtn').forEach((b) => {
@@ -137,6 +137,8 @@ A['co-menu'] = (el) => {
     <a class="mi" href="#/settings">${ic('settings')}Company settings</a>
     ${canInvite() ? `<button class="mi" data-act="invite-new">${ic('userplus')}Invite people</button>` : ''}
     <a class="mi" href="#/team">${ic('team')}People &amp; teams</a>
+    <a class="mi" href="#/company/${S.cid}">${ic('building')}Company profile</a>
+    <a class="mi" href="#/companies">${ic('search')}Find companies</a>
     ${isAdmin() ? `<a class="mi" href="#/sheets">${ic('sheet')}Spreadsheets</a>` : ''}
     <div class="sep"></div>
     ${others.map((c) => `<button class="mi" data-act="switch-co" data-id="${c.id}">${ic('building')}<span class="grow ellipsis">${esc(c.name)}</span></button>`).join('')}
@@ -216,7 +218,8 @@ window.addEventListener('hashchange', () => {
   if (!S.company) {
     if (isLegalRoute()) return renderLegalStandalone(r.name);
     if (r.name === 'invite' && r.args[0]) return openInvite(r.args[0]);
-    return renderOnboard();
+    if (r.name === 'company' && r.args[0]) return renderOnboardProfile(r.args[0]);
+    return renderOnboard(r.name === 'companies' ? 'find' : undefined);
   }
   route();
 });

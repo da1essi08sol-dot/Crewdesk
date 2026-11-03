@@ -153,14 +153,7 @@ A['invite-accept'] = async (el) => {
 };
 
 // ---- first-time setup: no company yet
-function renderOnboard() {
-  stopAll();
-  $('#app').innerHTML = `<div class="auth"><div class="auth-card" style="max-width:560px">
-    <div class="auth-brand">${brand()}<b>Crewdesk</b></div>
-    <h1>Hi ${esc(S.user.name.split(' ')[0])}</h1><p class="muted">Set up your company, or join the one you work for.</p>
-    <div class="stack">${companyForms()}<button class="btn ghost" data-act="logout">${ic('logout')} Sign out</button></div>
-    ${footLinks()}</div></div>`;
-}
+// (the first-time screen, renderOnboard, lives in directory.js)
 function companyForms() {
   return `<form class="card stack" data-form="create-co">
       <div><h2>Set up a new company</h2><p class="muted small" style="margin:4px 0 0">You’ll be the owner, and can invite your crew with a link.</p></div>

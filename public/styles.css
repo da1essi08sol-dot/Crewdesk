@@ -622,3 +622,7 @@ table.sheet-table { border-collapse: collapse; width: 100%; min-width: 760px; fo
 .skeleton { background: linear-gradient(90deg, var(--surface-2), var(--hover), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; border-radius: 8px; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 .boot { min-height: 100dvh; display: grid; place-items: center; color: var(--muted); }
+
+/* company profile */
+.coprof-join{margin-top:44px;flex:none}
+@media (max-width:560px){.coprof-join{margin-top:2px;width:100%}}

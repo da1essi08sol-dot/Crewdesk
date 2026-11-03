@@ -212,6 +212,7 @@ function zipStore(entries) {
 // ============================================================ COMPANY SETTINGS & INVITES
 VIEWS.settings = {
   manual: true,
+  mount(sub) { if (sub === 'requests') setTimeout(() => { const el = $('#requests'); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 60); },
   render() {
     const c = S.company; const admin = isAdmin();
     const invites = S.invites.filter((i) => i.state === 'ok');
@@ -219,6 +220,10 @@ VIEWS.settings = {
     return `<div class="page-head"><div><h1>Company settings</h1><div class="sub">${esc(c.name)} · you’re ${S.role === 'owner' ? 'the owner' : S.role === 'admin' ? 'an admin' : 'a member'}</div></div></div>
     <div class="grid halves">
       <div class="stack">
+        ${admin ? `<div class="card stack" id="requests"><h2>Requests to join ${c.requests && c.requests.length ? `<span class="count">${c.requests.length}</span>` : ''}</h2>
+          ${c.requests && c.requests.length ? c.requests.map((r) => `<div class="att-row" style="flex-wrap:wrap;align-items:flex-start">${avatar(r, '', { link: false })}<div class="grow" style="min-width:160px"><b>${esc(r.name)}</b><div class="tiny muted">${esc(r.email || '')} · ${timeAgo(r.at)}</div>${r.message ? `<div class="small pre" style="margin-top:4px">“${esc(r.message)}”</div>` : ''}</div>
+            <div class="row tight"><button class="btn sm" data-act="req-answer" data-id="${r.id}" data-a="0">Decline</button><button class="btn sm primary" data-act="req-answer" data-id="${r.id}" data-a="1">${ic('check')}Accept</button></div></div>`).join('')
+            : `<p class="small muted" style="margin:0">${c.profile.visibility === 'public' ? 'No requests right now. When someone finds your company and asks to join, they’ll appear here.' : 'Your company is private, so nobody can find it or ask to join. Make it public in the profile settings to allow requests.'}</p>`}</div>` : ''}
         ${canInvite() ? `<div class="card stack"><div class="row between"><div><h2>Invite people</h2><p class="small muted" style="margin:4px 0 0">Send someone a link. When they open it, the company is filled in for them, and they join once they’ve confirmed their email.</p></div></div>
           <button class="btn primary" data-act="invite-new">${ic('link')}Create invite link</button>
           ${invites.length ? `<div class="stack tight"><div class="label">Active links</div>${invites.map((i) => `<div class="att-row" style="flex-wrap:wrap">
@@ -235,6 +240,18 @@ VIEWS.settings = {
           <div class="form-grid"><label class="field"><span>Company name</span><input name="name" value="${esc(c.name)}" required maxlength="80"></label>
           <label class="field"><span>Currency symbol</span><input name="currency" value="${esc(c.settings.currency || '£')}" maxlength="3"></label></div>
           <div class="err-msg" data-err></div><button class="btn">Save details</button></form>
+        <form class="card stack" data-form="co-profile"><h2>Company profile</h2>
+          <p class="small muted" style="margin:0">What people see when they find your company. <a href="#/company/${c.id}">Preview it</a></p>
+          <div class="row">${coLogo(c, 64)}<div class="row wrap tight"><button type="button" class="btn sm" data-act="logo-upload">${ic('camera')}${c.logo ? 'Change picture' : 'Add a profile picture'}</button>${c.logo ? '<button type="button" class="btn sm ghost" data-act="logo-remove">Remove</button>' : ''}</div></div>
+          <label class="field"><span>Description</span><textarea name="description" maxlength="2000" placeholder="What you do, where you work, what you’re known for">${esc(c.profile.description)}</textarea></label>
+          <div class="form-grid"><label class="field"><span>Trade or industry</span><input name="industry" value="${esc(c.profile.industry)}" maxlength="60" placeholder="e.g. Building, Electrical"></label>
+          <label class="field"><span>Town or area</span><input name="location" value="${esc(c.profile.location)}" maxlength="100" placeholder="e.g. Newcastle"></label>
+          <label class="field full"><span>Website</span><input name="website" type="url" value="${esc(c.profile.website)}" maxlength="200" placeholder="https://"></label></div>
+          <div class="field"><span>Who can find your company</span>
+            <div class="seg" role="radiogroup"><button type="button" class="${c.profile.visibility !== 'public' ? 'on' : ''}" data-act="co-vis" data-v="private" role="radio" aria-checked="${c.profile.visibility !== 'public'}">${icSize('lock', 14, 'vertical-align:-2px;margin-right:4px')}Private</button><button type="button" class="${c.profile.visibility === 'public' ? 'on' : ''}" data-act="co-vis" data-v="public" role="radio" aria-checked="${c.profile.visibility === 'public'}">${icSize('search', 14, 'vertical-align:-2px;margin-right:4px')}Public</button></div>
+            <input type="hidden" name="visibility" value="${c.profile.visibility === 'public' ? 'public' : 'private'}">
+            <span class="hint">Private: only people you invite can join. Public: anyone on Crewdesk can find your profile and ask to join — you still choose who gets in. Your jobs, chats and files are never public.</span></div>
+          <div class="err-msg" data-err></div><button class="btn">Save profile</button></form>
         <div class="card stack"><h2>Banner</h2>
           <p class="small muted" style="margin:0">A picture shown across the top bar, to the right of your company name — your logo, a finished job, your vans. Wide photos work best (about 1600 × 300).</p>
           <div class="banner-preview" id="banner-preview" style="${c.banner ? `background-image:url('${esc(c.banner)}');background-position:center ${c.bannerPos != null ? c.bannerPos : 50}%` : ''}">${c.banner ? '' : 'No banner yet'}</div>
@@ -257,6 +274,28 @@ VIEWS.settings = {
 };
 C['co-setting'] = async (el) => { try { const r = await capi('PATCH', '', { settings: { [el.dataset.k]: el.checked } }); S.company = r.company; toast('Saved'); } catch (e) { toast(e.message, true); el.checked = !el.checked; } };
 F['co-name'] = async (f, d) => { const r = await capi('PATCH', '', { name: d.name, settings: { currency: d.currency } }); S.company = r.company; updateChrome(); toast('Saved'); };
+A['co-vis'] = (el) => {
+  const f = el.closest('.field');
+  $$('[data-act="co-vis"]', f).forEach((b) => { b.classList.toggle('on', b === el); b.setAttribute('aria-checked', b === el); });
+  f.querySelector('input[name=visibility]').value = el.dataset.v;
+};
+F['co-profile'] = async (f, d) => {
+  const r = await capi('PATCH', '', { profile: { description: d.description, industry: d.industry, location: d.location, website: d.website, visibility: d.visibility } });
+  S.company = r.company; renderView(false); toast(d.visibility === 'public' ? 'Profile saved — your company can now be found' : 'Profile saved');
+};
+A['logo-upload'] = async () => {
+  const [file] = await choosePhotos({ multiple: false, title: 'Company picture' });
+  if (!file) return;
+  const data = await cropAvatar(file); if (!data) return;
+  try { const r = await sendWithProgress('PATCH', `/api/c/${S.cid}`, { logo: data }); S.company = r.company; renderShell(); route(); toast('Company picture updated'); }
+  catch (e) { toast(e.message, true); }
+};
+A['logo-remove'] = async () => { try { const r = await capi('PATCH', '', { logo: '' }); S.company = r.company; renderShell(); route(); } catch (e) { toast(e.message, true); } };
+A['req-answer'] = async (el) => {
+  const yes = el.dataset.a === '1';
+  try { await capi('POST', `/requests/${el.dataset.id}`, { accept: yes }); toast(yes ? 'Accepted — they’re in the company now' : 'Request declined'); await loadCompany(true); }
+  catch (e) { toast(e.message, true); }
+};
 A['banner-upload'] = async (el) => {
   const [file] = await choosePhotos({ multiple: false, title: 'Company banner' });
   if (!file) return;
@@ -328,6 +367,7 @@ VIEWS.profile = {
         <div class="card"><h2 style="margin-bottom:4px">Privacy</h2>
           ${sw('showPhone', u.privacy.showPhone !== false, 'Show my phone number', 'To people in my companies', 'data-change="privacy" data-k="showPhone"')}
           ${sw('showEmail', u.privacy.showEmail !== false, 'Show my email address', 'To people in my companies', 'data-change="privacy" data-k="showEmail"')}
+          ${sw('showCompanies', u.privacy.showCompanies !== false, 'Show the companies I’m in on my profile', 'Public companies are shown to anyone who can see your profile; private ones only to people who are in them too', 'data-change="privacy" data-k="showCompanies"')}
           ${sw('share', !!u.shareLocation, 'Share my live location', 'While Crewdesk is open on my phone. Positions are deleted after 12 hours.', 'data-change="share-loc"')}</div>
       </div>
       <div class="stack">
@@ -411,6 +451,7 @@ VIEWS.more = {
         <a href="#/settings">${ic('settings')}<span class="grow">Company settings</span>${ic('right')}</a>
         <a href="#/profile">${ic('user')}<span class="grow">My profile &amp; settings</span>${ic('right')}</a>
         <button data-act="co-menu">${ic('building')}<span class="grow">Switch or join company</span>${ic('right')}</button>
+        <a href="#/companies">${ic('search')}<span class="grow">Find companies</span>${ic('right')}</a>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
         <a href="#/privacy">${ic('shield')}<span class="grow">Privacy policy</span>${ic('right')}</a>
@@ -478,7 +519,10 @@ function legalHtml(kind) {
     <ul><li>People in the same company see your name, profile picture, title and department. Your phone number and email are shown to them unless you hide them in your settings.</li>
     <li>Projects, jobs and events can be limited to selected people; otherwise everyone in the company can see them. Owners and admins can see all projects and jobs. Direct messages and group chats can only be read by the people in them.</li>
     <li>Pings are visible to everyone in the company. The person who posted a ping, and admins, can see how many people have read it.</li>
-    <li>Uploaded photos and documents can only be opened by signed-in people who are allowed to see the item they’re attached to.</li></ul>
+    <li>Uploaded photos and documents can only be opened by signed-in people who are allowed to see the item they’re attached to.</li>
+    <li><b>Company profiles</b> are private by default. If an owner or admin makes one public, its name, picture, banner, description, trade, area, website and member count can be found by anyone signed in to Crewdesk. A company’s jobs, chats, files and member list are never public.</li>
+    <li>If you ask to join a company, its owners and admins see your name, email address, profile picture and any message you add.</li>
+    <li>Your profile can show which companies you’re in: public ones to people who can see your profile, private ones only to people who are in them too. You can turn this off in your settings.</li></ul>
     <h2>Services we use</h2>
     <ul><li><b>Hosting:</b> Render (web hosting) and Neon (database), both in the EU (Frankfurt), store data for us under contract.</li>
     <li><b>Email:</b> confirmation, password-reset, security and invite emails are sent through our email provider (Brevo or Resend), which processes your email address to deliver them.</li>

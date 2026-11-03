@@ -176,7 +176,7 @@ function migrate() {
   }
   for (const u of Object.values(db.users)) {
     u.prefs = Object.assign({ popups: true, desktop: false, sound: false }, u.prefs || {});
-    u.privacy = Object.assign({ showPhone: true, showEmail: true }, u.privacy || {});
+    u.privacy = Object.assign({ showPhone: true, showEmail: true, showCompanies: true }, u.privacy || {});
     u.favs = u.favs || {}; u.reads = u.reads || {};
   }
   for (const c of Object.values(db.companies)) {
@@ -193,7 +193,10 @@ function buildFileIndex() {
   const idx = {};
   const name = (url) => (typeof url === 'string' && url.startsWith('/uploads/') ? url.slice(9) : null);
   for (const u of Object.values(db.users)) { const n = name(u.avatar); if (n) idx[n] = { kind: 'avatar', owner: u.id }; }
-  for (const c of Object.values(db.companies)) { const n = name(c.banner); if (n) idx[n] = { kind: 'banner', cid: c.id }; }
+  for (const c of Object.values(db.companies)) {
+    const n = name(c.banner); if (n) idx[n] = { kind: 'banner', cid: c.id };
+    const l = name(c.logo); if (l) idx[l] = { kind: 'logo', cid: c.id };
+  }
   for (const [cid, d] of Object.entries(db.data)) {
     if (!db.companies[cid]) continue;
     for (const p of Object.values(d.photos || {})) for (const u of [p.url, p.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'photo', cid, job: p.jobId }; }
@@ -213,15 +216,38 @@ function publicUser(u, viewerId) {
 }
 function meUser(u) { return Object.assign(publicUser(u), { prefs: u.prefs, privacy: u.privacy, verified: !!u.verified, createdAt: u.createdAt }); }
 function memberList(c, viewerId) {
-  return Object.entries(c.members).map(([id, m]) => Object.assign(publicUser(db.users[id], viewerId) || { id, name: 'Removed user' }, { role: m.role, joinedAt: m.joinedAt }));
+  return Object.entries(c.members).map(([id, m]) => Object.assign(publicUser(db.users[id], viewerId) || { id, name: 'Removed user' }, { role: m.role, joinedAt: m.joinedAt, companies: db.users[id] ? profileCompanies(db.users[id], viewerId) : [] }));
 }
 const canSeeMoney = (c, role) => isAdmin(role) || !!c.settings.membersSeeMoney;
 function publicCompany(c, role) {
-  return { id: c.id, name: c.name, code: isAdmin(role) || c.settings.allowCodeJoin ? c.code : '', ownerId: c.ownerId, createdAt: c.createdAt,
-    settings: c.settings, canSeeMoney: canSeeMoney(c, role), banner: c.banner || '', bannerPos: c.bannerPos || 50 };
+  const profile = Object.assign({ visibility: 'private', description: '', location: '', industry: '', website: '' }, c.profile || {});
+  const out = { id: c.id, name: c.name, code: isAdmin(role) || c.settings.allowCodeJoin ? c.code : '', ownerId: c.ownerId, createdAt: c.createdAt,
+    settings: c.settings, canSeeMoney: canSeeMoney(c, role), banner: c.banner || '', bannerPos: c.bannerPos != null ? c.bannerPos : 50, logo: c.logo || '', profile,
+    membersCount: Object.keys(c.members).length };
+  if (isAdmin(role)) out.requests = Object.values(c.requests || {}).filter((r) => db.users[r.userId]).map((r) => Object.assign({ at: r.at, message: r.message }, publicUser(db.users[r.userId])));
+  return out;
+}
+// What anyone signed in may see about a public company (or members about their own).
+function directoryCard(c, viewerId, full = false) {
+  const p = c.profile || {};
+  const o = { id: c.id, name: c.name, logo: c.logo || '', banner: c.banner || '', bannerPos: c.bannerPos != null ? c.bannerPos : 50, description: full ? (p.description || '') : (p.description || '').slice(0, 220),
+    location: p.location || '', industry: p.industry || '', website: p.website || '', visibility: p.visibility || 'private', membersCount: Object.keys(c.members).length,
+    createdAt: c.createdAt, isMember: !!c.members[viewerId], requested: !!(c.requests && c.requests[viewerId]) };
+  if (full) o.owner = (db.users[c.ownerId] || {}).name || '';
+  return o;
+}
+function myRequests(userId) {
+  return Object.values(db.companies).filter((c) => c.requests && c.requests[userId]).map((c) => ({ id: c.id, name: c.name, logo: c.logo || '', at: c.requests[userId].at }));
+}
+function broadcastAdmins(c, evt) { broadcast(c.id, evt, { only: Object.keys(c.members).filter((id) => isAdmin(c.members[id].role)) }); }
+// Companies shown on someone's profile: only public ones, or ones the viewer is also in.
+function profileCompanies(u, viewerId) {
+  if (u.privacy && u.privacy.showCompanies === false && u.id !== viewerId) return [];
+  return Object.values(db.companies).filter((c) => c.members[u.id] && (c.members[viewerId] || (c.profile && c.profile.visibility === 'public')))
+    .map((c) => ({ id: c.id, name: c.name, logo: c.logo || '', role: c.members[u.id].role, shared: !!c.members[viewerId], public: !!(c.profile && c.profile.visibility === 'public') }));
 }
 function companiesFor(userId) {
-  return Object.values(db.companies).filter((c) => c.members[userId]).map((c) => ({ id: c.id, name: c.name, role: c.members[userId].role }));
+  return Object.values(db.companies).filter((c) => c.members[userId]).map((c) => ({ id: c.id, name: c.name, role: c.members[userId].role, logo: c.logo || '' }));
 }
 function memberIds(c, arr, max = 100) { return Array.isArray(arr) ? [...new Set(arr.map(String))].filter((id) => c.members[id]).slice(0, max) : []; }
 function list(arr, fn, max = 200) { return Array.isArray(arr) ? arr.slice(0, max).map(fn) : []; }
@@ -369,7 +395,7 @@ function dropCompanyFiles(cid) {
 function canReadFile(user, e) {
   if (!e) return false;
   if (e.kind === 'avatar') return e.owner === user.id || Object.values(db.companies).some((c) => c.members[user.id] && c.members[e.owner]);
-  if (e.kind === 'banner') return !!(db.companies[e.cid] && db.companies[e.cid].members[user.id]);
+  if (e.kind === 'banner' || e.kind === 'logo') { const c = db.companies[e.cid]; return !!(c && (c.members[user.id] || (c.profile && c.profile.visibility === 'public'))); }
   const c = db.companies[e.cid]; if (!c) return false;
   const x = ctxFor(c, user.id); if (!x) return false;
   if (e.kind === 'photo') return canSeeJob(x, x.d.jobs[e.job]);
@@ -840,7 +866,7 @@ async function api(req, res, url) {
     if (existing) { delete db.users[existing.id]; for (const [k, t] of Object.entries(db.tokens)) if (t.userId === existing.id) delete db.tokens[k]; }
     const h = await passwords.hash(b.password);
     const u = { id: uid(), email, name, salt: h.salt, hash: h.hash, kdf: h.kdf, verified: false, title: '', dept: '', phone: '', bio: '', avatar: '', shareLocation: false,
-      reads: {}, favs: {}, prefs: { popups: true, desktop: false, sound: false }, privacy: { showPhone: true, showEmail: true },
+      reads: {}, favs: {}, prefs: { popups: true, desktop: false, sound: false }, privacy: { showPhone: true, showEmail: true, showCompanies: true },
       createdAt: now(), lastSeen: 0, agreedAt: now(), agreedVersion: LEGAL_VERSION, pendingInvite: invite };
     db.users[u.id] = u; save();
     const r = await sendVerify(u);
@@ -940,7 +966,40 @@ async function api(req, res, url) {
 
   if (p === '/api/logout' && M === 'POST') { delete db.sessions[cur.key]; setSessionCookie(req, res, '', 0); save(); return json(res, 200, { ok: true }); }
   if (p === '/api/logout-others' && M === 'POST') { endSessions(user.id, cur.key); return json(res, 200, { ok: true }); }
-  if (p === '/api/me' && M === 'GET') return json(res, 200, { user: meUser(user), companies: companiesFor(user.id), sessions: Object.values(db.sessions).filter((s) => s.userId === user.id).length });
+  if (p === '/api/me' && M === 'GET') return json(res, 200, { user: meUser(user), companies: companiesFor(user.id), requests: myRequests(user.id), sessions: Object.values(db.sessions).filter((s) => s.userId === user.id).length });
+
+  // --- company directory: public companies can be found by anyone signed in, and asked to join
+  if (p === '/api/directory' && M === 'GET') {
+    throttle('dir:' + user.id, 120, 60e3);
+    const q = str(url.searchParams.get('q'), 80).toLowerCase();
+    let list = Object.values(db.companies).filter((c) => c.profile && c.profile.visibility === 'public');
+    if (q) list = list.filter((c) => [c.name, c.profile.description, c.profile.location, c.profile.industry].join(' ').toLowerCase().includes(q));
+    list.sort((a, b) => Object.keys(b.members).length - Object.keys(a.members).length || a.name.localeCompare(b.name));
+    return json(res, 200, { items: list.slice(0, 60).map((c) => directoryCard(c, user.id)), total: list.length });
+  }
+  if ((m = /^\/api\/directory\/([A-Za-z0-9]+)$/.exec(p)) && M === 'GET') {
+    const c = db.companies[m[1]];
+    if (!c || !(c.members[user.id] || (c.profile && c.profile.visibility === 'public'))) notFound('That company isn’t listed');
+    return json(res, 200, { company: directoryCard(c, user.id, true) });
+  }
+  if ((m = /^\/api\/directory\/([A-Za-z0-9]+)\/request$/.exec(p)) && (M === 'POST' || M === 'DELETE')) {
+    const c = db.companies[m[1]];
+    if (!c || !(c.profile && c.profile.visibility === 'public')) notFound('That company isn’t listed');
+    c.requests = c.requests || {};
+    if (M === 'DELETE') { delete c.requests[user.id]; save(); broadcastAdmins(c, { t: 'reload' }); return json(res, 200, { company: directoryCard(c, user.id) }); }
+    if (c.members[user.id]) bad('You’re already in this company');
+    throttle('req:' + user.id, 10, 24 * 3600e3, 'You’ve sent a lot of join requests today — try again tomorrow');
+    const b = await readBody(req);
+    c.requests[user.id] = { userId: user.id, at: now(), message: str(b.message, 500) };
+    save();
+    const admins = Object.keys(c.members).filter((id) => isAdmin(c.members[id].role));
+    notify(c.id, admins, `${user.name} asked to join ${c.name}`, '#/settings/requests');
+    broadcastAdmins(c, { t: 'reload' });
+    const owner = db.users[c.ownerId];
+    if (owner) mail.send(owner.email, 'joinRequest', { name: owner.name.split(' ')[0], who: user.name, company: c.name, message: c.requests[user.id].message, url: `${APP_URL}/#/settings/requests` });
+    secLog('join-requested', { company: c.id, user: user.id });
+    return json(res, 200, { company: directoryCard(c, user.id) });
+  }
   if (p === '/api/me' && M === 'PUT') {
     const b = await readBody(req, 2 * 1024 * 1024);
     if ('name' in b) user.name = str(b.name, 80) || bad('Name can’t be empty');
@@ -952,7 +1011,7 @@ async function api(req, res, url) {
       if (old !== user.avatar) dropFile(old);
     }
     if (b.prefs && typeof b.prefs === 'object') for (const k of ['popups', 'desktop', 'sound']) if (k in b.prefs) user.prefs[k] = !!b.prefs[k];
-    if (b.privacy && typeof b.privacy === 'object') for (const k of ['showPhone', 'showEmail']) if (k in b.privacy) user.privacy[k] = !!b.privacy[k];
+    if (b.privacy && typeof b.privacy === 'object') for (const k of ['showPhone', 'showEmail', 'showCompanies']) if (k in b.privacy) user.privacy[k] = !!b.privacy[k];
     if ('shareLocation' in b) {
       user.shareLocation = !!b.shareLocation;
       if (!user.shareLocation) { delete db.locations[user.id]; broadcastUser(user.id, { t: 'loc', userId: user.id, loc: null }); }
@@ -1088,6 +1147,19 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
       if (old && old !== c.banner) dropFile(old);
     }
     if ('bannerPos' in b) c.bannerPos = Math.max(0, Math.min(100, Math.round(Number(b.bannerPos) || 0)));
+    if ('logo' in b) { // company profile picture
+      const old = c.logo;
+      c.logo = b.logo ? await saveImage(b.logo, 1024 * 1024, { kind: 'logo', cid: c.id }) : '';
+      if (old && old !== c.logo) dropFile(old);
+    }
+    if (b.profile && typeof b.profile === 'object') {
+      c.profile = c.profile || { visibility: 'private' };
+      if ('description' in b.profile) c.profile.description = str(b.profile.description, 2000);
+      if ('location' in b.profile) c.profile.location = str(b.profile.location, 100);
+      if ('industry' in b.profile) c.profile.industry = str(b.profile.industry, 60);
+      if ('website' in b.profile) { const w = str(b.profile.website, 200); c.profile.website = !w || /^https?:\/\/[^\s<>"]+$/i.test(w) ? w : bad('The website must start with https://'); }
+      if ('visibility' in b.profile) c.profile.visibility = b.profile.visibility === 'public' ? 'public' : 'private';
+    }
     if (b.settings && typeof b.settings === 'object') {
       for (const k of ['membersSeeMoney', 'membersCreateJobs', 'membersCreateProjects', 'membersInvite', 'membersPing', 'allowCodeJoin']) if (k in b.settings) c.settings[k] = !!b.settings[k];
       if ('currency' in b.settings) c.settings.currency = str(b.settings.currency, 3) || '£';
@@ -1143,6 +1215,22 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     if (m[2] === 'join') t.members.push(user.id);
     save(); upsert(cid, 'teams', t);
     return json(res, 200, { item: t });
+  }
+
+  // --- join requests from the directory (admins accept or decline)
+  if ((m = /^\/requests\/([A-Za-z0-9]+)$/.exec(sub)) && M === 'POST') {
+    if (!isAdmin(role)) deny('Only admins can answer join requests');
+    c.requests = c.requests || {};
+    const rq = c.requests[m[1]]; const who = db.users[m[1]];
+    if (!rq || !who) notFound('That request was already answered');
+    const b = await readBody(req);
+    delete c.requests[m[1]];
+    if (b.accept) {
+      joinCompany(c, who, 'request');
+      mail.send(who.email, 'requestAccepted', { name: who.name.split(' ')[0], company: c.name, url: `${APP_URL}/#/home` });
+    }
+    save(); broadcastAdmins(c, { t: 'reload' });
+    return json(res, 200, { ok: true, accepted: !!b.accept });
   }
 
   // --- invites
