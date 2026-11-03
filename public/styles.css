@@ -113,6 +113,12 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .icon-btn svg { width: 21px; height: 21px; }
 .brandmark { display: inline-block; width: 30px; height: 30px; flex: none; }
 .brandmark svg { width: 100%; height: 100%; display: block; }
+/* Green marker, white tick — swapped in dark mode */
+.brandmark .lm-pin { fill: #18693f; }
+.brandmark .lm-tick { stroke: #ffffff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .brandmark .lm-pin { fill: #ffffff; } :root:not([data-theme="light"]) .brandmark .lm-tick { stroke: #18693f; } }
+:root[data-theme="dark"] .brandmark .lm-pin { fill: #ffffff; }
+:root[data-theme="dark"] .brandmark .lm-tick { stroke: #18693f; }
 main#view { padding: 18px var(--gutter) calc(96px + var(--safe-b)); max-width: 1120px; margin: 0 auto; width: 100%; min-width: 0; }
 main#view:focus { outline: none; }
 .bottomnav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));

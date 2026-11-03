@@ -67,7 +67,8 @@ const P = {
 };
 const ic = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n] || ''}</svg>`;
 const icSize = (n, px, style = '') => ic(n).replace('<svg', `<svg width="${px}" height="${px}"${style ? ` style="${style}"` : ''}`);
-const LOGO = `<svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#18693f"/><path d="M256 404C214 348 140 290 140 220a116 116 0 0 1 232 0c0 70-74 128-116 184Z" fill="#fff"/><path d="M203 222l37 37 70-72" fill="none" stroke="#18693F" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+// Just the map marker with a tick (no tile behind it). Colours come from CSS so it flips in dark mode.
+const LOGO = `<svg viewBox="128 96 256 320" aria-hidden="true"><path class="lm-pin" d="M256 404C214 348 140 290 140 220a116 116 0 0 1 232 0c0 70-74 128-116 184Z"/><path class="lm-tick" d="M203 222l37 37 70-72" fill="none" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const brand = () => `<span class="brandmark">${LOGO}</span>`;
 
 const STATUS = { planned: 'Planned', active: 'In progress', hold: 'On hold', done: 'Done' };
