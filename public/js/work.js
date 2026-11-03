@@ -571,7 +571,7 @@ VIEWS.calendar = {
     sw.addEventListener('pointercancel', () => { x0 = null; });
   },
 };
-function calGo(ds, anim) { S.calDate = ds; S.calAnim = anim || ''; history.replaceState(null, '', '#/calendar/' + ds); current.key = location.hash; renderView(false); }
+function calGo(ds, anim) { S.calDate = ds; S.calAnim = anim || ''; history.replaceState(null, '', '#/calendar/' + ds); current.key = location.hash; current.args = [ds]; renderView(false); }
 function calStep(n) {
   const d = parseD(S.calDate);
   if (S.calView === 'month') { const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); }
