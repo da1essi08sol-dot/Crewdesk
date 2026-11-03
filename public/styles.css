@@ -487,3 +487,106 @@ input[type=date]::-webkit-date-and-time-value { text-align: left; }
 .jobcard .meta-icons span { display: inline-flex; gap: 3px; align-items: center; }
 .jobcard .meta-icons svg { width: 14px; height: 14px; }
 .wordmark { font: 800 18px var(--head); letter-spacing: -.02em; }
+
+/* ------------------------------------------------ motion (Apple-style springs) */
+:root {
+  --spring: cubic-bezier(.32, .72, 0, 1);      /* fast start, long soft settle */
+  --bounce: cubic-bezier(.34, 1.56, .64, 1);   /* slight overshoot */
+}
+
+/* Press: shrink quickly, spring back on release */
+.btn, .navbtn, .tab, .chip, .jobcard, .list > .item, .check, .pick-btn, .menu button, .menu a,
+.photo-tile, .status-picker button, .co-switch, .switch i {
+  transition: transform .5s var(--bounce), background-color .25s ease, color .25s ease, border-color .25s ease, box-shadow .25s ease, opacity .25s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn:active, .chip:active, .check:active, .status-picker button:active, .co-switch:active { transform: scale(.94); transition-duration: .12s; transition-timing-function: ease-out; }
+.navbtn:active, .tab:active, .menu button:active, .menu a:active { transform: scale(.92); transition-duration: .12s; transition-timing-function: ease-out; }
+.jobcard:active, .list > .item:active, .pick-btn:active, .photo-tile:active { transform: scale(.975); transition-duration: .14s; transition-timing-function: ease-out; }
+@media (hover: hover) {
+  .jobcard:hover { transform: translateY(-2px); box-shadow: 0 14px 30px -18px rgba(0,0,0,.35); }
+  .jobcard:active { transform: translateY(0) scale(.98); }
+}
+
+/* Nav icon bounce when a section becomes active */
+.navbtn.bump svg { animation: bump .55s var(--bounce); }
+@keyframes bump { 0% { transform: scale(1); } 30% { transform: scale(.78); } 65% { transform: scale(1.14); } 100% { transform: scale(1); } }
+.sidebar .navbtn { transition: transform .5s var(--bounce), background-color .3s ease, color .3s ease; }
+
+/* Sliding underline for job tabs */
+.tabs { position: relative; }
+.tabs.has-ink .tab.on { border-color: transparent; }
+.tab-ink { position: absolute; left: 0; bottom: -1px; height: 2.5px; width: 0; border-radius: 3px; background: var(--accent); pointer-events: none;
+  transition: transform .45s var(--spring), width .45s var(--spring); }
+.tab { transition: color .3s ease, transform .5s var(--bounce); }
+
+/* Tab content slides in the direction you moved */
+.in-tab-r { animation: tab-r .42s var(--spring) both; }
+.in-tab-l { animation: tab-l .42s var(--spring) both; }
+@keyframes tab-r { from { opacity: 0; transform: translateX(28px); } }
+@keyframes tab-l { from { opacity: 0; transform: translateX(-28px); } }
+
+/* Page changes: View Transitions where supported (Safari 18+, Chrome), CSS fallback elsewhere */
+html[data-vt] #view { view-transition-name: page; }
+html[data-vt] .topbar { view-transition-name: topbar; }
+html[data-vt] .bottomnav { view-transition-name: bottomnav; }
+html[data-vt] .sidebar { view-transition-name: sidebar; }
+html[data-vt] #view .fab { view-transition-name: fab; }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-group(page) { animation: none; overflow: clip; }
+::view-transition-image-pair(page) { isolation: auto; }
+::view-transition-old(page), ::view-transition-new(page) { mix-blend-mode: normal; height: auto; }
+::view-transition-group(topbar), ::view-transition-group(bottomnav), ::view-transition-group(sidebar) { animation-duration: .3s; }
+::view-transition-group(fab) { animation-duration: .45s; animation-timing-function: var(--spring); }
+
+html[data-vt="push"]::view-transition-old(page) { animation: vt-out-left .38s var(--spring) both; }
+html[data-vt="push"]::view-transition-new(page) { animation: vt-in-right .46s var(--spring) both; }
+html[data-vt="pop"]::view-transition-old(page) { animation: vt-out-right .38s var(--spring) both; }
+html[data-vt="pop"]::view-transition-new(page) { animation: vt-in-left .46s var(--spring) both; }
+html[data-vt="switch"]::view-transition-old(page) { animation: vt-fade-out .2s ease-out both; }
+html[data-vt="switch"]::view-transition-new(page) { animation: vt-rise .42s var(--spring) both; }
+
+@keyframes vt-in-right { from { opacity: 0; transform: translateX(48px); } }
+@keyframes vt-in-left { from { opacity: 0; transform: translateX(-48px); } }
+@keyframes vt-out-left { to { opacity: 0; transform: translateX(-36px); } }
+@keyframes vt-out-right { to { opacity: 0; transform: translateX(36px); } }
+@keyframes vt-fade-out { to { opacity: 0; transform: scale(.985); } }
+@keyframes vt-rise { from { opacity: 0; transform: translateY(10px) scale(.99); } }
+
+.in-push { animation: vt-in-right .46s var(--spring) both; }
+.in-pop { animation: vt-in-left .46s var(--spring) both; }
+.in-switch { animation: vt-rise .42s var(--spring) both; }
+
+/* Sheets: spring up from the bottom, slide away on close */
+.sheet-backdrop { animation: fade .3s ease-out; }
+.sheet { animation: sheet-up .5s var(--spring); }
+.sheet-backdrop.leaving { animation: fade-out .28s ease-in forwards; pointer-events: none; }
+.sheet-backdrop.leaving .sheet { animation: sheet-down .28s cubic-bezier(.4, 0, 1, 1) forwards; }
+@keyframes sheet-up { from { transform: translateY(100%); } }
+@keyframes sheet-down { to { transform: translateY(100%); } }
+@keyframes fade-out { to { opacity: 0; } }
+@media (min-width: 700px) {
+  .sheet { animation: sheet-pop .42s var(--spring); }
+  .sheet-backdrop.leaving .sheet { animation: sheet-unpop .2s ease-in forwards; }
+}
+@keyframes sheet-pop { from { opacity: 0; transform: scale(.92) translateY(8px); } }
+@keyframes sheet-unpop { to { opacity: 0; transform: scale(.95); } }
+
+/* Toasts: drop in with a little bounce, lift away */
+.toast { animation: toast-in .5s var(--bounce); }
+.toast.leaving { animation: toast-out .25s ease-in forwards; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-20px) scale(.95); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(-12px) scale(.96); } }
+
+/* Switches and checks spring */
+.switch i::after { transition: transform .45s var(--bounce), left .45s var(--bounce), background-color .2s; }
+.check svg { transition: opacity .2s ease, transform .4s var(--bounce); }
+.check:not(.on) svg { transform: scale(.5); }
+
+/* Photo viewer zooms in */
+.viewer { animation: viewer-in .35s var(--spring); }
+@keyframes viewer-in { from { opacity: 0; transform: scale(1.04); } }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}

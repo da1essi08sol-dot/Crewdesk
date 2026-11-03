@@ -170,16 +170,26 @@ function toast(text, isErr = false, link = '') {
   el.className = 'toast' + (isErr ? ' err' : '');
   el.innerHTML = `<span class="grow">${esc(text)}</span>${link ? ic('right') : ''}`;
   el.style.cssText = '';
-  el.onclick = () => { if (link) location.hash = link; el.remove(); };
+  el.onclick = () => { if (link) location.hash = link; leave(el); };
   const box = $('#toasts'); box.appendChild(el);
-  while (box.children.length > 2) box.firstElementChild.remove();
-  setTimeout(() => el.remove(), isErr ? 5000 : 4200);
+  const live = [...box.children].filter((c) => !c.classList.contains('leaving'));
+  live.slice(0, Math.max(0, live.length - 2)).forEach((c) => leave(c));
+  setTimeout(() => leave(el), isErr ? 5000 : 4200);
+}
+// Play a closing animation, then take the element away.
+function leave(el, done) {
+  if (!el || !el.isConnected || el.classList.contains('leaving')) return;
+  el.classList.add('leaving');
+  let finished = false;
+  const fin = () => { if (finished) return; finished = true; el.remove(); if (done) done(); };
+  el.addEventListener('animationend', (e) => { if (e.target === el) fin(); });
+  setTimeout(fin, 400);
 }
 function sheet(html, onMount) {
   const wrap = document.createElement('div');
   wrap.className = 'sheet-backdrop';
   wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div>`;
-  const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey); };
+  const close = () => { leave(wrap); document.removeEventListener('keydown', onKey); };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
   wrap.addEventListener('click', (e) => {
@@ -777,6 +787,8 @@ function updateChrome() {
   const active = r.name === 'job' ? 'jobs' : r.name === 'client' ? 'clients' : r.name;
   $$('.navbtn').forEach((b) => {
     const on = b.dataset.nav === active || (b.dataset.nav === 'more' && moreKeys.concat(['privacy', 'terms']).includes(r.name) && !b.closest('.sidebar'));
+    if (on && !b.classList.contains('on') && b.dataset.seen) { b.classList.remove('bump'); void b.offsetWidth; b.classList.add('bump'); }
+    b.dataset.seen = '1';
     b.classList.toggle('on', on);
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
@@ -788,15 +800,83 @@ function parseHash() {
 }
 let current = { key: '' };
 const VIEWS = {};
+// ------------------------------------------------ motion
+const motionOK = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+const JOB_TABS = ['overview', 'tasks', 'photos', 'money', 'chat'];
+const MORE_KIDS = ['clients', 'client', 'news', 'settings', 'profile', 'map', 'privacy', 'terms'];
+function depthOf(r) {
+  if (r.name === 'job' || r.name === 'client' || r.name === 'profile' || r.name === 'privacy' || r.name === 'terms') return 1;
+  if (r.name === 'chat' && r.args[0]) return 1;
+  return 0;
+}
+function motionFor(prev, r) {
+  if (!prev.key) return null;
+  if (prev.name === 'job' && r.name === 'job' && prev.args[0] === r.args[0]) {
+    const a = JOB_TABS.indexOf(prev.args[1] || 'overview'), b = JOB_TABS.indexOf(r.args[1] || 'overview');
+    return { kind: 'tab', dir: b >= a ? 'r' : 'l' };
+  }
+  if (prev.name === 'more' && MORE_KIDS.includes(r.name)) return { kind: 'push' };
+  if (r.name === 'more' && MORE_KIDS.includes(prev.name)) return { kind: 'pop' };
+  const a = depthOf(prev), b = depthOf(r);
+  return { kind: b > a ? 'push' : b < a ? 'pop' : 'switch' };
+}
+// Restart a CSS entrance animation on an element.
+function playIn(el, cls) {
+  if (!el) return;
+  el.classList.remove('in-push', 'in-pop', 'in-switch', 'in-tab-r', 'in-tab-l');
+  void el.offsetWidth;
+  el.classList.add(cls);
+  el.addEventListener('animationend', function done(e) { if (e.target !== el) return; el.classList.remove(cls); el.removeEventListener('animationend', done); });
+}
+// Sliding underline under the job tabs.
+let tabInk = null;
+function placeTabInk(from) {
+  const nav = $('#view .tabs'); if (!nav) { tabInk = null; return; }
+  const on = nav.querySelector('.tab.on'); if (!on) return;
+  nav.classList.add('has-ink');
+  let ink = nav.querySelector('.tab-ink');
+  if (!ink) { ink = document.createElement('i'); ink.className = 'tab-ink'; ink.setAttribute('aria-hidden', 'true'); nav.appendChild(ink); }
+  const to = { x: on.offsetLeft, w: on.offsetWidth };
+  if (from && motionOK()) {
+    ink.style.transition = 'none';
+    ink.style.transform = `translateX(${from.x}px)`; ink.style.width = from.w + 'px';
+    void ink.offsetWidth;
+    ink.style.transition = '';
+  }
+  ink.style.transform = `translateX(${to.x}px)`; ink.style.width = to.w + 'px';
+  if (on.offsetLeft < nav.scrollLeft || on.offsetLeft + on.offsetWidth > nav.scrollLeft + nav.clientWidth) {
+    nav.scrollTo({ left: on.offsetLeft - 24, behavior: from && motionOK() ? 'smooth' : 'auto' });
+  }
+  tabInk = to;
+}
 function route() {
   if (!S.company) return;
   const r = parseHash();
   const v = VIEWS[r.name] || VIEWS.home;
   const key = location.hash;
-  const sameView = current.key === key;
-  current = { key, name: r.name, args: r.args, v };
-  renderView(false, !sameView);
-  updateChrome();
+  const prev = current;
+  const sameView = prev.key === key;
+  const motion = !sameView && motionOK() ? motionFor(prev, r) : null;
+  const inkFrom = motion && motion.kind === 'tab' ? tabInk : null;
+  const apply = () => {
+    current = { key, name: r.name, args: r.args, v };
+    renderView(false, !sameView && !(motion && motion.kind === 'tab'));
+    updateChrome();
+    placeTabInk(inkFrom);
+  };
+  if (!motion) return apply();
+  if (motion.kind === 'tab') { apply(); playIn($('#job-tab'), 'in-tab-' + motion.dir); return; }
+  const root = document.documentElement;
+  if (document.startViewTransition && !root.dataset.vt) {
+    root.dataset.vt = motion.kind;
+    try {
+      const t = document.startViewTransition(apply);
+      t.finished.finally(() => { delete root.dataset.vt; });
+      return;
+    } catch { delete root.dataset.vt; }
+  }
+  apply();
+  [...$('#view').children].forEach((c) => { if (!c.classList.contains('fab')) playIn(c, 'in-' + motion.kind); });
 }
 function renderView(auto = false, scrollTop = false) {
   const main = $('#view'); if (!main || !current.v) return;
@@ -807,6 +887,7 @@ function renderView(auto = false, scrollTop = false) {
   main.innerHTML = current.v.render(...current.args);
   if (current.v.mount) current.v.mount(...current.args);
   window.scrollTo(0, scrollTop ? 0 : y);
+  if (auto) placeTabInk(null);
 }
 let rafPending = false;
 function scheduleRender() {
@@ -947,7 +1028,10 @@ VIEWS.job = {
   update(id, tab = 'overview') {
     const j = S.jobs[id];
     if (!j || !$('#job-top')) return renderView(false);
+    const scrollX = ($('#job-top .tabs') || {}).scrollLeft || 0;
     $('#job-top').innerHTML = this.top(j, tab);
+    if ($('#job-top .tabs')) $('#job-top .tabs').scrollLeft = scrollX;
+    placeTabInk(null);
     const box = $('#job-tab');
     if (tab === 'chat') { refreshPanes('job:' + id); return; }
     if (box.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
@@ -1706,7 +1790,7 @@ document.addEventListener('submit', async (e) => {
   if (errBox) errBox.textContent = '';
   const btn = f.querySelector('button:not([type=button])'); if (btn && f.dataset.form !== 'send') btn.disabled = true;
   const backdrop = f.closest('.sheet-backdrop');
-  const close = () => { if (backdrop) backdrop.remove(); };
+  const close = () => { if (backdrop) leave(backdrop); };
   try { await fn(f, d, close); }
   catch (err) { if (errBox) errBox.textContent = err.message; else if (f.dataset.form !== 'send') toast(err.message, true); else toast(err.message, true); }
   finally { if (btn && btn.isConnected && f.dataset.form !== 'send') btn.disabled = false; }
