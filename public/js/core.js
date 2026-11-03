@@ -272,6 +272,7 @@ function confirmBox(title, text, okLabel = 'Delete', danger = true, extraHtml = 
 // Small dropdown menu next to a button.
 let openMenuEl = null;
 function popMenu(anchor, html) {
+  if (openMenuEl && openMenuEl._anchor === anchor) { closeMenu(); return null; } // pressing the same button again closes it
   closeMenu();
   const el = document.createElement('div');
   el.className = 'menu-pop'; el.setAttribute('role', 'menu'); el.innerHTML = html;
@@ -281,15 +282,15 @@ function popMenu(anchor, html) {
   let left = Math.min(r.left, window.innerWidth - w - 8); if (left < 8) left = 8;
   let top = r.bottom + 6; if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
   el.style.left = left + 'px'; el.style.top = top + 'px';
-  openMenuEl = el;
+  openMenuEl = el; el._anchor = anchor; anchor.setAttribute('aria-expanded', 'true');
   const first = el.querySelector('a,button'); if (first) first.focus({ preventScroll: true });
   setTimeout(() => document.addEventListener('mousedown', outside), 0);
-  function outside(e) { if (!el.contains(e.target)) closeMenu(); }
+  function outside(e) { if (!el.contains(e.target) && !anchor.contains(e.target)) closeMenu(); }
   el._off = () => document.removeEventListener('mousedown', outside);
   el.addEventListener('click', (e) => { if (e.target.closest('a,button')) setTimeout(closeMenu, 0); });
   return el;
 }
-function closeMenu() { if (openMenuEl) { openMenuEl._off(); openMenuEl.remove(); openMenuEl = null; } }
+function closeMenu() { if (openMenuEl) { openMenuEl._off(); openMenuEl.remove(); if (openMenuEl._anchor) openMenuEl._anchor.setAttribute('aria-expanded', 'false'); openMenuEl = null; } }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openMenuEl) closeMenu(); });
 
 function peoplePicker(selected, name = 'people', opts = {}) {
