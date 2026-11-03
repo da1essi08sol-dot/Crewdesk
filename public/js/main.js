@@ -26,7 +26,7 @@ document.addEventListener('change', (e) => { const el = e.target.closest('[data-
 document.addEventListener('input', (e) => { const el = e.target.closest('[data-input]'); if (el && I[el.dataset.input]) I[el.dataset.input](el, e); });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && e.target.matches('.composer textarea') && !e.isComposing) {
-    if (matchMedia('(hover:hover)').matches) { e.preventDefault(); e.target.form.requestSubmit(); }
+    e.preventDefault(); e.target.form.requestSubmit();
   }
 });
 document.addEventListener('submit', async (e) => {

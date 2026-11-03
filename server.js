@@ -1363,6 +1363,15 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     if (ch && d.chats[ch[1]] && d.chats[ch[1]].kind === 'dm') { /* the live 'msg' event already alerts the other person */ }
     return json(res, 200, { item: msg });
   }
+  if (sub === '/typing' && M === 'POST') { // "… is typing" — sent live to others who can see the chat, never stored
+    const b = await readBody(req);
+    const ch = str(b.channel, 80);
+    if (!canSeeChannel(x, ch)) notFound('Chat not found');
+    throttle('typing:' + user.id, 60, 60e3, 'Slow down');
+    const on = b.on !== false;
+    broadcast(cid, (y) => (y.uid !== user.id && canSeeChannel(y, ch) ? { t: 'typing', channel: ch, userId: user.id, on } : null));
+    return json(res, 200, { ok: true });
+  }
   if (sub === '/read' && M === 'POST') {
     const b = await readBody(req);
     const ch = str(b.channel, 80);
@@ -1630,6 +1639,11 @@ async function serveUpload(req, res, url) {
     if (entry.kind === 'file') { const c = db.companies[entry.cid]; const ff = c && cdata(c.id).files[entry.fileId]; if (ff) fname = ff.name; }
     const inline = f.type === 'application/pdf' && url.searchParams.get('view') === '1';
     headers['Content-Disposition'] = `${inline ? 'inline' : 'attachment'}; filename="${fname.replace(/[^\w.\- ]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(fname)}`;
+    if (inline) { // shown inside the app's own document viewer
+      headers['X-Frame-Options'] = 'SAMEORIGIN';
+      headers['Content-Security-Policy'] = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'";
+      headers['Cross-Origin-Resource-Policy'] = 'same-origin';
+    }
   }
   res.writeHead(200, headers);
   res.end(f.data);

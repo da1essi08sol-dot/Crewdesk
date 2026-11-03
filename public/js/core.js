@@ -251,6 +251,7 @@ function sheet(html, onMount, opts = {}) {
   const sh = wrap.firstElementChild;
   const h = sh.querySelector('h2'); if (h) { h.id = h.id || 'sh-' + Math.random().toString(36).slice(2, 8); sh.setAttribute('aria-labelledby', h.id); }
   if (onMount) onMount(sh, close);
+  enhanceSheet(wrap, close);
   const first = sh.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=range]),textarea');
   if (first && matchMedia('(hover:hover)').matches) requestAnimationFrame(() => { if (!sh.contains(document.activeElement)) first.focus({ preventScroll: true }); });
   else requestAnimationFrame(() => { if (!sh.contains(document.activeElement)) sh.setAttribute('tabindex', '-1'), sh.focus({ preventScroll: true }); });

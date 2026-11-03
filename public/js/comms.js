@@ -24,7 +24,7 @@ function channelList(active) {
     const icon = info.kind === 'dm' ? avatar(member(info.other), 'sm', { link: false, dot: true }) : `<span class="chan-ico" ${info.job ? `style="color:${STATUS_COLOR[info.job.status]}"` : ''}>${ic(info.icon)}</span>`;
     return `<a class="chan ${active === ch ? 'on' : ''}" href="#/chat/${ch}" ${active === ch ? 'aria-current="page"' : ''}>${icon}
       <div class="grow"><div class="row between"><b class="ellipsis">${esc(info.name)}</b>${lm ? `<span class="tiny muted" style="flex:none">${timeAgo(lm.at)}</span>` : ''}</div>
-        <div class="row between"><span class="small muted ellipsis">${esc(preview)}</span>${un ? `<span class="count">${un}</span>` : ''}</div></div></a>`;
+        <div class="row between"><span class="small muted ellipsis ${typingText(ch) ? 'typing' : ''}" data-preview="${esc(ch)}" data-text="${esc(preview)}">${esc(typingText(ch) || preview)}</span>${un ? `<span class="count">${un}</span>` : ''}</div></div></a>`;
   };
   const recent = (ch) => (S.lastMsg[ch] || {}).at || 0;
   const chats = Object.values(S.chats);
@@ -37,20 +37,44 @@ function channelList(active) {
     ${groups.length ? `<div class="chan-group label">Groups</div>${groups.map((c) => row('chat:' + c.id, channelInfo('chat:' + c.id))).join('')}` : ''}
     ${jobs.length ? `<div class="chan-group label">Job chats</div>${jobs.map((j) => row('job:' + j.id, channelInfo('job:' + j.id))).join('')}` : ''}`;
 }
+// Who can read a chat, for the header and the "who's here" sheet.
+function chatMembers(ch) {
+  const all = Object.keys(S.members);
+  if (ch === 'general') return all;
+  if (ch.startsWith('chat:')) { const c = S.chats[ch.slice(5)]; return c ? c.members.filter((id) => S.members[id] || id === S.user.id) : []; }
+  if (ch.startsWith('job:')) {
+    const j = S.jobs[ch.slice(4)]; if (!j) return [];
+    if (j.visibility !== 'selected') return all;
+    return all.filter((id) => ['owner', 'admin'].includes((S.members[id] || {}).role) || id === j.createdBy || (j.assignees || []).includes(id) || (j.members || []).includes(id));
+  }
+  return [];
+}
+function membersLine(ch) {
+  const info = channelInfo(ch); if (!info) return '';
+  if (info.kind === 'dm') return info.sub;
+  const ids = chatMembers(ch); const others = ids.filter((id) => id !== S.user.id);
+  const online = others.filter((id) => S.members[id] && S.members[id].online).length;
+  if (info.kind === 'group') {
+    const names = others.slice(0, 3).map((id) => firstName(id));
+    return ['You'].concat(names).join(', ') + (others.length > 3 ? ` and ${others.length - 3} more` : '') + (online ? ` · ${online} online` : '');
+  }
+  return `${plural(ids.length, 'person', 'people')}${online ? ` · ${online} online` : ''}${info.job ? ' · ' + info.job.ref : ''}`;
+}
 function chatPane(ch, embedded = false) {
   const t = channelInfo(ch) || { name: 'Chat', sub: '', icon: 'chat' };
-  const icon = t.kind === 'dm' ? avatar(member(t.other), '', { dot: true }) : `<span class="chan-ico" style="width:36px;height:36px">${ic(t.icon)}</span>`;
+  const icon = t.kind === 'dm' ? avatar(member(t.other), '', { dot: true, link: false }) : `<span class="chan-ico" style="width:36px;height:36px">${ic(t.icon)}</span>`;
+  const ids = chatMembers(ch);
   return `<div class="chat-pane ${embedded ? 'embedded' : ''}" data-ch="${esc(ch)}">
     ${embedded ? '' : `<div class="chat-top"><a class="btn ghost sm icon" href="#/chat" aria-label="All chats" style="${wide() ? 'display:none' : ''}">${ic('back')}</a>
-      ${icon}<div class="grow"><b class="ellipsis" style="display:block">${t.kind === 'dm' ? personName(t.other) : esc(t.name)}</b><span class="tiny muted" data-chat-sub>${esc(t.sub)}</span></div>
-      ${t.kind === 'group' ? `<span class="row tight">${avatarStack(t.chat.members, 4)}<button class="btn sm" data-act="chat-manage" data-id="${t.chat.id}">${ic('users')}<span>People</span></button></span>` : ''}
+      <button class="chat-head-btn" data-act="chat-info" data-ch="${esc(ch)}" aria-label="${esc(t.name)} — see who’s in this chat">${icon}<span class="grow"><b class="ellipsis" style="display:block">${esc(t.name)}</b><span class="who-line" data-chat-sub>${esc(membersLine(ch))}</span></span>
+        ${t.kind !== 'dm' ? `<span class="row tight" style="flex:none">${avatarStack(ids.filter((id) => id !== S.user.id).slice(0, 12), wide() ? 4 : 3).replace(/ data-person="[^"]*"/g, '')}</span>` : ''}</button>
       ${t.job ? `<a class="btn sm" href="#/job/${t.job.id}">Open job</a>` : ''}</div>`}
     <div class="msgs" data-msgs role="log" aria-live="polite" aria-label="Messages"><div class="empty small">Loading…</div></div>
     <div class="attach-preview hidden" data-attach></div>
     <form class="composer" data-form="send" data-ch="${esc(ch)}">
       <button type="button" class="btn ghost icon" data-act="attach" data-ch="${esc(ch)}" aria-label="Add photos">${ic('camera')}</button>
       <textarea name="text" rows="1" placeholder="Message ${esc(t.kind === 'dm' ? t.name.split(' ')[0] : t.kind === 'general' ? 'everyone' : t.kind === 'job' ? 'the job crew' : t.name)}…" data-input="autosize" enterkeyhint="send" aria-label="Message"></textarea>
-      <button class="btn primary" aria-label="Send">${ic('send')}</button>
+      <button class="btn primary send-btn" aria-label="Send" data-empty>${ic('send')}</button>
     </form>
   </div>`;
 }
@@ -66,8 +90,10 @@ async function mountChat(ch) {
 function refreshPanes(ch) { $$('.chat-pane').forEach((pane) => { if (pane.dataset.ch === ch && S.msgs[ch]) renderMsgs(pane, ch); }); }
 const msgImages = (m) => (m.images && m.images.length ? m.images : m.image ? [m.image] : []);
 function msgPreview(m) { const n = msgImages(m).length; return m.text || (n > 1 ? `📷 ${n} photos` : n ? '📷 Photo' : ''); }
+const seenMsgs = new Set();
 function renderMsgs(pane, ch, forceBottom = false) {
   const box = $('[data-msgs]', pane);
+  const first = !pane._painted; pane._painted = true;
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   const arr = S.msgs[ch] || [];
   let html = S.msgsMore[ch] ? `<button class="btn sm" style="align-self:center;margin-bottom:8px" data-act="older" data-ch="${esc(ch)}">Load earlier messages</button>` : '';
@@ -83,19 +109,65 @@ function renderMsgs(pane, ch, forceBottom = false) {
     const mine = m.userId === S.user.id; const who = member(m.userId);
     if (startRun && !mine) html += `<div class="msg-who">${personName(m.userId)}</div>`;
     const imgs = msgImages(m);
-    html += `<div class="msg ${mine ? 'mine' : ''} ${endRun ? 'last' : ''}" style="${startRun && mine ? 'margin-top:8px' : ''}">
+    const fresh = !first && !seenMsgs.has(m.id) && motionOK(); seenMsgs.add(m.id);
+    html += `<div class="msg ${mine ? 'mine' : ''} ${endRun ? 'last' : ''} ${fresh ? 'new' : ''} ${m.pending ? 'pending' : ''}" style="${startRun && mine ? 'margin-top:8px' : ''}">
       ${mine ? '' : avatar(who, 'sm')}
       <div class="bubble">${imgs.length ? `<div class="bubble-photos ${imgs.length === 1 ? 'one' : ''}">${imgs.map((u, k) => `<button type="button" data-act="chat-photo" data-ch="${esc(ch)}" data-msg="${m.id}" data-i="${k}" aria-label="Open photo ${k + 1} from ${esc(who.name)}"><img src="${esc(u)}" alt="Photo from ${esc(who.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''}${m.text ? linkify(m.text) : ''}</div>
-      <span class="msg-time" title="${esc(fmtDateTime(m.at))}">${clock(m.at)}</span></div>`;
+      <span class="msg-time" title="${esc(fmtDateTime(m.at))}">${m.pending ? 'Sending…' : clock(m.at)}</span></div>`;
   });
+  html += `<div class="typing-row" data-typing>${typingHtml(ch)}</div>`;
   box.innerHTML = html;
   $$('img', box).forEach((img) => img.addEventListener('load', () => { if (forceBottom || nearBottom) box.scrollTop = box.scrollHeight; }, { once: true }));
   if (forceBottom || nearBottom) box.scrollTop = box.scrollHeight;
-  const sub = $('[data-chat-sub]', pane); const info = channelInfo(ch); if (sub && info) sub.textContent = info.sub;
+  paintChatSub(pane, ch);
+}
+function paintChatSub(pane, ch) {
+  const sub = $('[data-chat-sub]', pane); if (!sub) return;
+  const tw = typingText(ch);
+  sub.textContent = tw || membersLine(ch); sub.classList.toggle('typing', !!tw);
+}
+
+// ---- "… is typing"
+const typingNow = {}; // channel -> { userId: expires }
+function typers(ch) { const t = typingNow[ch] || {}; const now = Date.now(); return Object.keys(t).filter((id) => t[id] > now && id !== S.user.id && S.members[id]); }
+function typingText(ch) {
+  const ids = typers(ch); if (!ids.length) return '';
+  const n = ids.map((id) => firstName(id));
+  return ids.length === 1 ? `${n[0]} is typing…` : ids.length === 2 ? `${n[0]} and ${n[1]} are typing…` : `${n[0]}, ${n[1]} and ${ids.length - 2} more are typing…`;
+}
+function typingHtml(ch) {
+  const ids = typers(ch); if (!ids.length) return '';
+  return `${ids.length === 1 ? avatar(member(ids[0]), 'sm', { link: false }) : avatarStack(ids, 3, 'sm').replace(/ data-person="[^"]*"/g, '')}<span class="typing-bubble" aria-hidden="true"><i></i><i></i><i></i></span><span class="who">${esc(typingText(ch))}</span>`;
+}
+function paintTyping(ch) {
+  $$('.chat-pane').forEach((pane) => {
+    if (pane.dataset.ch !== ch) return;
+    const row = $('[data-typing]', pane); if (!row) return;
+    const box = $('[data-msgs]', pane); const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    const html = typingHtml(ch);
+    if (row.dataset.sig !== html) { row.innerHTML = html; row.dataset.sig = html; }
+    if (near) box.scrollTop = box.scrollHeight;
+    paintChatSub(pane, ch);
+  });
+  const cl = $('#chanlist'); if (cl) { const el = cl.querySelector(`[data-preview="${CSS.escape(ch)}"]`); if (el) { const tw = typingText(ch); el.classList.toggle('typing', !!tw); el.textContent = tw || el.dataset.text; } }
+}
+function onTyping(ev) {
+  const t = typingNow[ev.channel] = typingNow[ev.channel] || {};
+  if (ev.on) t[ev.userId] = Date.now() + 6000; else delete t[ev.userId];
+  paintTyping(ev.channel);
+}
+setInterval(() => { const now = Date.now(); for (const ch of Object.keys(typingNow)) { const t = typingNow[ch]; const had = Object.keys(t).length; for (const id of Object.keys(t)) if (t[id] <= now) delete t[id]; if (had !== Object.keys(t).length) paintTyping(ch); } }, 1000);
+const myTyping = {}; // channel -> last time we told others
+function sendTyping(ch, on) {
+  const now = Date.now();
+  if (on) { if (myTyping[ch] && now - myTyping[ch] < 3000) return; myTyping[ch] = now; }
+  else { if (!myTyping[ch]) return; delete myTyping[ch]; }
+  capi('POST', '/typing', { channel: ch, on }).catch(() => {});
 }
 function onMessage(m) {
   const arr = S.msgs[m.channel];
   if (arr && !arr.some((x) => x.id === m.id)) arr.push(m);
+  if (typingNow[m.channel] && typingNow[m.channel][m.userId]) { delete typingNow[m.channel][m.userId]; setTimeout(() => paintTyping(m.channel), 0); }
   S.lastMsg[m.channel] = { at: m.at, text: msgPreview(m), userId: m.userId, system: m.system };
   const viewing = currentChannel() === m.channel && !document.hidden;
   if (m.userId !== S.user.id && !m.system) {
@@ -104,7 +176,7 @@ function onMessage(m) {
       S.unread[m.channel] = (S.unread[m.channel] || 0) + 1;
       const info = channelInfo(m.channel);
       const where = info ? (info.kind === 'dm' ? 'Direct message' : info.name) : 'Chat';
-      if (parseHash().name !== 'chat') alertUser(`${firstName(m.userId)} · ${where}: ${msgPreview(m)}`.slice(0, 140), '#/chat/' + m.channel, m.text);
+      alertUser(`${firstName(m.userId)} · ${where}: ${msgPreview(m)}`.slice(0, 140), '#/chat/' + m.channel, m.text, { from: m.userId, where: info && info.kind !== 'dm' ? info.name : '', text: msgPreview(m) });
     }
   }
   refreshPanes(m.channel); scheduleRender();
@@ -128,7 +200,7 @@ VIEWS.chat = {
   update() {
     const pane = $('.chat-pane');
     const cl = $('#chanlist'); if (cl) { const st = cl.scrollTop; cl.innerHTML = channelList(pane ? pane.dataset.ch : null); cl.scrollTop = st; }
-    if (pane) { const info = channelInfo(pane.dataset.ch); if (!info) return renderView(false); const sub = $('[data-chat-sub]', pane); if (sub) sub.textContent = info.sub; }
+    if (pane) { const info = channelInfo(pane.dataset.ch); if (!info) return renderView(false); paintChatSub(pane, pane.dataset.ch); }
   },
 };
 A.older = async (el) => {
@@ -149,18 +221,54 @@ A['chat-photo'] = (el) => {
 F.send = async (f, d) => {
   const ch = f.dataset.ch; const text = (d.text || '').trim(); const imgs = pendingImgs[ch] || [];
   if (!text && !imgs.length) return;
-  const ta = f.querySelector('textarea'); const btn = f.querySelector('button:not([type=button])');
-  btn.disabled = true;
+  const ta = f.querySelector('textarea'); const btn = f.querySelector('.send-btn');
+  const pane = f.closest('.chat-pane'); const box = $('[data-msgs]', pane);
+  sendTyping(ch, false);
+  if (motionOK()) { btn.classList.remove('fly'); void btn.offsetWidth; btn.classList.add('fly'); }
+  if (imgs.length) { // photos: show upload progress on the button
+    btn.disabled = true;
+    try {
+      const r = await sendWithProgress('POST', `/api/c/${S.cid}/messages`, { channel: ch, text, images: imgs.map((p) => p.data) }, (x) => { btn.style.opacity = String(0.4 + x * 0.6); });
+      ta.value = ''; ta.style.height = ''; delete pendingImgs[ch]; paintAttach(ch); onMessage(r.item); box.scrollTop = box.scrollHeight;
+    } finally { btn.disabled = false; btn.style.opacity = ''; btn.toggleAttribute('data-empty', !ta.value.trim()); if (matchMedia('(hover:hover)').matches) ta.focus(); }
+    return;
+  }
+  // text: appears straight away, confirmed when the server replies
+  const tmp = { id: 'tmp-' + Math.random().toString(36).slice(2), channel: ch, userId: S.user.id, text, at: Date.now(), pending: true };
+  S.msgs[ch] = (S.msgs[ch] || []).concat(tmp);
+  ta.value = ''; ta.style.height = ''; btn.setAttribute('data-empty', '');
+  refreshPanes(ch); box.scrollTop = box.scrollHeight;
+  if (matchMedia('(hover:hover)').matches) ta.focus();
   try {
-    const r = imgs.length
-      ? await sendWithProgress('POST', `/api/c/${S.cid}/messages`, { channel: ch, text, images: imgs.map((p) => p.data) }, (x) => { btn.style.opacity = String(0.4 + x * 0.6); })
-      : await capi('POST', '/messages', { channel: ch, text });
-    ta.value = ''; ta.style.height = ''; delete pendingImgs[ch]; paintAttach(ch);
+    const r = await capi('POST', '/messages', { channel: ch, text });
+    seenMsgs.add(r.item.id);
+    const arr = S.msgs[ch] || [];
+    S.msgs[ch] = arr.some((x) => x.id === r.item.id) ? arr.filter((x) => x.id !== tmp.id) : arr.map((x) => (x.id === tmp.id ? r.item : x));
     onMessage(r.item);
-    const box = $('[data-msgs]', f.closest('.chat-pane')); box.scrollTop = box.scrollHeight;
-  } finally { btn.disabled = false; btn.style.opacity = ''; if (matchMedia('(hover:hover)').matches) ta.focus(); }
+  } catch (e) {
+    S.msgs[ch] = (S.msgs[ch] || []).filter((x) => x.id !== tmp.id); refreshPanes(ch);
+    if (!ta.value) { ta.value = text; I.autosize(ta); }
+    toast(e.message || 'Message not sent', true);
+  }
 };
-I.autosize = (el) => { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 140) + 'px'; };
+I.autosize = (el) => {
+  el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  const f = el.form; if (!f || f.dataset.form !== 'send') return;
+  const has = !!el.value.trim();
+  const btn = f.querySelector('.send-btn'); if (btn) btn.toggleAttribute('data-empty', !has && !(pendingImgs[f.dataset.ch] || []).length);
+  sendTyping(f.dataset.ch, has);
+};
+// Who's in this chat
+A['chat-info'] = (el) => {
+  const ch = el.dataset.ch; const info = channelInfo(ch); if (!info) return;
+  if (info.kind === 'dm') { location.hash = '#/person/' + info.other; return; }
+  const ids = chatMembers(ch).slice().sort((a, b) => (b === S.user.id) - (a === S.user.id) || (member(b).online - member(a).online) || member(a).name.localeCompare(member(b).name));
+  const c = info.chat; const manage = c && (c.createdBy === S.user.id || isAdmin());
+  sheet(`${sheetHead(info.name)}
+    <p class="small muted" style="margin:-6px 0 10px">${info.kind === 'general' ? 'Everyone in the company is in this chat.' : info.kind === 'job' ? 'Everyone who can see this job can read and join in.' : `Group made by ${esc(member(c.createdBy).name)}.`} ${plural(ids.length, 'person', 'people')}.</p>
+    <div>${ids.map((id) => { const m = member(id); return `<div class="member-row">${avatar(m, '', { dot: true })}<div class="grow"><b class="ellipsis" style="display:block">${esc(m.name)}${id === S.user.id ? ' <span class="muted" style="font-weight:400">(you)</span>' : ''}</b><span class="tiny muted">${m.online ? 'Online now' : m.lastSeen ? 'Last seen ' + timeAgo(m.lastSeen) : esc(m.title || '')}</span></div>${id !== S.user.id ? `<button class="btn sm ghost icon" data-act="message-person" data-id="${id}" aria-label="Message ${esc(m.name)}">${ic('chat')}</button>` : ''}</div>`; }).join('')}</div>
+    <div class="sheet-foot">${c ? (manage ? `<button class="btn" data-act="chat-manage" data-id="${c.id}">${ic('edit')}Edit group</button>` : `<button class="btn danger" data-act="chat-leave" data-id="${c.id}">${ic('logout')}Leave group</button>`) : ''}<button class="btn primary" data-close>Done</button></div>`);
+};
 // New chat: a direct message with one person, or a named group.
 A['new-chat'] = (el) => {
   const preset = el && el.dataset && el.dataset.with;
@@ -202,6 +310,7 @@ async function startDm(uid) {
 A['message-person'] = (el) => startDm(el.dataset.id);
 A['chat-manage'] = (el) => {
   const c = S.chats[el.dataset.id]; if (!c) return;
+  closeSheets();
   const manage = c.createdBy === S.user.id || isAdmin();
   sheet(`${sheetHead(c.name)}
     ${manage ? `<form class="stack" data-form="chat-edit" data-id="${c.id}">
@@ -272,7 +381,7 @@ VIEWS.ping = {
         ${p.body ? `<div class="pre">${linkify(p.body)}</div>` : ''}
         ${imgs.length ? `<div><div class="label" style="margin-bottom:6px">Photos (${imgs.length})</div><div class="att-grid">${imgs.map((f) => `<button type="button" data-act="att-view" data-file="${f.id}" aria-label="View ${esc(f.name)}"><img src="${esc(f.thumb || f.url)}" alt="${esc(f.name)}" loading="lazy"></button>`).join('')}</div></div>` : ''}
         ${docs.length ? `<div><div class="label" style="margin-bottom:6px">Documents (${docs.length})</div><div class="stack tight">${docs.map((f) => `<div class="att-row"><span class="att-doc" style="height:auto;border:0;padding:0"><span class="ext ${esc(f.ext)}">${esc(f.ext)}</span></span><div class="grow"><div class="ellipsis bold small">${esc(f.name)}</div><div class="tiny muted">${fileSize(f.size)}</div></div>
-          ${f.ext === 'pdf' ? `<a class="btn sm" href="${esc(f.url)}?view=1" target="_blank" rel="noopener">${ic('eye')}View</a>` : ''}<a class="btn sm" href="${esc(f.url)}" download="${esc(f.name)}">${ic('download')}Download</a></div>`).join('')}</div></div>` : ''}
+          <button class="btn sm" data-act="file-open" ${fileAttrs(f)}>${ic('eye')}Open</button><button class="btn sm icon" data-act="file-save" ${fileAttrs(f)} aria-label="Save ${esc(f.name)}">${ic('download')}</button></div>`).join('')}</div></div>` : ''}
         ${p.createdBy === S.user.id || isAdmin() ? `<div class="tiny muted">${ic('eye').replace('<svg', '<svg width="13" height="13" style="vertical-align:-2px"')} Seen by ${p.readCount} of ${Object.keys(S.members).length}</div>` : ''}
       </article>`;
   },

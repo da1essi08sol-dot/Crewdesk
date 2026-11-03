@@ -142,16 +142,22 @@ A['upload-retry'] = (el) => {
   for (const arr of Object.values(uploads)) { const u = arr.find((x) => x.key === el.dataset.upload); if (u && u.failed) { u.failed = ''; u.progress = 0; uploadQueue.push(u); paintUpload(u); pumpUploads(); } }
 };
 
-// ---- full-screen photo viewer
+// ---- full-screen photo viewer: opens from the thumbnail, pinch or double-tap to zoom, swipe sideways for the next one,
+// swipe down (or tap outside the photo, press Esc, or use the phone's back gesture) to close.
 let viewer = null;
 function openViewer(items, index = 0) {
-  closeViewer();
+  closeViewer(true, true);
   const back = document.activeElement;
+  const srcEl = lastTapEl && lastTapEl.isConnected ? lastTapEl : back;
+  const srcImg = srcEl && srcEl.querySelector ? (srcEl.tagName === 'IMG' ? srcEl : srcEl.querySelector('img')) : null;
   const el = document.createElement('div');
   el.className = 'viewer'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Photo viewer');
+  el.style.setProperty('--vbg', '0');
   document.body.appendChild(el);
-  viewer = { el, items, i: Math.max(0, Math.min(index, items.length - 1)), back };
-  paintViewer();
+  viewer = { el, items, i: Math.max(0, Math.min(index, items.length - 1)), back, srcImg, z: 1, tx: 0, ty: 0 };
+  history.pushState({ cdOverlay: 'viewer' }, '', location.href);
+  paintViewer(true);
+  requestAnimationFrame(() => el.style.setProperty('--vbg', '1'));
   const onKey = (e) => {
     if (!viewer) return;
     if (e.key === 'Escape') closeViewer();
@@ -159,43 +165,125 @@ function openViewer(items, index = 0) {
     else if (e.key === 'ArrowLeft' && !e.target.matches('input')) stepViewer(-1);
   };
   document.addEventListener('keydown', onKey); viewer.onKey = onKey;
-  let sx = null, sy = 0;
-  el.addEventListener('pointerdown', (e) => { if (e.target.closest('.viewer-stage')) { sx = e.clientX; sy = e.clientY; } });
-  el.addEventListener('pointerup', (e) => {
-    if (sx == null) return;
-    const dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) stepViewer(dx < 0 ? 1 : -1);
-    else if (dy > 90 && Math.abs(dy) > Math.abs(dx) * 1.5) closeViewer();
-  });
+  viewerGestures(el);
 }
-function paintViewer() {
+function vImg() { return viewer && viewer.el.querySelector('.viewer-stage img'); }
+function applyZoom(anim = true) {
+  const img = vImg(); if (!img) return;
+  img.classList.toggle('no-anim', !anim);
+  img.style.transform = `translate(${viewer.tx}px, ${viewer.ty}px) scale(${viewer.z})`;
+}
+function clampPan() {
+  const img = vImg(); if (!img || !viewer) return;
+  const w = img.offsetWidth * viewer.z, h = img.offsetHeight * viewer.z;
+  const st = img.parentElement.getBoundingClientRect();
+  const mx = Math.max(0, (w - st.width) / 2), my = Math.max(0, (h - st.height) / 2);
+  viewer.tx = Math.max(-mx, Math.min(mx, viewer.tx)); viewer.ty = Math.max(-my, Math.min(my, viewer.ty));
+}
+function viewerGestures(el) {
+  const pts = new Map();
+  let mode = null, sx = 0, sy = 0, st = 0, startZ = 1, startD = 0, startTx = 0, startTy = 0, lastTap = 0, tapTimer = null, moved = false;
+  const stage = () => el.querySelector('.viewer-stage');
+  el.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest('.viewer-stage') || e.target.closest('.vbtn')) return;
+    stage().setPointerCapture && stage().setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    moved = false;
+    if (pts.size === 1) { mode = null; sx = e.clientX; sy = e.clientY; st = Date.now(); startTx = viewer.tx; startTy = viewer.ty; }
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; startD = Math.hypot(a.x - b.x, a.y - b.y); startZ = viewer.z; mode = 'pinch'; }
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!viewer || !pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const img = vImg(); if (!img) return;
+    if (mode === 'pinch' && pts.size >= 2) {
+      const [a, b] = [...pts.values()]; viewer.z = Math.max(1, Math.min(5, startZ * Math.hypot(a.x - b.x, a.y - b.y) / startD)); moved = true; applyZoom(false); return;
+    }
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!mode && Math.hypot(dx, dy) > 8) mode = viewer.z > 1.01 ? 'pan' : Math.abs(dy) > Math.abs(dx) ? 'dismiss' : 'swipe';
+    if (!mode) return;
+    moved = true;
+    if (mode === 'pan') { viewer.tx = startTx + dx; viewer.ty = startTy + dy; applyZoom(false); }
+    else if (mode === 'swipe') { img.classList.add('no-anim'); img.style.transform = `translateX(${dx}px)`; }
+    else if (mode === 'dismiss') {
+      el.classList.add('dragging'); img.classList.add('no-anim');
+      img.style.transform = `translate(${dx * 0.4}px, ${dy}px) scale(${Math.max(0.7, 1 - Math.abs(dy) / 1200)})`;
+      el.style.setProperty('--vbg', String(Math.max(0, 1 - Math.abs(dy) / 380)));
+    }
+  });
+  const up = (e) => {
+    if (!viewer || !pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (pts.size) return;
+    const img = vImg(); const dx = e.clientX - sx, dy = e.clientY - sy; const dt = Math.max(1, Date.now() - st);
+    el.classList.remove('dragging');
+    if (mode === 'pinch' || mode === 'pan') { if (viewer.z < 1.05) { viewer.z = 1; viewer.tx = viewer.ty = 0; } clampPan(); applyZoom(true); mode = null; return; }
+    if (mode === 'dismiss') {
+      if (Math.abs(dy) > 110 || Math.abs(dy) / dt > 0.7) { closeViewer(false, false, dy); return; }
+      el.style.setProperty('--vbg', '1'); if (img) { img.classList.remove('no-anim'); img.style.transform = ''; } mode = null; return;
+    }
+    if (mode === 'swipe') {
+      if (viewer.items.length > 1 && (Math.abs(dx) > 60 || Math.abs(dx) / dt > 0.5)) { stepViewer(dx < 0 ? 1 : -1, dx); return; }
+      if (img) { img.classList.remove('no-anim'); img.style.transform = ''; } mode = null; return;
+    }
+    if (moved) return;
+    // taps: double tap zooms; a single tap outside the photo closes, on the photo shows or hides the buttons
+    const now = Date.now();
+    if (now - lastTap < 300) {
+      clearTimeout(tapTimer); lastTap = 0;
+      if (viewer.z > 1) { viewer.z = 1; viewer.tx = viewer.ty = 0; }
+      else if (img) { const r = img.getBoundingClientRect(); viewer.z = 2.5; viewer.tx = (r.left + r.width / 2 - e.clientX) * 1.5; viewer.ty = (r.top + r.height / 2 - e.clientY) * 1.5; clampPan(); }
+      applyZoom(true); return;
+    }
+    lastTap = now;
+    const onPhoto = e.target.tagName === 'IMG';
+    tapTimer = setTimeout(() => { if (!viewer) return; if (onPhoto) viewer.el.classList.toggle('chrome-off'); else if (viewer.z === 1) closeViewer(); }, 260);
+  };
+  el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  el.addEventListener('wheel', (e) => { if (!e.ctrlKey || !viewer) return; e.preventDefault(); viewer.z = Math.max(1, Math.min(5, viewer.z * (1 - e.deltaY / 200))); if (viewer.z === 1) viewer.tx = viewer.ty = 0; clampPan(); applyZoom(false); }, { passive: false });
+}
+function paintViewer(opening = false, enterFrom = 0) {
   if (!viewer) return;
   const it = viewer.items[viewer.i]; if (!it) return closeViewer();
+  viewer.z = 1; viewer.tx = viewer.ty = 0;
   const who = member(it.by);
   const canEdit = it.id && S.photos[it.id] && (isAdmin() || it.by === S.user.id);
   const many = viewer.items.length > 1;
+  const fname = (it.caption || 'photo').replace(/[^\w\- ]+/g, '').slice(0, 40).trim() || 'photo';
   viewer.el.innerHTML = `
     <div class="viewer-top">
-      <button class="vbtn" data-vact="close" aria-label="Close photo">${ic('x')}</button>
-      <div class="who"><b>${esc(who.name)}</b><span>${esc(fmtDateTime(it.at))}${it.where ? ' · ' + esc(it.where) : ''}</span></div>
-      <a class="vbtn" href="${esc(it.url)}" download aria-label="Download photo">${ic('download')}</a>
+      <button class="vbtn done" data-vact="close" aria-label="Close photo">Done${ic('x')}</button>
+      <div class="who" style="text-align:center"><b>${esc(who.name)}</b><span>${esc(fmtDateTime(it.at))}${it.where ? ' · ' + esc(it.where) : ''}</span></div>
+      <button class="vbtn" data-vact="save" aria-label="Save or share photo">${ic('download')}</button>
       ${canEdit ? `<button class="vbtn" data-vact="delete" aria-label="Delete photo">${ic('trash')}</button>` : ''}
     </div>
     <div class="viewer-stage">
-      <img src="${esc(it.url)}" alt="${esc(it.alt || it.caption || 'Photo')}">
+      <img src="${esc(it.url)}" alt="${esc(it.alt || it.caption || 'Photo')}" draggable="false">
       ${many ? `<button class="vbtn nav prev" data-vact="prev" aria-label="Previous photo">${ic('back')}</button><button class="vbtn nav next" data-vact="next" aria-label="Next photo">${ic('right')}</button>` : ''}
     </div>
     <div class="viewer-bottom">
       ${canEdit ? `<label class="sr-only" for="vcap">Caption</label><input id="vcap" value="${esc(it.caption || '')}" placeholder="Add a caption… e.g. Before: kitchen wall" maxlength="300" enterkeyhint="done">`
         : it.caption ? `<div class="caption">${esc(it.caption)}</div>` : ''}
-      ${many ? `<div class="count">${viewer.i + 1} of ${viewer.items.length}${isTouch() ? ' · swipe for more' : ''}</div>` : ''}
+      <div class="vcount">${many ? `${viewer.i + 1} of ${viewer.items.length} · ` : ''}${isTouch() ? 'Swipe down to close' : 'Esc to close'}</div>
     </div>`;
+  prefetchBlob(it.url).catch(() => {});
+  const img = vImg();
+  if (motionOK() && img) {
+    if (opening && viewer.srcImg && viewer.srcImg.isConnected) {
+      const from = viewer.srcImg.getBoundingClientRect();
+      const run = () => { if (!viewer) return; const to = img.getBoundingClientRect(); if (!to.width) return;
+        img.animate([{ transform: `translate(${from.left + from.width / 2 - (to.left + to.width / 2)}px, ${from.top + from.height / 2 - (to.top + to.height / 2)}px) scale(${Math.max(from.width / to.width, from.height / to.height)})`, opacity: 0.4, borderRadius: '12px' }, { transform: 'none', opacity: 1, borderRadius: '0' }], { duration: 480, easing: 'cubic-bezier(.32,.72,0,1)' }); };
+      if (img.complete && img.naturalWidth) run(); else { img.style.opacity = '0'; img.addEventListener('load', () => { img.style.opacity = ''; run(); }, { once: true }); setTimeout(() => { img.style.opacity = ''; }, 600); }
+    } else if (opening) img.animate([{ opacity: 0, transform: 'scale(.92)' }, { opacity: 1, transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.32,.72,0,1)' });
+    else if (enterFrom) img.animate([{ opacity: 0.2, transform: `translateX(${enterFrom < 0 ? 60 : -60}%)` }, { opacity: 1, transform: 'none' }], { duration: 420, easing: 'cubic-bezier(.32,.72,0,1)' });
+  }
   viewer.el.onclick = async (e) => {
     const b = e.target.closest('[data-vact]'); if (!b) return;
     const a = b.dataset.vact;
     if (a === 'close') closeViewer();
     if (a === 'prev') stepViewer(-1);
     if (a === 'next') stepViewer(1);
+    if (a === 'save') saveFile(it.url, fname + '.jpg');
     if (a === 'delete') {
       if (!(await confirmBox('Delete this photo?', 'It will be removed for everyone on the job.'))) return;
       try {
@@ -217,12 +305,30 @@ function paintViewer() {
   }
   const closeBtn = viewer.el.querySelector('[data-vact="close"]'); if (closeBtn && !viewer.el.contains(document.activeElement)) closeBtn.focus({ preventScroll: true });
 }
-function stepViewer(d) { if (!viewer || viewer.items.length < 2) return; viewer.i = (viewer.i + d + viewer.items.length) % viewer.items.length; paintViewer(); }
-function closeViewer() {
+function stepViewer(d, dragged = 0) {
+  if (!viewer || viewer.items.length < 2) return;
+  viewer.i = (viewer.i + d + viewer.items.length) % viewer.items.length;
+  viewer.srcImg = null; paintViewer(false, dragged || -d);
+}
+function closeViewer(fromPop = false, instant = false, dy = 0) {
   if (!viewer) return;
-  document.removeEventListener('keydown', viewer.onKey);
-  const back = viewer.back; viewer.el.remove(); viewer = null;
-  if (back && back.isConnected) back.focus({ preventScroll: true });
+  const v = viewer; viewer = null;
+  document.removeEventListener('keydown', v.onKey);
+  if (!fromPop && history.state && history.state.cdOverlay === 'viewer') { ignorePop++; history.back(); }
+  const img = v.el.querySelector('.viewer-stage img');
+  const done = () => { v.el.remove(); if (v.back && v.back.isConnected) v.back.focus({ preventScroll: true }); };
+  if (instant || !motionOK() || !img) return done();
+  v.el.classList.add('closing'); v.el.style.pointerEvents = 'none';
+  const cur = img.getBoundingClientRect();
+  const src = v.srcImg && v.srcImg.isConnected && v.i === v.items.indexOf(v.items[v.i]) ? v.srcImg.getBoundingClientRect() : null;
+  const startT = getComputedStyle(img).transform;
+  let anim;
+  if (src && src.width && src.top < innerHeight && src.bottom > 0 && !dy) {
+    anim = img.animate([{ transform: startT === 'none' ? 'none' : startT, opacity: 1 }, { transform: `translate(${src.left + src.width / 2 - (cur.left + cur.width / 2)}px, ${src.top + src.height / 2 - (cur.top + cur.height / 2)}px) scale(${Math.max(src.width / cur.width, src.height / cur.height)})`, opacity: 0.2 }], { duration: 380, easing: 'cubic-bezier(.32,.72,0,1)', fill: 'forwards' });
+  } else {
+    anim = img.animate([{ transform: startT === 'none' ? 'none' : startT, opacity: 1 }, { transform: `translateY(${dy >= 0 ? innerHeight * 0.6 : -innerHeight * 0.6}px) scale(.8)`, opacity: 0 }], { duration: 320, easing: 'cubic-bezier(.32,.72,0,1)', fill: 'forwards' });
+  }
+  anim.finished.then(done, done); setTimeout(done, 600);
 }
 function viewerItemsForJob(jobId) {
   return jobPhotos(jobId).map((p, i) => ({ id: p.id, jobId, url: p.url, caption: p.caption, by: p.createdBy, at: p.createdAt, alt: photoAlt(p, i) }));
@@ -301,7 +407,7 @@ function attStrip(files, max = 5) {
   return `<div class="att-strip">${shown.join('')}${rest > 0 ? `<span class="att-more">+${rest} more</span>` : ''}<span class="att-more">${icSize('clip', 13, 'vertical-align:-2px')} ${files.length}</span></div>`;
 }
 function docChip(f) {
-  return `<a class="att-doc" href="${esc(f.url)}" download="${esc(f.name)}" title="Download ${esc(f.name)}"><span class="ext ${esc(f.ext)}">${esc(f.ext || 'file')}</span><span class="nm"><span class="ellipsis">${esc(f.name)}</span><span class="muted tiny">${fileSize(f.size)}</span></span></a>`;
+  return `<button type="button" class="att-doc" data-act="file-open" ${fileAttrs(f)} title="Open ${esc(f.name)}"><span class="ext ${esc(f.ext)}">${esc(f.ext || 'file')}</span><span class="nm"><span class="ellipsis">${esc(f.name)}</span><span class="muted tiny">${fileSize(f.size)}</span></span></button>`;
 }
 
 // ---- profile picture cropper: drag to move, pinch / scroll / slider to zoom; outside the circle is darkened

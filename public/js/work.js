@@ -461,57 +461,145 @@ function calendarItems(from, to) {
   }
   return out.sort((a, b) => (a.date + (a.time || '00:00')).localeCompare(b.date + (b.time || '00:00')));
 }
-function calChip(it) {
-  if (it.kind === 'event') return `<button class="cal-ev" data-act="event-open" data-id="${it.id}" style="${it.ev.color ? `background:color-mix(in srgb, ${it.ev.color} 18%, var(--surface));color:${it.ev.color}` : ''}">${it.time ? `<span class="t">${esc(it.time)}</span>` : ''}${esc(it.title)}</button>`;
-  return `<a class="cal-ev ${it.kind === 'due' ? 'due' : 'job'}" href="${it.link}">${esc(it.title)}</a>`;
+// Colours, as in Apple Calendar: events blue (or their own colour), job starts green, deadlines orange.
+const CAL_C = { event: '#0a84ff', start: '#30b158', due: '#ff9500' };
+const itColor = (it) => (it.kind === 'event' ? (it.ev.color || CAL_C.event) : CAL_C[it.kind]);
+const itTitle = (it) => (it.kind === 'event' ? it.title : it.title.replace(/^(Due|Starts): /, ''));
+function calPill(it) {
+  const label = (it.kind === 'due' ? 'Due: ' : it.kind === 'start' ? 'Starts: ' : '') + itTitle(it);
+  const inner = `${it.time ? `<span class="t">${esc(it.time)}</span>` : ''}<span class="x">${esc(label)}</span>`;
+  return it.kind === 'event'
+    ? `<button class="cal-pill" style="--c:${esc(itColor(it))}" data-act="event-open" data-id="${it.id}" title="${esc(label)}">${inner}</button>`
+    : `<a class="cal-pill" style="--c:${itColor(it)}" href="${it.link}" title="${esc(label)}">${inner}</a>`;
+}
+function agItem(it) {
+  const c = esc(itColor(it));
+  const tm = it.kind === 'event' ? (it.time ? `<b>${esc(it.time)}</b>${it.ev.end ? esc(it.ev.end) : ''}` : '<b>All day</b>') : `<b>${it.kind === 'due' ? 'Due' : 'Starts'}</b>Job`;
+  const body = `<span class="bar" style="--c:${c}"></span><span class="tm">${tm}</span><span class="grow" style="min-width:0"><span class="ti ellipsis" style="display:block">${esc(itTitle(it))}</span><span class="tiny muted ellipsis" style="display:block">${esc(it.sub || '')}</span></span>${it.kind === 'event' && (it.ev.participants || []).length ? avatarStack(it.ev.participants, 3) : ''}`;
+  return it.kind === 'event' ? `<button class="ag-item" data-act="event-open" data-id="${it.id}">${body}</button>` : `<a class="ag-item" href="${it.link}">${body}</a>`;
 }
 const monday = (d) => { const x = new Date(d); const k = (x.getDay() + 6) % 7; x.setDate(x.getDate() - k); return x; };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const calWide = () => matchMedia('(min-width: 700px)').matches;
+function dayAgenda(ds) {
+  const its = calendarItems(ds, ds);
+  const d = parseD(ds);
+  const label = ds === todayStr() ? 'Today' : days(ds) === 1 ? 'Tomorrow' : days(ds) === -1 ? 'Yesterday' : d.toLocaleDateString('en-GB', { weekday: 'long' });
+  return `<div class="cal-agenda ${S.calAgAnim ? 'cal-anim' : ''}"><div class="cal-agenda-head"><h2>${esc(label)} <span class="muted" style="font-weight:500">${esc(d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }))}</span></h2>
+    <button class="btn sm ghost" data-act="new-event" data-date="${ds}" style="color:var(--accent-text)">${ic('plus')}Add</button></div>
+    <div class="card flush">${its.length ? its.map(agItem).join('') : `<div class="ag-empty">No events</div>`}</div></div>`;
+}
+function weekStrip(sel) {
+  const st = monday(parseD(sel));
+  return `<div class="wk-strip">${[0, 1, 2, 3, 4, 5, 6].map((i) => { const d = addDays(st, i); const ds = dstr(d); const n = calendarItems(ds, ds).length;
+    return `<button class="wk-day ${ds === todayStr() ? 'today' : ''} ${ds === sel ? 'sel' : ''}" data-act="cal-pick" data-d="${ds}" aria-pressed="${ds === sel}" aria-label="${esc(d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))}${n ? ', ' + plural(n, 'item') : ''}">
+      <span class="dw">${d.toLocaleDateString('en-GB', { weekday: 'narrow' })}</span><span class="dn">${d.getDate()}</span><span class="cal-dots" style="display:flex">${calendarItems(ds, ds).slice(0, 3).map((it) => `<i style="--c:${esc(itColor(it))}"></i>`).join('')}</span></button>`; }).join('')}</div>`;
+}
+// Hour-by-hour timeline for one or more days.
+const HOUR_PX = 52;
+const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+function timeline(dayList) {
+  const per = dayList.map((ds) => calendarItems(ds, ds));
+  const timed = (it) => it.kind === 'event' && it.time && !(it.ev.endDate && it.ev.endDate > it.ev.date);
+  let lo = 7, hi = 19;
+  per.flat().filter(timed).forEach((it) => { const s = toMin(it.time); const e = toMin(it.ev.end) || s + 60; lo = Math.min(lo, Math.floor(s / 60)); hi = Math.max(hi, Math.ceil(e / 60)); });
+  lo = Math.max(0, lo); hi = Math.min(24, Math.max(hi, lo + 6));
+  const hours = []; for (let h = lo; h < hi; h++) hours.push(h);
+  const cols = dayList.length;
+  const now = new Date(); const nowMin = now.getHours() * 60 + now.getMinutes();
+  const head = cols > 1 ? `<div class="tl-gutter-lbl" style="border:0"></div>${dayList.map((ds) => { const d = parseD(ds); return `<div class="tl-colhead ${ds === todayStr() ? 'today' : ''}" data-act="cal-goday" data-d="${ds}"><div class="dw">${d.toLocaleDateString('en-GB', { weekday: 'short' })}</div><div class="dn">${d.getDate()}</div></div>`; }).join('')}` : '';
+  const allday = `<div class="tl-gutter-lbl">all-day</div>${per.map((its) => `<div class="tl-allday" style="border-left:${cols > 1 ? '.5px solid var(--line)' : '0'}">${its.filter((it) => !timed(it)).map(calPill).join('')}</div>`).join('')}`;
+  const body = `<div class="tl-hours">${hours.map((h) => `<div class="tl-hour">${h === lo ? '' : String(h).padStart(2, '0') + ':00'}</div>`).join('')}</div>
+    ${per.map((its, ci) => {
+      const evs = its.filter(timed).map((it) => { const s = toMin(it.time); let e = toMin(it.ev.end); if (e == null || e <= s) e = s + 60; return { it, s, e }; }).sort((a, b) => a.s - b.s);
+      const lanes = []; evs.forEach((x) => { let l = lanes.findIndex((end) => end <= x.s); if (l < 0) { l = lanes.length; lanes.push(0); } lanes[l] = x.e; x.lane = l; });
+      const n = Math.max(1, lanes.length);
+      const isToday = dayList[ci] === todayStr();
+      return `<div class="tl-col ${isToday ? 'today' : ''}" data-act="cal-slot" data-d="${dayList[ci]}" data-lo="${lo}" style="height:${hours.length * HOUR_PX}px">
+        ${evs.map((x) => `<button class="tl-ev" data-act="event-open" data-id="${x.it.id}" style="--c:${esc(itColor(x.it))};top:${(x.s - lo * 60) / 60 * HOUR_PX + 1}px;height:${Math.max(22, (x.e - x.s) / 60 * HOUR_PX - 2)}px;left:calc(${x.lane / n * 100}% + 3px);right:auto;width:calc(${100 / n}% - 6px)"><b>${esc(x.it.title)}</b><span>${esc(x.it.time)}${x.it.ev.end ? '–' + esc(x.it.ev.end) : ''}${x.it.ev.location ? ' · ' + esc(x.it.ev.location) : ''}</span></button>`).join('')}
+        ${isToday && nowMin >= lo * 60 && nowMin <= hi * 60 ? `<div class="tl-now" style="top:${(nowMin - lo * 60) / 60 * HOUR_PX}px"></div>` : ''}</div>`;
+    }).join('')}`;
+  return `<div class="tl ${cols > 1 ? 'week' : ''}" style="${cols > 1 ? '' : ''}">${head}${allday}</div>
+    <div class="tl-scroll"><div class="tl ${cols > 1 ? 'week' : ''}">${body}</div></div>`;
+}
 VIEWS.calendar = {
   render(day) {
     if (day && /^\d{4}-\d{2}-\d{2}$/.test(day)) S.calDate = day;
-    const view = S.calView; const cur = parseD(S.calDate);
+    const view = S.calView; const sel = S.calDate; const cur = parseD(sel);
+    const anim = S.calAnim ? `cal-anim ${S.calAnim}` : ''; S.calAnim = '';
     let title, body;
     if (view === 'month') {
-      title = cur.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+      title = `${cur.toLocaleDateString('en-GB', { month: 'long' })} <span class="yr">${cur.getFullYear()}</span>`;
       const first = new Date(cur.getFullYear(), cur.getMonth(), 1); const start = monday(first);
-      const cells = []; for (let i = 0; i < 42; i++) { const d = new Date(start); d.setDate(start.getDate() + i); cells.push(d); }
+      const cells = []; for (let i = 0; i < 42; i++) cells.push(addDays(start, i));
       const lastRow = cells[35].getMonth() !== cur.getMonth() ? 35 : 42;
       const items = calendarItems(dstr(cells[0]), dstr(cells[lastRow - 1]));
-      body = `<div class="cal-month" role="grid">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => `<div class="cal-dow" role="columnheader">${d}</div>`).join('')}
-        ${cells.slice(0, lastRow).map((d) => { const ds = dstr(d); const its = items.filter((x) => x.date === ds); return `<div class="cal-day ${d.getMonth() !== cur.getMonth() ? 'other' : ''} ${ds === todayStr() ? 'today' : ''}" role="gridcell" data-act="cal-day" data-d="${ds}" tabindex="0" aria-label="${esc(d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))}${its.length ? ', ' + plural(its.length, 'item') : ''}">
-          <span class="n">${d.getDate()}</span>${its.slice(0, 3).map(calChip).join('')}${its.length > 3 ? `<span class="cal-more">+${its.length - 3} more</span>` : ''}</div>`; }).join('')}</div>`;
+      const max = calWide() ? 3 : 0;
+      body = `<div class="cal-surface ${anim}" data-swipe="cal"><div class="cal-dows">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) => `<span class="${i > 4 ? 'we' : ''}">${calWide() ? d : d[0]}</span>`).join('')}</div>
+        <div class="cal-grid" role="grid">${cells.slice(0, lastRow).map((d) => { const ds = dstr(d); const its = items.filter((x) => x.date === ds); const wk = d.getDay() === 0 || d.getDay() === 6;
+          return `<div class="cal-cell ${d.getMonth() !== cur.getMonth() ? 'other' : ''} ${ds === todayStr() ? 'today' : ''} ${ds === sel ? 'sel' : ''} ${wk ? 'we' : ''}" role="gridcell" data-act="cal-pick" data-d="${ds}" tabindex="0" aria-selected="${ds === sel}" aria-label="${esc(d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))}${its.length ? ', ' + plural(its.length, 'item') : ''}">
+            <span class="dn">${d.getDate()}</span>
+            <span class="evs">${its.slice(0, max).map(calPill).join('')}${its.length > max && max ? `<span class="cal-more">${its.length - max} more</span>` : ''}</span>
+            <span class="cal-dots">${its.slice(0, 3).map((it) => `<i style="--c:${esc(itColor(it))}"></i>`).join('')}</span></div>`; }).join('')}</div></div>
+        ${dayAgenda(sel)}`;
     } else if (view === 'week') {
-      const st = monday(cur); const en = new Date(st); en.setDate(st.getDate() + 6);
-      title = `${st.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${en.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
-      const items = calendarItems(dstr(st), dstr(en));
-      body = `<div class="cal-week">${[0, 1, 2, 3, 4, 5, 6].map((i) => { const d = new Date(st); d.setDate(st.getDate() + i); const ds = dstr(d); const its = items.filter((x) => x.date === ds);
-        return `<div class="cal-col ${ds === todayStr() ? 'today' : ''}"><button class="btn ghost sm" style="justify-content:flex-start;padding:0 4px" data-act="cal-goday" data-d="${ds}"><b>${d.toLocaleDateString('en-GB', { weekday: 'short' })}</b>&nbsp;<span class="muted">${d.getDate()}</span></button>${its.map(calChip).join('') || '<span class="tiny muted" style="padding:0 4px">—</span>'}<button class="btn ghost sm" data-act="new-event" data-date="${ds}" aria-label="Add event on ${ds}" style="margin-top:auto">${ic('plus')}</button></div>`; }).join('')}</div>`;
+      const st = monday(cur); const en = addDays(st, 6);
+      title = st.getMonth() === en.getMonth() ? `${st.getDate()}–${en.getDate()} ${en.toLocaleDateString('en-GB', { month: 'short' })} <span class="yr">${en.getFullYear()}</span>`
+        : `${st.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${en.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} <span class="yr">${en.getFullYear()}</span>`;
+      body = calWide()
+        ? `<div class="cal-surface ${anim}" data-swipe="cal">${timeline([0, 1, 2, 3, 4, 5, 6].map((i) => dstr(addDays(st, i))))}</div>`
+        : `<div class="cal-surface ${anim}" data-swipe="cal">${weekStrip(sel)}</div>${dayAgenda(sel)}`;
     } else {
-      title = cur.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-      const its = calendarItems(S.calDate, S.calDate);
-      body = `<div class="card flush">${its.length ? `<div class="list agenda">${its.map((it) => it.kind === 'event'
-        ? `<button class="item" data-act="event-open" data-id="${it.id}"><span class="when">${esc(it.time || 'All day')}</span><span class="grow"><span class="bold" style="display:block">${esc(it.title)}</span><span class="tiny muted">${esc(it.sub)}</span></span>${avatarStack(it.ev.participants, 4)}</button>`
-        : `<a class="item" href="${it.link}"><span class="when">${it.kind === 'due' ? 'Due' : 'Starts'}</span><span class="grow"><span class="bold" style="display:block">${esc(it.title.replace(/^(Due|Starts): /, ''))}</span><span class="tiny muted">${esc(it.sub)}</span></span></a>`).join('')}</div>`
-        : `<div class="empty">${ic('cal')}<h3>Nothing on this day</h3><button class="btn primary" data-act="new-event" data-date="${S.calDate}">${ic('plus')}Add an event</button></div>`}</div>`;
+      title = `${cur.getDate()} ${cur.toLocaleDateString('en-GB', { month: 'long' })} <span class="yr">${cur.getFullYear()}</span>`;
+      body = `<div class="cal-surface ${anim}" data-swipe="cal">${weekStrip(sel)}<div style="border-top:.5px solid var(--line)">${timeline([sel])}</div></div>`;
     }
-    return `<div class="page-head"><div><h1>Calendar</h1><div class="sub">Shared with everyone in ${esc(S.company.name)}. Job start dates and deadlines show automatically.</div></div><button class="btn primary" data-act="new-event" data-date="${S.calDate}">${ic('plus')}<span>New event</span></button></div>
-      <div class="cal-head"><div class="row tight"><button class="btn sm icon" data-act="cal-step" data-d="-1" aria-label="Previous">${ic('left')}</button><button class="btn sm" data-act="cal-today">Today</button><button class="btn sm icon" data-act="cal-step" data-d="1" aria-label="Next">${ic('right')}</button></div>
-        <h2 class="grow" aria-live="polite">${esc(title)}</h2>
-        <div class="seg">${[['month', 'Month'], ['week', 'Week'], ['day', 'Day']].map(([k, l]) => `<button class="${view === k ? 'on' : ''}" data-act="cal-view" data-v="${k}">${l}</button>`).join('')}</div></div>
+    S.calAgAnim = false;
+    return `<div class="cal-top"><div class="cal-title"><div class="sub">${view === 'day' ? esc(cur.toLocaleDateString('en-GB', { weekday: 'long' })) : 'Calendar'}</div><h1 aria-live="polite">${title}</h1></div>
+        <button class="btn primary icon" data-act="new-event" data-date="${sel}" aria-label="New event" title="New event" style="border-radius:50%">${ic('plus')}</button>
+        <div class="cal-ctrls"><div class="cal-nav"><button class="btn icon" data-act="cal-step" data-d="-1" aria-label="Previous ${view}">${ic('left')}</button><button class="btn sm today-btn" data-act="cal-today">Today</button><button class="btn icon" data-act="cal-step" data-d="1" aria-label="Next ${view}">${ic('right')}</button></div>
+        <div class="seg" data-seg="calview">${[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([k, l]) => `<button class="${view === k ? 'on' : ''}" data-act="cal-view" data-v="${k}">${l}</button>`).join('')}</div></div></div>
       ${body}
-      <div class="legend"><span><i style="background:var(--blue-soft);border:1px solid var(--blue)"></i>Event</span><span><i style="background:var(--ok-soft);border:1px solid var(--ok)"></i>Job starts</span><span><i style="background:var(--amber-soft);border:1px solid var(--amber)"></i>Job due</span></div>`;
+      <div class="cal-legend"><span><i style="--c:${CAL_C.event}"></i>Events</span><span><i style="--c:${CAL_C.start}"></i>Job starts</span><span><i style="--c:${CAL_C.due}"></i>Deadlines</span><span class="grow"></span><span>Shared with ${esc(S.company.name)}</span></div>`;
+  },
+  mount() {
+    const sc = $('.tl-scroll');
+    if (sc && !sc.dataset.scrolled) { const now = $('.tl-now', sc); const first = $('.tl-ev', sc); const tgt = now || first; if (tgt) sc.scrollTop = Math.max(0, tgt.offsetTop - 80); sc.dataset.scrolled = '1'; }
+    const sw = $('[data-swipe="cal"]'); if (!sw) return;
+    let x0 = null, y0 = 0;
+    sw.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') { x0 = e.clientX; y0 = e.clientY; } });
+    sw.addEventListener('pointerup', (e) => { if (x0 == null) return; const dx = e.clientX - x0, dy = e.clientY - y0; x0 = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) calStep(dx < 0 ? 1 : -1); });
+    sw.addEventListener('pointercancel', () => { x0 = null; });
   },
 };
-A['cal-view'] = (el) => { S.calView = el.dataset.v; store.set('cd_calView', S.calView); renderView(false); };
-A['cal-today'] = () => { S.calDate = todayStr(); location.hash = '#/calendar/' + S.calDate; renderView(false); };
-A['cal-step'] = (el) => {
-  const d = parseD(S.calDate); const n = Number(el.dataset.d);
-  if (S.calView === 'month') { d.setDate(1); d.setMonth(d.getMonth() + n); } else d.setDate(d.getDate() + (S.calView === 'week' ? 7 : 1) * n);
-  S.calDate = dstr(d); history.replaceState(null, '', '#/calendar/' + S.calDate); current.key = location.hash; renderView(false);
+function calGo(ds, anim) { S.calDate = ds; S.calAnim = anim || ''; history.replaceState(null, '', '#/calendar/' + ds); current.key = location.hash; renderView(false); }
+function calStep(n) {
+  const d = parseD(S.calDate);
+  if (S.calView === 'month') { const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); }
+  else d.setDate(d.getDate() + (S.calView === 'week' ? 7 : 1) * n);
+  S.calAgAnim = true; calGo(dstr(d), n > 0 ? 'from-right' : 'from-left');
+}
+A['cal-view'] = (el) => { S.calView = el.dataset.v; store.set('cd_calView', S.calView); S.calAnim = ' '; S.calAgAnim = true; renderView(false); };
+A['cal-today'] = () => { const t = todayStr(); if (t === S.calDate) return; S.calAgAnim = true; calGo(t, t > S.calDate ? 'from-right' : 'from-left'); };
+A['cal-step'] = (el) => calStep(Number(el.dataset.d));
+A['cal-pick'] = (el, e) => {
+  if (e && e.target.closest('.cal-pill')) return;
+  const ds = el.dataset.d;
+  if (ds === S.calDate && S.calView === 'month' && calWide()) { S.calView = 'day'; store.set('cd_calView', 'day'); return calGo(ds, ' '); } // second click opens the day
+  const other = S.calView === 'month' && parseD(ds).getMonth() !== parseD(S.calDate).getMonth();
+  S.calAgAnim = true; calGo(ds, other ? (ds > S.calDate ? 'from-right' : 'from-left') : '');
 };
-A['cal-day'] = (el, e) => { if (e.target.closest('.cal-ev')) return; S.calDate = el.dataset.d; S.calView = 'day'; store.set('cd_calView', 'day'); history.replaceState(null, '', '#/calendar/' + S.calDate); current.key = location.hash; renderView(false); };
-A['cal-goday'] = (el) => { S.calDate = el.dataset.d; S.calView = 'day'; renderView(false); };
-document.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.cal-day')) { e.preventDefault(); A['cal-day'](e.target, e); } });
+A['cal-goday'] = (el) => { S.calView = 'day'; store.set('cd_calView', 'day'); calGo(el.dataset.d, ' '); };
+A['cal-slot'] = (el, e) => { // tap an empty hour to add an event then
+  if (e.target !== el) return;
+  const r = el.getBoundingClientRect(); const h = Math.min(23, Number(el.dataset.lo) + Math.floor((e.clientY - r.top) / HOUR_PX));
+  eventSheet(null, { date: el.dataset.d, allDay: false, start: String(h).padStart(2, '0') + ':00', end: String(Math.min(23, h + 1)).padStart(2, '0') + ':00' });
+};
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.cal-cell')) { e.preventDefault(); A['cal-pick'](e.target, e); }
+  if (parseHash().name === 'calendar' && !e.target.closest('input,textarea,select,[contenteditable]') && !document.querySelector('.sheet-backdrop')) {
+    if (e.key === 'ArrowRight' && e.altKey) calStep(1); else if (e.key === 'ArrowLeft' && e.altKey) calStep(-1);
+  }
+});
 
 function eventSheet(ev, preset = {}) {
   const e = ev || Object.assign({ title: '', date: S.calDate || todayStr(), endDate: '', allDay: true, start: '09:00', end: '10:00', description: '', location: '', participants: [], visibility: 'all', jobId: '', projectId: '', color: '' }, preset);

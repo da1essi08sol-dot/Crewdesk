@@ -73,7 +73,7 @@ function renderShell() {
       ${isAdmin() ? `<div class="label navsec">Admin</div>${navLink(['sheets', 'Spreadsheets', 'sheet'])}` : ''}
       ${navLink(['settings', 'Company settings', 'settings'])}</nav>
       <div class="grow"></div>
-      <a class="navbtn" data-nav="profile" href="#/profile" id="side-me"></a>
+      <button class="navbtn" data-act="me-menu" aria-haspopup="menu" id="side-me"></button>
       <nav class="foot-links" style="justify-content:flex-start;margin:8px 10px 0;gap:12px" aria-label="Legal"><a href="#/privacy">Privacy</a><a href="#/terms">Terms</a><a href="mailto:${esc(S.info.supportEmail || '')}">Support</a></nav>
     </aside>
     <div style="min-width:0">
@@ -82,9 +82,7 @@ function renderShell() {
         <button class="searchbox" data-act="search" aria-label="Search">${ic('search')}<span>Search projects, jobs, people…</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'} K</kbd></button>
         <div class="grow"></div>
         <button class="icon-btn mobile-only" data-act="search" aria-label="Search">${ic('search')}</button>
-        <button class="btn sm primary" data-act="new-menu" aria-haspopup="menu" style="display:${wide() ? '' : 'none'}" data-wide-only>${ic('plus')}<span>New</span></button>
-        <button class="co-btn desk-co" data-act="co-menu" aria-haspopup="menu" title="Company menu" aria-label="Company menu">${brand()}</button>
-        <button class="icon-btn" data-act="me-menu" aria-haspopup="menu" aria-label="My account" id="top-me"></button>
+        <button class="icon-btn mobile-only" data-act="me-menu" aria-haspopup="menu" aria-label="My account" id="top-me"></button>
       </header>
       <main id="view" tabindex="-1"></main>
     </div>
@@ -117,7 +115,6 @@ function updateChrome() {
     b.classList.toggle('on', on);
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
-  const nb = $('[data-wide-only]'); if (nb) nb.style.display = wide() ? '' : 'none';
 }
 // The company's banner image fills the top bar to the right of the company name.
 function applyBanner(pos) {
@@ -134,23 +131,18 @@ window.addEventListener('resize', () => { if (S.company) updateChrome(); });
 A['co-menu'] = (el) => {
   const others = S.companies.filter((c) => c.id !== S.cid);
   popMenu(el, `<div class="head"><b>${esc(S.company.name)}</b><div class="tiny muted">You’re ${S.role === 'owner' ? 'the owner' : 'a' + (S.role === 'admin' ? 'n admin' : ' member')}</div></div><div class="sep"></div>
-    <a class="mi" href="#/settings">${ic('settings')}Company settings</a>
     ${canInvite() ? `<button class="mi" data-act="invite-new">${ic('userplus')}Invite people</button>` : ''}
-    <a class="mi" href="#/team">${ic('team')}People &amp; teams</a>
+    <a class="mi" href="#/settings">${ic('settings')}Company settings</a>
     <a class="mi" href="#/company/${S.cid}">${ic('building')}Company profile</a>
-    <a class="mi" href="#/companies">${ic('search')}Find companies</a>
-    ${isAdmin() ? `<a class="mi" href="#/sheets">${ic('sheet')}Spreadsheets</a>` : ''}
     <div class="sep"></div>
-    ${others.map((c) => `<button class="mi" data-act="switch-co" data-id="${c.id}">${ic('building')}<span class="grow ellipsis">${esc(c.name)}</span></button>`).join('')}
-    <button class="mi" data-act="add-company">${ic('plus')}Create or join a company</button>`);
+    ${others.length ? `<div class="head tiny muted" style="padding-bottom:2px">Switch to</div>${others.map((c) => `<button class="mi" data-act="switch-co" data-id="${c.id}">${coLogo(c, 20)}<span class="grow ellipsis">${esc(c.name)}</span></button>`).join('')}<div class="sep"></div>` : ''}
+    <a class="mi" href="#/companies">${ic('search')}Find or create a company</a>`);
 };
 A['me-menu'] = (el) => {
   const p = S.user.prefs || {};
   popMenu(el, `<div class="head row">${avatar(S.members[S.user.id] || S.user, '', { link: false })}<div class="grow"><b class="ellipsis" style="display:block">${esc(S.user.name)}</b><span class="tiny muted ellipsis" style="display:block">${esc(S.user.email)}</span></div></div><div class="sep"></div>
-    <a class="mi" href="#/person/${S.user.id}">${ic('user')}View my profile</a>
-    <a class="mi" href="#/profile">${ic('edit')}Edit profile &amp; settings</a>
-    <button class="mi" data-act="toggle-popups">${ic('bell')}<span class="grow">Notifications</span><span class="tiny muted">${p.popups === false ? 'Off' : 'On'}</span></button>
-    <a class="mi" href="#/pings/activity">${ic('activity')}My notifications</a>
+    <a class="mi" href="#/person/${S.user.id}">${ic('user')}My profile</a>
+    <a class="mi" href="#/profile">${ic('settings')}My settings</a>
     <div class="sep"></div>
     <button class="mi" data-act="logout">${ic('logout')}Sign out</button>`);
 };
@@ -158,14 +150,6 @@ A['toggle-popups'] = async () => {
   const on = !(S.user.prefs && S.user.prefs.popups !== false);
   try { const r = await api('PUT', '/api/me', { prefs: { popups: on } }); S.user = r.user; toast(on ? 'Notifications are on' : 'Notifications are off — you’ll still see red dots for unread items'); if (parseHash().name === 'profile') renderView(false); }
   catch (e) { toast(e.message, true); }
-};
-A['new-menu'] = (el) => {
-  popMenu(el, `${canCreateJobs() ? `<button class="mi" data-act="new-job">${ic('jobs')}New job</button>` : ''}
-    ${canCreateProjects() ? `<button class="mi" data-act="new-project">${ic('folder')}New project</button>` : ''}
-    <button class="mi" data-act="new-event">${ic('cal')}New calendar event</button>
-    ${canPing() ? `<button class="mi" data-act="new-ping">${ic('ping')}New ping</button>` : ''}
-    <button class="mi" data-act="new-chat">${ic('chat')}New chat</button>
-    <button class="mi" data-act="client-edit">${ic('contacts')}New client</button>`);
 };
 A['switch-co'] = (el) => { if (el.dataset.id === S.cid) return; S.cid = el.dataset.id; resetCompanyState(); location.hash = '#/home'; loadCompany(); };
 A['add-company'] = () => sheet(`${sheetHead('Create or join a company')}<div class="stack">${companyForms()}</div>`);
@@ -177,7 +161,7 @@ function parseHash() {
   return { name: name || 'home', args: args.map((a) => { try { return decodeURIComponent(a); } catch { return a; } }) };
 }
 let current = { key: '' };
-function route() {
+function route(opts = {}) {
   if (!S.company) return;
   closeMenu();
   const r = parseHash();
@@ -189,12 +173,20 @@ function route() {
   const sameView = prev.key === key;
   const tabSwitch = prev.name === 'job' && r.name === 'job' && prev.args[0] === r.args[0];
   const inkFrom = tabSwitch ? tabInk : null;
-  current = { key, name: r.name, args: r.args, v };
-  renderView(false, !sameView && !tabSwitch);
-  updateChrome();
-  placeTabInk(inkFrom);
-  if (!sameView && !tabSwitch && motionOK()) { const m = $('#view'); m.classList.remove('in-view'); void m.offsetWidth; m.classList.add('in-view'); }
-  if (!sameView && !tabSwitch) { const h = $('#view h1'); if (h && !isTouch()) { h.setAttribute('tabindex', '-1'); } }
+  const next = { key, name: r.name, args: r.args, v };
+  const dir = navDirection(prev, next);
+  const moving = !sameView && !tabSwitch;
+  const paint = () => {
+    current = next;
+    renderView(false, moving);
+    updateChrome();
+    placeTabInk(inkFrom);
+    if (moving) markEnter();
+    if (moving) { const h = $('#view h1'); if (h && !isTouch()) { h.setAttribute('tabindex', '-1'); } }
+  };
+  if (moving && prev.name && !opts.noVT && canVT()) { withTransition(dir, paint); return; }
+  paint();
+  if (moving && prev.name && !opts.noVT && motionOK()) { const m = $('#view'); m.classList.remove('in-view', 'nav-forward', 'nav-back', 'nav-tab'); void m.offsetWidth; m.classList.add('in-view', 'nav-' + dir); }
 }
 function renderView(auto = false, scrollTop = false) {
   const main = $('#view'); if (!main || !current.v) return;
@@ -206,6 +198,7 @@ function renderView(auto = false, scrollTop = false) {
   if (current.v.mount) current.v.mount(...current.args);
   window.scrollTo(0, scrollTop ? 0 : y);
   placeTabInk(null);
+  paintSegs(main);
 }
 let rafPending = false;
 function scheduleRender() {
@@ -261,7 +254,7 @@ function handleEvent(ev) {
       const coll = S[ev.coll]; if (!coll) break;
       const isNew = !coll[ev.item.id];
       coll[ev.item.id] = ev.item;
-      if (ev.coll === 'pings' && isNew && ev.item.createdBy !== S.user.id) alertUser(`New ping from ${firstName(ev.item.createdBy)}: ${ev.item.title}`, '#/ping/' + ev.item.id);
+      if (ev.coll === 'pings' && isNew && ev.item.createdBy !== S.user.id) alertUser(`New ping from ${firstName(ev.item.createdBy)}: ${ev.item.title}`, '#/ping/' + ev.item.id, ev.item.body || '', { from: ev.item.createdBy, where: 'New ping', text: ev.item.title + (ev.item.body ? ' — ' + ev.item.body : '') });
       scheduleRender(); if (ev.coll === 'jobs') updateMap(); break;
     }
     case 'remove': {
@@ -276,7 +269,8 @@ function handleEvent(ev) {
     case 'msg': onMessage(ev.item); break;
     case 'inbox':
       S.inbox.push(ev.item); if (S.inbox.length > 200) S.inbox.shift();
-      alertUser(ev.item.text, ev.item.link); scheduleRender(); break;
+      alertUser(ev.item.text, ev.item.link, '', { from: ev.item.by && S.members[ev.item.by] ? ev.item.by : null, icon: 'bell', title: ev.item.by && S.members[ev.item.by] ? member(ev.item.by).name : 'Crewdesk', text: ev.item.text }); scheduleRender(); break;
+    case 'typing': onTyping(ev); break;
     case 'presence':
       if (S.members[ev.userId]) { S.members[ev.userId].online = ev.online; S.members[ev.userId].lastSeen = ev.lastSeen; }
       scheduleRender(); break;
@@ -301,9 +295,9 @@ function handleEvent(ev) {
   }
 }
 // A notification: pop-up (if switched on), desktop alert when the app is in the background, optional sound.
-function alertUser(text, link, body = '') {
+function alertUser(text, link, body = '', rich = null) {
   const p = S.user.prefs || {};
-  if (p.popups !== false) toast(text.slice(0, 140), false, link);
+  if (p.popups !== false) { if (rich) banner(Object.assign({ link }, rich)); else toast(text.slice(0, 140), false, link); }
   if (p.sound) beep();
   if (p.desktop && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
     try { const n = new Notification(text.slice(0, 120), { body, icon: '/icon-192.png', tag: link }); n.onclick = () => { window.focus(); location.hash = link; n.close(); }; } catch {}

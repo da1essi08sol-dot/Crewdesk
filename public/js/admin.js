@@ -444,14 +444,13 @@ VIEWS.more = {
         <a href="#/team">${ic('team')}<span class="grow">Team &amp; map</span>${ic('right')}</a>
         <a href="#/clients">${ic('contacts')}<span class="grow">Clients</span>${ic('right')}</a>
         ${isAdmin() ? `<a href="#/sheets">${ic('sheet')}<span class="grow">Spreadsheets</span><span class="tiny muted">Admins</span>${ic('right')}</a>` : ''}
-        <a href="#/pings/activity">${ic('bell')}<span class="grow">My notifications</span>${S.inbox.filter((n) => !n.read).length ? `<span class="count">${S.inbox.filter((n) => !n.read).length}</span>` : ''}${ic('right')}</a>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
         ${canInvite() ? `<button data-act="invite-new">${ic('userplus')}<span class="grow">Invite people</span>${ic('right')}</button>` : ''}
         <a href="#/settings">${ic('settings')}<span class="grow">Company settings</span>${ic('right')}</a>
-        <a href="#/profile">${ic('user')}<span class="grow">My profile &amp; settings</span>${ic('right')}</a>
-        <button data-act="co-menu">${ic('building')}<span class="grow">Switch or join company</span>${ic('right')}</button>
-        <a href="#/companies">${ic('search')}<span class="grow">Find companies</span>${ic('right')}</a>
+        <a href="#/profile">${ic('user')}<span class="grow">My settings</span>${ic('right')}</a>
+        ${S.companies.length > 1 ? `<button data-act="co-menu">${ic('building')}<span class="grow">Switch company</span>${ic('right')}</button>` : ''}
+        <a href="#/companies">${ic('search')}<span class="grow">Find or create a company</span>${ic('right')}</a>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
         <a href="#/privacy">${ic('shield')}<span class="grow">Privacy policy</span>${ic('right')}</a>
