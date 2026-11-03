@@ -1,7 +1,7 @@
 {
   "name": "crewdesk",
-  "version": "1.1.0",
-  "description": "All-in-one job tracker and team chat",
+  "version": "2.0.0",
+  "description": "Projects, jobs, calendar, pings and team chat for small companies",
   "main": "server.js",
   "scripts": { "start": "node server.js" },
   "engines": { "node": ">=18" },
