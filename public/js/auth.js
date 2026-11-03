@@ -72,7 +72,7 @@ function renderCheckEmail(email, logged) {
   authFrame(`<h1>Check your email</h1>
     <div class="card stack">
       <p style="margin:0">We sent a confirmation link to <b>${esc(email)}</b>. Open it on this device to finish setting up. It works for 24 hours.</p>
-      ${logged ? `<div class="warn">This server isn’t set up to send emails yet, so the link was written to the server log instead. If you run this copy of Crewdesk, you’ll find it in your Render logs.</div>` : '<p class="small muted" style="margin:0">Can’t see it? Check your spam or junk folder.</p>'}
+      ${logged ? `<div class="warn">This server isn’t set up to send emails yet, so the link was written to the server log instead. If you run this copy of Crewdesk, you’ll find it in your Render logs.</div>` : '<div class="info-box small" style="margin:0">📬 <b>Can’t see it?</b> Check your <b>spam or junk folder</b> — the first email from Crewdesk often lands there. If it does, mark it “Not spam”.</div>'}
       <form data-form="resend" class="row"><input type="hidden" name="email" value="${esc(email)}"><button class="btn">Send the link again</button></form>
       <div class="err-msg" data-err role="alert"></div>
       <a href="#/login" class="small">Back to sign in</a>
@@ -80,8 +80,10 @@ function renderCheckEmail(email, logged) {
 }
 function renderForgot(sentTo = '') {
   authFrame(`<h1>Reset your password</h1>
-    <div class="card">${sentTo ? `<div class="stack"><p style="margin:0">If there’s an account for <b>${esc(sentTo)}</b>, we’ve emailed a link to choose a new password. It works once, for 30 minutes.</p>
-      <p class="small muted" style="margin:0">Resetting your password also unlocks your account if it was locked after wrong passwords.</p><a href="#/login" class="small">Back to sign in</a></div>`
+    <div class="card">${sentTo ? `<div class="stack"><p style="margin:0">We’ve emailed a link to <b>${esc(sentTo)}</b> to choose a new password. It works once, for 30 minutes.</p>
+      <div class="info-box small" style="margin:0">📬 <b>Can’t see it?</b> Check your <b>spam or junk folder</b> — the first email from Crewdesk often lands there. If it does, mark it “Not spam”.</div>
+      <p class="small muted" style="margin:0">Resetting your password also unlocks your account if it was locked after wrong passwords.</p>
+      <div class="row wrap tight"><a href="#/forgot" class="small" data-act="forgot-again">Use a different email</a><span class="muted">·</span><a href="#/login" class="small">Back to sign in</a></div></div>`
       : `<form data-form="forgot" class="stack" novalidate><p class="muted" style="margin:0">Enter your email and we’ll send you a link to choose a new password.</p>
       <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required value="${esc(S.lastEmail || '')}"></label>
       <div class="err-msg" data-err role="alert"></div>
@@ -194,7 +196,7 @@ F.login = async (f, d) => {
   }
 };
 A['resend-verify'] = async (el) => {
-  try { await api('POST', '/api/verify/resend', { email: el.dataset.email }); toast('If that account needs confirming, we’ve sent a new link'); }
+  try { await api('POST', '/api/verify/resend', { email: el.dataset.email }); toast('We’ve sent a new link — check your inbox and spam folder'); }
   catch (e) { toast(e.message, true); }
 };
 F.register = async (f, d) => {
@@ -208,11 +210,15 @@ F.register = async (f, d) => {
 };
 F.resend = async (f, d) => {
   await api('POST', '/api/verify/resend', { email: d.email });
-  toast('If that account needs confirming, we’ve sent a new link. Check your inbox.');
+  toast('We’ve sent a new link — check your inbox and your spam folder.');
 };
 F.forgot = async (f, d) => {
   if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(d.email || '')) throw new Error('Enter a valid email address');
-  await api('POST', '/api/password/forgot', { email: d.email });
+  try { await api('POST', '/api/password/forgot', { email: d.email }); }
+  catch (e) {
+    if (e.data && e.data.noAccount) { const box = f.querySelector('[data-err]'); box.innerHTML = `${esc(e.message)} <a href="#/register">Create an account</a>`; f.querySelector('input[name=email]').setAttribute('aria-invalid', 'true'); return; }
+    throw e;
+  }
   S.lastEmail = d.email; renderForgot(d.email);
 };
 F.reset = async (f, d) => {
@@ -244,3 +250,4 @@ function publicRoute(r) {
   if (r.name === 'forgot') { renderForgot(); return true; }
   renderLogin(); return true;
 }
+A['forgot-again'] = () => renderForgot();

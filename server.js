@@ -895,15 +895,14 @@ async function api(req, res, url) {
     const email = normEmail(b.email);
     if (!emailOk(email)) bad('Enter a valid email address');
     const u = userByEmail(email);
-    if (u) {
-      try {
-        throttle('forgot-e:' + email, 3, 3600e3);
-        const token = makeToken('reset', u.id, RESET_TTL);
-        await mail.send(u.email, 'reset', { name: u.name.split(' ')[0], url: `${APP_URL}/#/reset/${token}` });
-        secLog('reset-requested', { email, ip });
-      } catch (_) { /* rate limited: answer the same way */ }
-    }
-    return json(res, 200, { ok: true }); // identical answer whether or not the email has an account
+    // Chosen by the owner: say clearly when an email has no account (the per-IP limit above stops mass checking).
+    if (!u) { secLog('reset-no-account', { email, ip }); throw new HttpError(404, 'There’s no account for this email yet. Check it’s spelt right, or create an account.', { noAccount: true }); }
+    throttle('forgot-e:' + email, 3, 3600e3, 'We’ve already sent a few reset emails. Check your inbox and spam folder, or try again in an hour.');
+    const token = makeToken('reset', u.id, RESET_TTL);
+    const r = await mail.send(u.email, 'reset', { name: u.name.split(' ')[0], url: `${APP_URL}/#/reset/${token}` });
+    secLog('reset-requested', { email, ip, sent: r.sent });
+    if (!r.sent && r.via !== 'log') throw new HttpError(502, 'We couldn’t send the email just now. Please try again in a few minutes.');
+    return json(res, 200, { ok: true });
   }
   if (p === '/api/password/reset' && M === 'POST') {
     throttle('reset:' + ip, 20, 3600e3);

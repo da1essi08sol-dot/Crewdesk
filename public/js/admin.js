@@ -271,7 +271,7 @@ F.invite = async (f, d) => {
   const r = await capi('POST', '/invites', { days: Number(d.days), maxUses: Number(d.maxUses), email: d.email || undefined });
   S.invites.unshift(r.invite);
   f.querySelector('[data-invite-out]').innerHTML = `<div class="info-box stack tight"><b>Your invite link</b><div class="linkbox"><input readonly value="${esc(r.invite.url)}" aria-label="Invite link"><button type="button" class="btn sm primary" data-act="copy-text" data-text="${esc(r.invite.url)}">${ic('copy')}Copy</button></div>
-    <span class="tiny muted">${d.email ? (r.emailed ? `We’ve emailed it to ${esc(d.email)}.` : `Email isn’t set up on this server, so send it to ${esc(d.email)} yourself.`) : 'Send it by text, WhatsApp or email.'}</span></div>`;
+    <span class="tiny muted">${d.email ? (r.emailed ? `We’ve emailed it to ${esc(d.email)}. Ask them to check their spam folder if it doesn’t arrive.` : `Email isn’t set up on this server, so send it to ${esc(d.email)} yourself.`) : 'Send it by text, WhatsApp or email.'}</span></div>`;
   if (parseHash().name === 'settings') renderView(false);
 };
 A['invite-revoke'] = async (el) => {

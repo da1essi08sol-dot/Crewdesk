@@ -63,7 +63,7 @@ Direct messages and group chats are private to the people in them — admins can
 
 - Passwords: scrypt hashing, 12+ characters with mixed character types, common-password list, and a Have I Been Pwned breach check (only 5 characters of a hash are sent).
 - Sign-in: HTTP-only, same-site session cookies (only a hash is stored), new session on each sign-in, other devices signed out after a password change or reset.
-- Lock-outs: 5 wrong passwords → 1 hour; the next wrong one → 24 hours, then doubling. The owner is emailed. A password reset unlocks the account, so nobody can be locked out for good. Unknown emails behave the same, so attackers can’t tell which accounts exist.
+- Lock-outs: 5 wrong passwords → 1 hour; the next wrong one → 24 hours, then doubling. The owner is emailed. A password reset unlocks the account, so nobody can be locked out for good. Sign-in and lockouts behave the same for unknown emails. “Forgot password” does say when an email has no account (an owner choice), limited to 8 tries an hour per device.
 - Rate limits on sign-in, sign-up, resets, invites and uploads. Requests from other websites are blocked (CSRF).
 - Every request is checked on the server against the person’s company, role and access. Uploads need sign-in and the right access, and file types are checked by their contents.
 - Strict Content Security Policy, HSTS, no third-party scripts. Map data comes from OpenFreeMap (vector maps), with OpenStreetMap as a fallback.
