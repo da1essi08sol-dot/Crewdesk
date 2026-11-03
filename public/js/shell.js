@@ -95,6 +95,7 @@ function renderShell() {
 function updateChrome() {
   if (!$('#side-me') || !S.company) return;
   $$('[data-co-name]').forEach((e) => { e.textContent = S.company.name; });
+  applyBanner();
   const me = S.members[S.user.id] || S.user;
   $('#top-me').innerHTML = avatar(Object.assign({}, me, { online: true }), 'sm', { link: false });
   $('#side-me').innerHTML = `${avatar(me, 'sm', { link: false })}<span class="ellipsis">${esc(me.name)}</span>`;
@@ -117,6 +118,14 @@ function updateChrome() {
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   const nb = $('[data-wide-only]'); if (nb) nb.style.display = wide() ? '' : 'none';
+}
+// The company's banner image fills the top bar to the right of the company name.
+function applyBanner(pos) {
+  const tb = $('.topbar'); if (!tb || !S.company) return;
+  const b = S.company.banner;
+  tb.classList.toggle('has-banner', !!b);
+  tb.style.setProperty('--banner', b ? `url("${b.replace(/["\\]/g, '')}")` : 'none');
+  tb.style.setProperty('--banner-y', (pos != null ? pos : S.company.bannerPos != null ? S.company.bannerPos : 50) + '%');
 }
 const unreadPings = () => Object.values(S.pings).filter((p) => !p.read).length;
 window.addEventListener('resize', () => { if (S.company) updateChrome(); });

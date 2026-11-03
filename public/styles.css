@@ -108,6 +108,12 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .topbar .co-btn { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; padding: 4px 6px 4px 0; border-radius: 8px; cursor: pointer; }
 .topbar .co-btn .name { font-weight: 700; font-size: 16px; }
 .topbar .co-btn.desk-co { display: none; }
+.topbar.has-banner { min-height: 58px; background-image: linear-gradient(90deg, var(--surface) 0, var(--surface) 12%, color-mix(in srgb, var(--surface) 55%, transparent) 38%, transparent 62%), var(--banner);
+  background-size: cover; background-position: center var(--banner-y, 50%); background-repeat: no-repeat; }
+.topbar.has-banner .icon-btn, .topbar.has-banner .desk-co { background: color-mix(in srgb, var(--surface) 88%, transparent); }
+.topbar.has-banner .searchbox { background: color-mix(in srgb, var(--surface) 92%, transparent); }
+@media (min-width: 900px) { .topbar.has-banner { min-height: 72px; background-image: linear-gradient(90deg, var(--surface) 0, color-mix(in srgb, var(--surface) 40%, transparent) 22%, transparent 45%), var(--banner); } }
+.banner-preview { height: 110px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2) center / cover no-repeat; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
 .icon-btn { width: 38px; height: 38px; display: inline-grid; place-items: center; border: 0; background: none; border-radius: 8px; cursor: pointer; color: var(--ink-2); flex: none; position: relative; text-decoration: none; }
 .icon-btn:hover { background: var(--hover); }
 .icon-btn svg { width: 21px; height: 21px; }

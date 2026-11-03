@@ -193,6 +193,7 @@ function buildFileIndex() {
   const idx = {};
   const name = (url) => (typeof url === 'string' && url.startsWith('/uploads/') ? url.slice(9) : null);
   for (const u of Object.values(db.users)) { const n = name(u.avatar); if (n) idx[n] = { kind: 'avatar', owner: u.id }; }
+  for (const c of Object.values(db.companies)) { const n = name(c.banner); if (n) idx[n] = { kind: 'banner', cid: c.id }; }
   for (const [cid, d] of Object.entries(db.data)) {
     if (!db.companies[cid]) continue;
     for (const p of Object.values(d.photos || {})) for (const u of [p.url, p.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'photo', cid, job: p.jobId }; }
@@ -217,7 +218,7 @@ function memberList(c, viewerId) {
 const canSeeMoney = (c, role) => isAdmin(role) || !!c.settings.membersSeeMoney;
 function publicCompany(c, role) {
   return { id: c.id, name: c.name, code: isAdmin(role) || c.settings.allowCodeJoin ? c.code : '', ownerId: c.ownerId, createdAt: c.createdAt,
-    settings: c.settings, canSeeMoney: canSeeMoney(c, role) };
+    settings: c.settings, canSeeMoney: canSeeMoney(c, role), banner: c.banner || '', bannerPos: c.bannerPos || 50 };
 }
 function companiesFor(userId) {
   return Object.values(db.companies).filter((c) => c.members[userId]).map((c) => ({ id: c.id, name: c.name, role: c.members[userId].role }));
@@ -368,6 +369,7 @@ function dropCompanyFiles(cid) {
 function canReadFile(user, e) {
   if (!e) return false;
   if (e.kind === 'avatar') return e.owner === user.id || Object.values(db.companies).some((c) => c.members[user.id] && c.members[e.owner]);
+  if (e.kind === 'banner') return !!(db.companies[e.cid] && db.companies[e.cid].members[user.id]);
   const c = db.companies[e.cid]; if (!c) return false;
   const x = ctxFor(c, user.id); if (!x) return false;
   if (e.kind === 'photo') return canSeeJob(x, x.d.jobs[e.job]);
@@ -1078,8 +1080,14 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   }
   if (sub === '' && M === 'PATCH') {
     if (!isAdmin(role)) deny();
-    const b = await readBody(req);
+    const b = await readBody(req, 8 * 1024 * 1024);
     if ('name' in b) c.name = str(b.name, 80) || bad('Name can’t be empty');
+    if ('banner' in b) { // company banner shown in the top bar
+      const old = c.banner;
+      c.banner = b.banner ? await saveImage(b.banner, 4 * 1024 * 1024, { kind: 'banner', cid: c.id }) : '';
+      if (old && old !== c.banner) dropFile(old);
+    }
+    if ('bannerPos' in b) c.bannerPos = Math.max(0, Math.min(100, Math.round(Number(b.bannerPos) || 0)));
     if (b.settings && typeof b.settings === 'object') {
       for (const k of ['membersSeeMoney', 'membersCreateJobs', 'membersCreateProjects', 'membersInvite', 'membersPing', 'allowCodeJoin']) if (k in b.settings) c.settings[k] = !!b.settings[k];
       if ('currency' in b.settings) c.settings.currency = str(b.settings.currency, 3) || '£';

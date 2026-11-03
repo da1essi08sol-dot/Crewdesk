@@ -235,6 +235,11 @@ VIEWS.settings = {
           <div class="form-grid"><label class="field"><span>Company name</span><input name="name" value="${esc(c.name)}" required maxlength="80"></label>
           <label class="field"><span>Currency symbol</span><input name="currency" value="${esc(c.settings.currency || '£')}" maxlength="3"></label></div>
           <div class="err-msg" data-err></div><button class="btn">Save details</button></form>
+        <div class="card stack"><h2>Banner</h2>
+          <p class="small muted" style="margin:0">A picture shown across the top bar, to the right of your company name — your logo, a finished job, your vans. Wide photos work best (about 1600 × 300).</p>
+          <div class="banner-preview" id="banner-preview" style="${c.banner ? `background-image:url('${esc(c.banner)}');background-position:center ${c.bannerPos != null ? c.bannerPos : 50}%` : ''}">${c.banner ? '' : 'No banner yet'}</div>
+          ${c.banner ? `<label class="field"><span>Move the picture up or down</span><input type="range" min="0" max="100" value="${c.bannerPos != null ? c.bannerPos : 50}" data-input="banner-pos" data-change="banner-pos" aria-label="Banner position"></label>` : ''}
+          <div class="row wrap tight"><button class="btn sm" data-act="banner-upload">${ic('image')}${c.banner ? 'Change banner' : 'Upload banner'}</button>${c.banner ? `<button class="btn sm ghost" data-act="banner-remove">Remove</button>` : ''}</div></div>
         <div class="card"><h2 style="margin-bottom:6px">What members can do</h2>
           ${toggle('membersCreateProjects', 'Create projects', 'Otherwise only admins can')}
           ${toggle('membersCreateJobs', 'Create jobs', 'Otherwise only admins can')}
@@ -252,6 +257,19 @@ VIEWS.settings = {
 };
 C['co-setting'] = async (el) => { try { const r = await capi('PATCH', '', { settings: { [el.dataset.k]: el.checked } }); S.company = r.company; toast('Saved'); } catch (e) { toast(e.message, true); el.checked = !el.checked; } };
 F['co-name'] = async (f, d) => { const r = await capi('PATCH', '', { name: d.name, settings: { currency: d.currency } }); S.company = r.company; updateChrome(); toast('Saved'); };
+A['banner-upload'] = async (el) => {
+  const [file] = await choosePhotos({ multiple: false, title: 'Company banner' });
+  if (!file) return;
+  el.classList.add('busy');
+  try {
+    const p = await processPhoto(file, { max: 2000, thumb: 0 });
+    const r = await sendWithProgress('PATCH', `/api/c/${S.cid}`, { banner: p.data, bannerPos: 50 });
+    S.company = r.company; updateChrome(); renderView(false); toast('Banner updated');
+  } catch (e) { toast(e.message, true); el.classList.remove('busy'); }
+};
+A['banner-remove'] = async () => { try { const r = await capi('PATCH', '', { banner: '' }); S.company = r.company; updateChrome(); renderView(false); toast('Banner removed'); } catch (e) { toast(e.message, true); } };
+I['banner-pos'] = (el) => { const pv = $('#banner-preview'); if (pv) pv.style.backgroundPosition = `center ${el.value}%`; applyBanner(el.value); };
+C['banner-pos'] = async (el) => { try { const r = await capi('PATCH', '', { bannerPos: Number(el.value) }); S.company = r.company; } catch (e) { toast(e.message, true); } };
 F['co-pass'] = async (f, d) => { await capi('PATCH', '', { password: d.password }); f.reset(); toast('Join password changed'); };
 A['copy-text'] = async (el) => { try { await navigator.clipboard.writeText(el.dataset.text); toast('Link copied'); } catch { sheet(`${sheetHead('Copy this link')}<input class="input" readonly value="${esc(el.dataset.text)}" onfocus="this.select()">`); } };
 A['copy-invite'] = async () => {
