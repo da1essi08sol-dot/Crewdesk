@@ -2193,9 +2193,14 @@ function mhFit(list, mp, W, H) {
   return { c, z };
 }
 async function mhStaticMap(list, mp) {
-  if (!STATIC_KEY || typeof fetch !== 'function' || overFree('gStatic')) return null;
-  countUse('gStatic');
+  if (typeof fetch !== 'function') return null;
   const { c, z } = mhFit(list, mp, 640, 640);
+  if (!STATIC_KEY || overFree('gStatic')) { // free Esri imagery for the same area
+    try { const R = 6378137, x = c.lng * Math.PI / 180 * R, y = Math.log(Math.tan(Math.PI / 4 + c.lat * Math.PI / 360)) * R, h = 320 * 156543.03392804097 / 2 ** z;
+      const r = await fetch(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${x - h},${y - h},${x + h},${y + h}&bboxSR=3857&imageSR=3857&size=1280,1280&format=jpg&f=image`);
+      if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null; return { data: Buffer.from(await r.arrayBuffer()), w: 1280, h: 1280, c, z }; } catch (_) { return null; }
+  }
+  countUse('gStatic');
   const u = `https://maps.googleapis.com/maps/api/staticmap?center=${c.lat},${c.lng}&zoom=${z}&size=640x640&scale=2&maptype=satellite&format=jpg&key=${encodeURIComponent(STATIC_KEY)}`;
   const r = await fetch(u); if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null;
   return { data: Buffer.from(await r.arrayBuffer()), w: 1280, h: 1280, c, z };
