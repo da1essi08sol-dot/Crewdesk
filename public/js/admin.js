@@ -56,8 +56,16 @@ function svgChart({ labels, bars = [], lines = [], height = 230, title, width = 
 }
 VIEWS.sheets = {
   manual: true,
-  render() {
-    if (!isAdmin()) return `<div class="card empty">${ic('lock')}<h3>Admins only</h3><div class="small">Spreadsheets show company finances, so only owners and admins can open them.</div></div>`;
+  render(tab) {
+    if (!isAdmin()) return `<div class="card empty">${ic('lock')}<h3>Admins only</h3><div class="small">Spreadsheets show company finances, hours and performance, so only owners and admins can open them.</div></div>`;
+    tab = ['hours', 'performance'].includes(tab) ? tab : 'money';
+    const nav = `<nav class="tabs" aria-label="Spreadsheet sections">${[['money', 'Money'], ['hours', 'Hours'], ['performance', 'Performance']].map(([k, l]) => `<a class="tab ${tab === k ? 'on' : ''}" href="#/sheets${k === 'money' ? '' : '/' + k}" ${tab === k ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
+    if (tab !== 'money') return `<div class="page-head"><div><h1>Spreadsheets</h1><div class="sub">${icSize('lock', 13, 'vertical-align:-2px')} Only owners and admins can see this page.</div></div></div>${nav}<div style="margin-top:18px">${statsPage(tab)}</div>`;
+    return moneyPage(nav);
+  },
+};
+function moneyPage(nav) {
+  {
     const all = Object.values(S.finance);
     const [from, to] = finRange();
     let rows = all.filter((r) => r.date >= from && r.date <= to && (FIN.type === 'all' || r.type === FIN.type));
@@ -84,6 +92,7 @@ VIEWS.sheets = {
     const projOpts = Object.values(S.projects).sort((a, b) => a.name.localeCompare(b.name));
     return `<div class="page-head"><div><h1>Spreadsheets</h1><div class="sub">${icSize('lock', 13, 'vertical-align:-2px')} Only owners and admins can see this page.</div></div>
         <div class="row tight wrap"><button class="btn" data-act="fin-csv">${ic('download')}<span>CSV</span></button><button class="btn" data-act="fin-xlsx">${ic('download')}<span>Excel</span></button><button class="btn primary" data-act="fin-add">${ic('plus')}<span>Add row</span></button></div></div>
+      ${nav}<div style="margin-top:18px"></div>
       <div class="kpis">
         <div class="kpi"><span class="v pos">${esc(money(inc))}</span><span class="l">Income · ${esc(rangeLabel())}</span></div>
         <div class="kpi"><span class="v neg">${esc(money(exp))}</span><span class="l">Expenses · ${esc(rangeLabel())}</span></div>
@@ -124,8 +133,8 @@ VIEWS.sheets = {
         </table></div>
         <p class="small muted" style="margin-top:8px">Changes save as soon as you leave a cell. Amounts are always positive — the Type column decides whether it’s money in or out.</p>
       </div>`;
-  },
-};
+  }
+}
 function rangeLabel() { return { month: 'this month', '3m': 'last 3 months', year: 'this year', lastyear: 'last year', all: 'all time', custom: 'chosen dates' }[FIN.range]; }
 A['fin-range'] = (el) => { FIN.range = el.dataset.r; renderView(false); };
 A['fin-sort'] = (el) => { const k = el.dataset.k; FIN.sort = { key: k, dir: FIN.sort.key === k ? -FIN.sort.dir : k === 'date' || k === 'amount' ? -1 : 1 }; renderView(false); };
@@ -608,3 +617,116 @@ A['demo-co'] = async () => {
   try { const r = await api('POST', '/api/demo-company'); S.companies = r.companies; S.cid = r.company.id; resetCompanyState(); location.hash = '#/home'; await loadCompany(); toast('You’re in the demo company — switch back from the company menu'); }
   catch (e) { toast(e.message, true); }
 };
+
+// ============================================================ HOURS & PERFORMANCE (Spreadsheets → Hours / Performance)
+S.stRange = S.stRange || '3m'; S.stCache = {};
+const ST_RANGES = [['month', 'This month'], ['3m', '3 months'], ['6m', '6 months'], ['12m', '12 months'], ['year', 'This year']];
+function stDates() {
+  const t = new Date(); const to = todayStr(); const ym = (d) => dstr(d).slice(0, 7) + '-01';
+  if (S.stRange === 'month') return [ym(t), to];
+  if (S.stRange === 'year') return [t.getFullYear() + '-01-01', to];
+  const n = { '3m': 3, '6m': 6, '12m': 12 }[S.stRange] || 3; return [ym(new Date(t.getFullYear(), t.getMonth() - n + 1, 1)), to];
+}
+function loadStats() {
+  const [from, to] = stDates(); const key = from + '|' + to; const c = S.stCache[key];
+  if (c && (c.data || c.busy) && Date.now() - c.at < 60000) return c.data;
+  S.stCache[key] = { busy: true, at: Date.now(), data: c && c.data };
+  capi('GET', `/stats?from=${from}&to=${to}`).then((r) => { S.stCache[key] = { data: r, at: Date.now() }; renderView(false); }).catch((e) => { delete S.stCache[key]; toast(e.message, true); });
+  return c && c.data;
+}
+A['st-range'] = (el) => { S.stRange = el.dataset.r; renderView(false); };
+const hrs = (m) => (m >= 6000 ? Math.round(m / 60).toLocaleString('en-GB') : (Math.round(m / 6) / 10).toLocaleString('en-GB')) + 'h';
+const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+const clockM = (m) => (m == null ? '—' : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+// --- little charts (SVG, no libraries)
+function stackChart(months, data, cats) {
+  const W = 640, H = 240, L = 44, R = 8, T = 10, B = 26; const tot = months.map((m) => cats.reduce((a, k) => a + ((data[m] || {})[k] || 0), 0));
+  const max = niceMax(Math.max(60, ...tot) / 60) * 60; const cw = (W - L - R) / months.length; const bw = Math.min(46, cw * 0.62); const y = (v) => T + (H - T - B) * (1 - v / max);
+  let g = '<g class="grid">'; for (let i = 0; i <= 4; i++) { const v = (max / 4) * i; g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${Math.round(v / 60)}h</text>`; } g += '</g>';
+  months.forEach((m, i) => { let acc = 0; const x = L + cw * i + (cw - bw) / 2;
+    cats.forEach((k, ci) => { const v = (data[m] || {})[k] || 0; if (!v) return; const top = acc + v; g += `<rect class="grow-bar" style="--d:${i * 40 + ci * 20}ms" x="${x}" y="${y(top)}" width="${bw}" height="${Math.max(0, y(acc) - y(top))}" fill="${CATS[k].color}" rx="${top === tot[i] ? 3 : 0}"><title>${esc(CATS[k].label)} ${mLabel(m)}: ${hrs(v)}</title></rect>`; acc = top; });
+    g += `<text x="${L + cw * i + cw / 2}" y="${H - 8}" text-anchor="middle">${esc(mLabel(m))}</text>`; });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Hours by month and type of work">${g}</svg>`;
+}
+function donut(parts, centre, sub) {
+  const total = parts.reduce((a, p) => a + p.v, 0) || 1; const R = 70, r = 46, C = 90; let a0 = -Math.PI / 2; let g = '';
+  parts.filter((p) => p.v).forEach((p, i) => { const a1 = a0 + (p.v / total) * Math.PI * 2 - 0.0001; const big = a1 - a0 > Math.PI ? 1 : 0;
+    const pt = (rad, a) => `${C + rad * Math.cos(a)},${C + rad * Math.sin(a)}`;
+    g += `<path class="donut-seg" style="--d:${i * 70}ms" d="M${pt(R, a0)} A${R},${R} 0 ${big} 1 ${pt(R, a1)} L${pt(r, a1)} A${r},${r} 0 ${big} 0 ${pt(r, a0)} Z" fill="${p.c}"><title>${esc(p.l)}: ${hrs(p.v)} (${pct(p.v, total)}%)</title></path>`; a0 = a1 + 0.0001; });
+  return `<div class="donut-wrap"><svg viewBox="0 0 180 180" class="donut" role="img" aria-label="Split of hours">${g}<text x="90" y="88" text-anchor="middle" class="d-big">${esc(centre)}</text><text x="90" y="108" text-anchor="middle" class="d-sub">${esc(sub)}</text></svg>
+    <div class="legend col">${parts.filter((p) => p.v).map((p) => `<span><i style="background:${p.c}"></i>${esc(p.l)} <b>${pct(p.v, total)}%</b></span>`).join('')}</div></div>`;
+}
+function hbars(items, fmt = hrs, opts = {}) {
+  const max = Math.max(1, ...items.map((x) => x.max || x.v));
+  return `<div class="hbars">${items.map((x, i) => `<div class="hb" style="--d:${i * 35}ms"><div class="hb-l"><span class="ellipsis">${x.label}</span><b>${esc(x.txt != null ? x.txt : fmt(x.v))}</b></div>
+    <div class="hb-t">${x.plan ? `<i class="hb-plan" style="width:${pct(x.plan, max)}%"></i>` : ''}<i class="hb-f ${x.cls || ''}" style="width:${Math.max(1.5, pct(x.v, max))}%;background:${x.c || 'var(--accent)'}"></i></div>${x.sub ? `<div class="tiny muted">${x.sub}</div>` : ''}</div>`).join('')}</div>${opts.note ? `<p class="tiny muted" style="margin:8px 0 0">${opts.note}</p>` : ''}`;
+}
+function weekBars(v) {
+  const max = Math.max(1, ...v); const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return `<div class="wkbars">${v.map((m, i) => `<div class="wk"><div class="wk-t"><i class="grow-y" style="height:${Math.max(2, pct(m, max))}%;--d:${i * 50}ms" title="${names[i]}: ${hrs(m)}"></i></div><b>${hrs(m)}</b><span>${names[i]}</span></div>`).join('')}</div>`;
+}
+function dayRange(people) { // average start → finish per person, on a 5am–9pm scale
+  const a = 5 * 60, b = 21 * 60; const x = (m) => pct(Math.min(b, Math.max(a, m)) - a, b - a);
+  return `<div class="dr">${people.map(([id, p], i) => p.avgStart == null ? '' : `<div class="dr-row" style="--d:${i * 30}ms"><span class="dr-n ellipsis">${esc(member(id).name)}</span><div class="dr-t"><i style="left:${x(p.avgStart)}%;width:${Math.max(1, x(p.avgEnd) - x(p.avgStart))}%"></i></div><span class="dr-v">${clockM(p.avgStart)}–${clockM(p.avgEnd)}</span></div>`).join('')}
+    <div class="dr-row dr-axis"><span class="dr-n"></span><div class="dr-t">${[6, 9, 12, 15, 18].map((h) => `<em style="left:${x(h * 60)}%">${h}:00</em>`).join('')}</div><span class="dr-v"></span></div></div>`;
+}
+function statsPage(tab) {
+  const st = loadStats(); const [from, to] = stDates();
+  const seg = `<div class="row between wrap" style="margin-bottom:14px"><div class="seg">${ST_RANGES.map(([k, l]) => `<button class="${S.stRange === k ? 'on' : ''}" data-act="st-range" data-r="${k}">${l}</button>`).join('')}</div><span class="small muted">${esc(fmtDate(from))} – ${esc(fmtDate(to))}</span></div>`;
+  if (!st) return seg + '<div class="skeleton" style="height:300px"></div>';
+  const ppl = Object.entries(st.byPerson).filter(([id]) => S.members[id]);
+  const paidOf = (p) => WORK_CATS.reduce((a, k) => a + (p.cats[k] || 0), 0);
+  const allCats = {}; for (const p of Object.values(st.byPerson)) for (const [k, v] of Object.entries(p.cats)) allCats[k] = (allCats[k] || 0) + v;
+  const paid = WORK_CATS.reduce((a, k) => a + (allCats[k] || 0), 0); const ot = ppl.reduce((a, [, p]) => a + p.ot, 0); const dayN = ppl.reduce((a, [, p]) => a + p.days, 0);
+  const months = []; for (let d = parseD(from.slice(0, 7) + '-01'); dstr(d) <= to; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) months.push(dstr(d).slice(0, 7));
+  if (tab === 'hours') {
+    const proj = Object.entries(st.byProject).filter(([id]) => S.projects[id]).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const rows = ppl.slice().sort((a, b) => paidOf(b[1]) - paidOf(a[1]));
+    return seg + `<div class="kpis">
+        <div class="kpi"><span class="v">${hrs(paid)}</span><span class="l">Paid hours</span></div>
+        <div class="kpi"><span class="v pos">${hrs(ot)}</span><span class="l">Overtime</span></div>
+        <div class="kpi"><span class="v">${dayN ? hrs(paid / dayN) : '—'}</span><span class="l">Average day</span></div>
+        <div class="kpi"><span class="v">${pct(allCats.field || 0, paid)}%</span><span class="l">Time in the field</span></div></div>
+      <div class="grid halves section">
+        <div class="card"><div class="section-head"><h3>Hours by month</h3></div>${stackChart(months, st.byMonth, WORK_CATS)}
+          <div class="legend">${WORK_CATS.map((k) => `<span><i style="background:${CATS[k].color}"></i>${CATS[k].label}</span>`).join('')}</div></div>
+        <div class="card"><div class="section-head"><h3>Where the time goes</h3></div>${donut(WORK_CATS.concat(['holiday']).map((k) => ({ l: CATS[k].label, v: allCats[k] || 0, c: CATS[k].color })), hrs(paid), 'paid hours')}</div></div>
+      <div class="grid halves section">
+        <div class="card"><div class="section-head"><h3>Busiest projects</h3></div>${proj.length ? hbars(proj.map(([id, v]) => ({ label: esc(projLabel(S.projects[id])), v, c: S.projects[id].color || 'var(--accent)' }))) : '<div class="empty small">No project time in this period.</div>'}</div>
+        <div class="card"><div class="section-head"><h3>Hours by weekday</h3></div>${weekBars(st.byWeekday)}<p class="tiny muted" style="margin:10px 0 0">Saturday and Sunday hours count as overtime.</p></div></div>
+      <div class="card flush section"><div class="section-head" style="padding:14px 16px 0"><h3>Everyone</h3></div><div class="table-wrap"><table class="sheet st-table"><thead><tr><th>Person</th><th class="num">Hours</th><th class="num">Days</th><th class="num">Avg day</th><th class="num">Overtime</th><th>Field / office</th><th class="num">Holiday</th></tr></thead><tbody>
+        ${rows.map(([id, p]) => { const pd = paidOf(p); const f = pct(p.cats.field || 0, pd); return `<tr><td><a href="#/timesheet/${to.slice(0, 7)}/${id}" class="row tight" style="color:inherit;text-decoration:none">${avatar(member(id), 'xs', { link: false })}<span class="ellipsis">${esc(member(id).name)}</span></a></td>
+          <td class="num"><b>${hrs(pd)}</b></td><td class="num">${p.days}</td><td class="num">${p.days ? hrs(pd / p.days) : '—'}</td><td class="num ${p.ot ? 'pos' : ''}">${p.ot ? hrs(p.ot) : '—'}</td>
+          <td><div class="split" title="Field ${f}%"><i style="width:${f}%;background:${CATS.field.color}"></i><i style="width:${100 - f}%;background:${CATS.office.color}"></i></div></td><td class="num">${p.cats.holiday ? Math.round(p.cats.holiday / st.std) + 'd' : '—'}</td></tr>`; }).join('') || '<tr><td colspan="7"><div class="empty small">No time logged in this period.</div></td></tr>'}
+      </tbody></table></div></div>`;
+  }
+  // performance
+  ensureSheetStatus();
+  const active = Object.values(S.projects).filter((p) => !p.archived && projectPlanMins(p));
+  const plan = active.map((p) => ({ p, plan: projectPlanMins(p), act: projectPlanActual(p) })).sort((a, b) => b.act / b.plan - a.act / a.plan);
+  const over = plan.filter((x) => x.act > x.plan).length;
+  const done = ppl.reduce((a, [, p]) => a + p.tasksDone, 0);
+  const rework = allCats.rework || 0;
+  const ss = S.sheetStatus || {}; let sheetsDone = 0, sheetsAll = 0; const perSheet = {};
+  for (const m of months) if (m < thisMonth()) for (const [id, v] of Object.entries(ss[m] || {})) { if (v.s !== 'complete' && v.s !== 'incomplete') continue; sheetsAll++; perSheet[id] = perSheet[id] || [0, 0]; perSheet[id][1]++; if (v.s === 'complete') { sheetsDone++; perSheet[id][0]++; } }
+  const byTasks = ppl.filter(([, p]) => p.tasksDone).sort((a, b) => b[1].tasksDone - a[1].tasksDone).slice(0, 10);
+  const byRework = ppl.map(([id, p]) => [id, pct(p.cats.rework || 0, paidOf(p))]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const byNotes = ppl.filter(([, p]) => p.days).map(([id, p]) => [id, pct(p.notes, p.days)]).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  return seg + `<div class="kpis">
+      <div class="kpi"><span class="v">${done}</span><span class="l">Tasks completed</span></div>
+      <div class="kpi"><span class="v ${over ? '' : 'pos'}">${plan.length ? pct(plan.length - over, plan.length) + '%' : '—'}</span><span class="l">Projects within plan (${plan.length - over} of ${plan.length})</span></div>
+      <div class="kpi"><span class="v">${pct(rework, paid)}%</span><span class="l">Time spent on rework</span></div>
+      <div class="kpi"><span class="v">${sheetsAll ? pct(sheetsDone, sheetsAll) + '%' : '—'}</span><span class="l">Timesheets complete</span></div></div>
+    <div class="grid halves section">
+      <div class="card"><div class="section-head"><h3>Projects: plan vs actual</h3><span class="tiny muted">Active projects with planned hours</span></div>
+        ${plan.length ? hbars(plan.slice(0, 12).map((x) => ({ label: esc(projLabel(x.p)), v: x.act, max: Math.max(x.act, x.plan), plan: x.plan, c: x.act > x.plan ? 'var(--red)' : (x.p.color || 'var(--accent)'), txt: `${pct(x.act, x.plan)}% of ${hrs(x.plan)}` })), hrs, { note: 'The faint bar is the plan; the solid bar is time logged so far. Red means over plan.' }) : '<div class="empty small">Give projects planned hours to see them here.</div>'}</div>
+      <div class="card"><div class="section-head"><h3>Tasks completed</h3></div>${byTasks.length ? hbars(byTasks.map(([id, p]) => ({ label: `${avatar(member(id), 'xs', { link: false })} ${esc(member(id).name)}`, v: p.tasksDone, c: 'var(--accent)' })), (v) => String(v)) : '<div class="empty small">No tasks ticked off in this period.</div>'}</div></div>
+    <div class="grid halves section">
+      <div class="card"><div class="section-head"><h3>Typical working day</h3><span class="tiny muted">Average start → finish</span></div>${dayRange(ppl.slice().sort((a, b) => (a[1].avgStart || 0) - (b[1].avgStart || 0)))}</div>
+      <div class="card"><div class="section-head"><h3>Timesheets complete</h3><span class="tiny muted">Finished months in this period</span></div>
+        ${Object.keys(perSheet).length ? hbars(Object.entries(perSheet).sort((a, b) => b[1][0] / b[1][1] - a[1][0] / a[1][1]).slice(0, 12).map(([id, [a, b]]) => ({ label: esc(member(id).name), v: a, max: b, txt: `${a} of ${b}`, c: a === b ? 'var(--ok)' : 'var(--red)' })), (v) => String(v)) : '<div class="empty small">No finished months in this period yet.</div>'}</div></div>
+    <div class="grid halves section">
+      <div class="card"><div class="section-head"><h3>Rework share</h3><span class="tiny muted">Lower is better</span></div>${byRework.length ? hbars(byRework.map(([id, v]) => ({ label: esc(member(id).name), v, max: 100, txt: v + '%', c: CATS.rework.color }))) : '<div class="empty small">No rework logged — nice.</div>'}</div>
+      <div class="card"><div class="section-head"><h3>Day notes written</h3><span class="tiny muted">Days with “Finish for today” notes</span></div>${byNotes.length ? hbars(byNotes.map(([id, v]) => ({ label: esc(member(id).name), v, max: 100, txt: v + '%', c: 'var(--blue)' }))) : '<div class="empty small">No day notes in this period.</div>'}</div></div>
+    <p class="tiny muted">Figures come from logged time, ticked-off tasks and day notes. Use them as a conversation starter, not a verdict — survey work varies a lot from job to job.</p>`;
+}

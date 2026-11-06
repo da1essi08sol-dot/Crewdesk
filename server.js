@@ -1663,7 +1663,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   }
 
   // --- time: entries, days, timesheets (see timeApi)
-  if (/^\/(entries|days|timesheet|timesheets|gdrive)(\/|$)|^\/projects\/[A-Za-z0-9]+\/(timesheet|pdf)$/.test(sub)) return timeApi(req, res, url, x, sub);
+  if (/^\/(entries|days|timesheet|timesheets|gdrive|stats)(\/|$)|^\/projects\/[A-Za-z0-9]+\/(timesheet|pdf)$/.test(sub)) return timeApi(req, res, url, x, sub);
 
   // --- generic collections
   if ((m = /^\/(projects|tasks|clients|pings|events|finance|teams|suggestions)(?:\/([A-Za-z0-9]+))?$/.exec(sub))) {
@@ -2156,6 +2156,39 @@ async function timeApi(req, res, url, x, sub) {
     return sendDownload(res, f.name, f.data, f.type);
   }
   // Admins: everyone's timesheets for a month in one zip, a folder per person.
+  // Hours & performance figures for the Spreadsheets page (admins): totals by month, person, project, weekday and start time.
+  if (sub === '/stats' && M === 'GET') {
+    if (!admin) deny('Only admins can see company statistics');
+    const from = date(url.searchParams.get('from')) || bad('Pick a start date'), to = date(url.searchParams.get('to')) || bad('Pick an end date');
+    const std = (c.settings.dayHours || 8) * 60; const t = now();
+    const byMonth = {}, byPerson = {}, byProject = {}, byWeekday = [0, 0, 0, 0, 0, 0, 0], days = {};
+    for (const e of Object.values(d.entries)) {
+      const ds = entryDay(e); if (ds < from || ds > to) continue;
+      const mins = Math.max(0, ((e.end || t) - e.start) / 60000); const cat = e.category || 'field';
+      const ym = ds.slice(0, 7); const mo = byMonth[ym] = byMonth[ym] || {}; mo[cat] = (mo[cat] || 0) + mins;
+      const pp = byPerson[e.userId] = byPerson[e.userId] || { cats: {}, days: 0, ot: 0, tasksDone: 0, notes: 0, starts: [], ends: [], holiday: 0 };
+      pp.cats[cat] = (pp.cats[cat] || 0) + mins;
+      if (ts.CATS[cat] && ts.CATS[cat].paid) {
+        if (e.projectId) byProject[e.projectId] = (byProject[e.projectId] || 0) + mins;
+        const dw = (new Date(ds + 'T12:00:00Z').getUTCDay() + 6) % 7; byWeekday[dw] += mins;
+        const k = e.userId + '|' + ds; const dd2 = days[k] = days[k] || { paid: 0, first: Infinity, last: 0, dw };
+        dd2.paid += mins; dd2.first = Math.min(dd2.first, e.start); dd2.last = Math.max(dd2.last, e.end || t);
+      }
+    }
+    for (const [k, v] of Object.entries(days)) {
+      const u = k.split('|')[0]; const pp = byPerson[u]; pp.days++;
+      pp.ot += v.dw >= 5 ? v.paid : Math.max(0, v.paid - std);
+      pp.starts.push(ts.zoneParts(v.first, TZ).mins); pp.ends.push(ts.zoneParts(v.last, TZ).mins);
+    }
+    const avg = (a) => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null);
+    for (const pp of Object.values(byPerson)) { pp.avgStart = avg(pp.starts); pp.avgEnd = avg(pp.ends); delete pp.starts; delete pp.ends; }
+    for (const tk of Object.values(d.tasks)) {
+      if (!tk.done || !tk.doneAt) continue; const ds = localDay(tk.doneAt); if (ds < from || ds > to) continue;
+      for (const u of (tk.assignees || [])) if (byPerson[u]) byPerson[u].tasksDone++;
+    }
+    for (const r of Object.values(d.days)) { if (r.date < from || r.date > to || !byPerson[r.userId]) continue; if (r.well || r.wrong || r.improve) byPerson[r.userId].notes++; }
+    return json(res, 200, { from, to, std, byMonth, byPerson, byProject, byWeekday });
+  }
   if (sub === '/timesheets/status' && M === 'GET') {
     return json(res, 200, { months: sheetStatusAll(c, d, admin ? Object.keys(c.members) : [user.id]) });
   }
