@@ -1432,3 +1432,8 @@ a.pfill:hover, button.pfill:hover { filter: brightness(1.06); }
 .xl-ico.pdf { background: #c4271d; }
 .upl-tag { color: var(--accent-text); }
 label.btn { cursor: pointer; }
+.tut summary { cursor: pointer; list-style: none; padding: 2px 0; }
+.tut summary::-webkit-details-marker { display: none; }
+.tut summary::after { content: '›'; float: right; transition: transform .2s; }
+.tut[open] summary::after { transform: rotate(90deg); }
+.tut-steps { margin: 10px 0 2px; padding-left: 20px; display: grid; gap: 8px; line-height: 1.45; }

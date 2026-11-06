@@ -212,6 +212,7 @@ VIEWS.settings = {
     const invites = S.invites.filter((i) => i.state === 'ok');
     const toggle = (k, title, desc) => `<label class="setting"><span><b>${title}</b><br><span class="d">${desc}</span></span><span class="switch"><input type="checkbox" data-change="co-setting" data-k="${k}" ${c.settings[k] ? 'checked' : ''} aria-label="${esc(title)}"><i></i></span></label>`;
     return `<div class="page-head"><div><h1>Company settings</h1><div class="sub">${esc(c.name)} · you’re ${S.role === 'owner' ? 'the owner' : S.role === 'admin' ? 'an admin' : 'a member'}</div></div></div>
+    <a class="card row" href="#/tutorials" style="margin-bottom:14px;justify-content:space-between;text-decoration:none;color:inherit"><span><b>Tutorials</b><br><span class="small muted">Step-by-step guides for every section</span></span><span aria-hidden="true">›</span></a>
     <div class="grid halves">
       <div class="stack">
         ${admin ? `<div class="card stack" id="requests"><h2>Requests to join ${c.requests && c.requests.length ? `<span class="count">${c.requests.length}</span>` : ''}</h2>
@@ -563,3 +564,24 @@ function renderLegalStandalone(kind) {
     <a class="back" href="${S.user ? '#/home' : '#/login'}">${ic('back')}Back</a>${legalHtml(kind)}${footLinks()}</main></div>`;
   window.scrollTo(0, 0);
 }
+
+// ---------------------------------------------------------------- tutorials (written guides, one per section)
+const TUTORIALS = [
+  ['Home & the timer', 'play', ['Press the big green + to start the clock. Pick the project (and task) you’re on first if you want it logged against them.', 'While it runs the button is a red square. Press it to stop; the time is saved as a log entry.', 'Use “Lunch” for your break and “Switch task” to move on without a gap. Today’s log lists every entry; tap one to edit the times, project or note.', 'When you’re done for the day press “Finish for today” and add what went well, what went wrong and what to improve.']],
+  ['Projects & tasks', 'folder', ['Projects are the bigger jobs; tasks are the smaller pieces inside them. Admins create projects with a reference, address, colour and planned hours.', 'Open a project to see its tasks, timeline, photos and chat. Tap the play button on a task to start timing it.', 'The plan card shows planned versus actual hours so you can see if a project is running over.', 'Pick a colour for each project, or none; the whole card takes that colour.']],
+  ['My timesheet', 'timesheet', ['Your timesheet is built for you from your logged time, month by month and for the whole year.', 'Download it as an .xlsx named with your initials, e.g. AS_Nov_2026_Timesheet.xlsx.', 'Amend any entry or add overtime and the sheet updates.', 'Prefer your own? Use “Upload your own timesheet” for that month. It replaces the automatic one for your admins. Remove it to go back.']],
+  ['Calendar', 'calendar', ['Switch between month, week and list views. Tap a day to see what’s planned.', 'Use the filters to show only your own work or one kind of item.', 'The + button adds a task or event on the day you’re looking at.']],
+  ['Chat & attachments', 'chat', ['Open Chat for direct messages and groups. Project chats only appear once you open them from a project.', 'Tap the paperclip to take a photo, choose from your photo library or attach a file. On a computer you can drag and drop files in.', 'Files appear inside the message and open in the app with a Back button.']],
+  ['Team, clients & map', 'team', ['Team lists everyone in the company; tap a person for their profile and current project.', 'Clients keeps contacts and the projects for each client.', 'Map shows project locations so you can see where the crews are.']],
+  ['Suggestions & reporting problems', 'bulb', ['Open Suggestions to send an idea, a bug report or a question for HR. Admins read and reply there.', 'Admins can filter by Open, New, Done or All, and mark messages as seen.']],
+  ['Admin dashboard', 'admin', ['Admins see who is working now, today’s activity and each person’s hours.', 'The Timesheets tab has every month for everyone: download one person, or a zip of the whole month.', 'Connect Google Drive once and timesheets are copied into a Crewdesk Timesheets folder automatically.', 'Settings holds the working day (start, end, hours) used to work out overtime.']],
+  ['Settings, profile & privacy', 'settings', ['Edit your photo, name and what others can see in your profile.', 'Switch between light and dark themes, and choose which tabs appear in your bar.', 'Privacy and Terms are linked from More.']],
+];
+VIEWS.tutorials = {
+  manual: true,
+  render() {
+    return `<a class="back" href="#/settings">${ic('back')}Back</a>
+    <div class="page-head"><div><h1>Tutorials</h1><div class="sub">A short written guide for each part of Crewdesk. Video guides are coming soon.</div></div></div>
+    <div class="stack">${TUTORIALS.map(([t, , steps], i) => `<details class="card tut"${i === 0 ? ' open' : ''}><summary><b>${esc(t)}</b></summary><ol class="tut-steps">${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol></details>`).join('')}</div>`;
+  },
+};
