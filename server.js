@@ -2156,7 +2156,7 @@ const MH_FIELDS = [
   ['pipeDirection', 'Pipe direction'], ['pipeDiameter', 'Pipe diameter (mm)'], ['pipesIn', 'Pipes in'], ['pipesOut', 'Pipes out'], ['condition', 'Condition'],
   ['accessibility', 'Accessibility'], ['observations', 'Observations'], ['notes', 'Notes'], ['photos', 'Photos'], ['createdBy', 'Recorded by'], ['createdAt', 'Recorded'], ['updatedAt', 'Last updated'],
 ];
-const MH_DEFAULT_FIELDS = ['ref', 'type', 'lat', 'lng', 'status', 'coverLevel', 'invertLevel', 'depth', 'condition'];
+const MH_DEFAULT_FIELDS = ['ref', 'type', 'lat', 'lng', 'coverLevel', 'invertLevel', 'depth', 'condition'];
 const MH_STATUS_LABEL = { not_started: 'Not started', in_progress: 'In progress', completed: 'Completed' };
 function mhTypeOf(d, r) { const p = d.mhPresets[r.presetId]; return p ? { name: p.name, color: p.color } : r.type || { name: 'Unknown', color: '#868e96' }; }
 function mhVal(d, r, k) {
@@ -2176,11 +2176,11 @@ function mhRegister(x, mp, p, list, fields) {
   const head = cols.map(([, l]) => ({ v: l, s: 'head' }));
   const rows = [[{ v: `${mp.name} — manhole register`, s: 'title' }], [`${p.ref ? p.ref + ' · ' : ''}${p.name || ''}${mp.area ? ' · ' + mp.area : ''}`], [`Exported ${new Date().toLocaleString('en-GB', { timeZone: TZ })} · ${list.length} manholes · coordinates WGS84 (decimal degrees)`], [], head]
     .concat(list.map((r) => cols.map(([k]) => { const v = mhVal(d, r, k); return typeof v === 'number' ? v : String(v); })));
-  const byType = {}; for (const r of list) { const t = mhTypeOf(d, r).name; byType[t] = byType[t] || { n: 0, done: 0 }; byType[t].n++; if (r.status === 'completed') byType[t].done++; }
-  const sum = [[{ v: 'Summary', s: 'title' }], [], [{ v: 'Type', s: 'head' }, { v: 'Manholes', s: 'head' }, { v: 'Completed', s: 'head' }]].concat(Object.entries(byType).map(([t, o]) => [t, o.n, o.done]))
-    .concat([[], [{ v: 'Total', s: 'bold' }, { v: list.length, s: 'bold' }, { v: list.filter((r) => r.status === 'completed').length, s: 'bold' }]]);
+  const byType = {}; for (const r of list) { const t = mhTypeOf(d, r).name; byType[t] = byType[t] || { n: 0 }; byType[t].n++; }
+  const sum = [[{ v: 'Summary', s: 'title' }], [], [{ v: 'Type', s: 'head' }, { v: 'Manholes', s: 'head' }]].concat(Object.entries(byType).map(([t, o]) => [t, o.n]))
+    .concat([[], [{ v: 'Total manholes', s: 'bold' }, { v: list.length, s: 'bold' }]]);
   return ts.buildXlsx([{ name: 'Register', cols: cols.map(([k]) => (['description', 'observations', 'notes'].includes(k) ? 40 : k === 'type' ? 18 : k === 'lat' || k === 'lng' ? 13 : 12)), rows, freeze: 5 },
-    { name: 'Summary', cols: [24, 12, 12], rows: sum }], `${mp.name} manhole register`);
+    { name: 'Summary', cols: [24, 12], rows: sum }], `${mp.name} manhole register`);
 }
 // A satellite picture behind the labelled map, from Google's Static Maps when a key is set (optional).
 const STATIC_KEY = process.env.GOOGLE_MAPS_SERVER_KEY || (process.env.GOOGLE_MAPS_KEY || process.env.GOOGLE_MAPS_API_KEY) || '';
@@ -2260,8 +2260,7 @@ function mhPdf(x, mp, p, list, fields, what, bg) {
   doc.text(doc.fit(mp.name, doc.inner, 22, true), doc.m, doc.h - 62, 22, { bold: true, color: '#ffffff' });
   doc.text(`${p.ref ? p.ref + ' · ' : ''}${p.name || ''}${mp.area ? ' · ' + mp.area : ''}  -  ${new Date().toLocaleDateString('en-GB', { timeZone: TZ, day: 'numeric', month: 'long', year: 'numeric' })}`, doc.m, doc.h - 82, 9, { color: '#cfe8d8' });
   doc.y = doc.h - 110;
-  const done = list.filter((r) => r.status === 'completed').length, prog = list.filter((r) => r.status === 'in_progress').length;
-  if (what !== 'map') doc.stats([['Manholes', String(list.length)], ['Completed', String(done)], ['In progress', String(prog)], ['Not started', String(list.length - done - prog)]]);
+  if (what !== 'map') doc.stats([['Manholes in total', String(list.length)], ['Types', String(new Set(list.map((r) => mhTypeOf(d, r).name)).size)]]);
   if (what === 'map' || what === 'report') {
     const size = what === 'map' ? doc.inner : Math.min(doc.inner, 380);
     if (what === 'report') doc.heading('Labelled map');
@@ -2271,11 +2270,11 @@ function mhPdf(x, mp, p, list, fields, what, bg) {
     doc.y -= 6; doc.para(bg ? `Satellite imagery: ${bg.src || 'Google'}. Positions in WGS84; grid squares match the scale bar.` : 'Positions plotted from WGS84 coordinates (no background imagery).', 7.5, { color: '#667a6f' });
     if (what === 'map') {
       doc.heading('Key');
-      doc.table([{ label: 'Ref', w: 1 }, { label: 'Type', w: 2 }, { label: 'Status', w: 1.3 }, { label: 'Lat', w: 1.4, align: 'r' }, { label: 'Lng', w: 1.4, align: 'r' }], list.map((r) => [r.ref, mhTypeOf(d, r).name, MH_STATUS_LABEL[r.status], r.lat.toFixed(6), r.lng.toFixed(6)]), { size: 8 });
+      doc.table([{ label: 'Ref', w: 1 }, { label: 'Type', w: 2 }, { label: 'Lat', w: 1.4, align: 'r' }, { label: 'Lng', w: 1.4, align: 'r' }], list.map((r) => [r.ref, mhTypeOf(d, r).name, r.lat.toFixed(6), r.lng.toFixed(6)]), { size: 8 });
       return doc.build();
     }
   }
-  const cols = mhFieldList(fields);
+  const cols = mhFieldList(fields).filter(([k]) => k !== 'status'); // client copies: no work-progress status
   doc.heading('Manhole index');
   const narrow = cols.filter(([k]) => !['description', 'observations', 'notes'].includes(k)).slice(0, 9);
   doc.table(narrow.map(([k, l]) => ({ label: l, w: k === 'type' ? 2 : k === 'lat' || k === 'lng' ? 1.6 : k === 'status' ? 1.4 : 1, align: ['lat', 'lng', 'coverLevel', 'invertLevel', 'depth', 'diameter', 'pipeDiameter', 'pipesIn', 'pipesOut', 'photos'].includes(k) ? 'r' : undefined })),
@@ -2284,7 +2283,7 @@ function mhPdf(x, mp, p, list, fields, what, bg) {
     for (const r of list) {
       doc.ensure(120); const t = mhTypeOf(d, r);
       doc.heading(`${r.ref} - ${t.name}`, '#0f4f2f');
-      const kv = [['Status', MH_STATUS_LABEL[r.status]], ['Position', `${r.lat.toFixed(7)}, ${r.lng.toFixed(7)}`], ['Description', r.description || '-']]
+      const kv = [['Position', `${r.lat.toFixed(7)}, ${r.lng.toFixed(7)}`], ['Description', r.description || '-']]
         .concat(MH_FIELDS.filter(([k]) => r.survey && r.survey[k] != null && r.survey[k] !== '').map(([k, l]) => [l, String(r.survey[k])]))
         .concat([['Recorded', `${mhVal(d, r, 'createdAt')} by ${personNameOf(r.createdBy)}`], ['Edited by', [...new Set(r.editors || [])].map(personNameOf).join(', ')], ['Last updated', mhVal(d, r, 'updatedAt')]]);
       for (const [k, v] of kv) { const ls = doc.wrap(v, doc.inner - 110, 9); doc.ensure(13 * ls.length + 2); doc.y -= 13; doc.text(k, doc.m, doc.y, 9, { bold: true, color: '#53625a' }); ls.forEach((l, i) => { if (i) doc.y -= 12; doc.text(l, doc.m + 110, doc.y, 9); }); }
@@ -2704,7 +2703,7 @@ async function timeApi(req, res, url, x, sub) {
       await mhLoadPhotos(list); const bg = await mhStaticMap(list, mp).catch(() => null);
       out.push({ name: nm(`${dir}/${clean(mp.name)} manhole report.pdf`), data: mhPdf(x, mp, p, list, [], 'report', bg) });
       out.push({ name: nm(`${dir}/${clean(mp.name)} labelled map.pdf`), data: mhPdf(x, mp, p, list, [], 'map', bg) });
-      out.push({ name: nm(`${dir}/${clean(mp.name)} manhole register.xlsx`), data: mhRegister(x, mp, p, list, MH_FIELDS.map(([k]) => k)) });
+      out.push({ name: nm(`${dir}/${clean(mp.name)} manhole register.xlsx`), data: mhRegister(x, mp, p, list, MH_FIELDS.map(([k]) => k).filter((k) => k !== 'status')) });
       for (const r of list) { let i = 0; for (const ph of r.photos || []) { const f = await grab(ph.url); if (f) out.push({ name: nm(`${dir}/Photos/${clean(r.ref)} ${++i}${ph.caption ? ' ' + clean(ph.caption) : ''}.${ext(ph.url, f)}`), data: f.data }); } }
     }
     mhPhotoCache.clear();
