@@ -12,4 +12,4 @@ The app has a Tutorials page (More → Tutorials) with a written guide and two v
 Videos use the mock company in `tools/tutorials/demo-data.js` (Northgate Geomatics) and mock aerial tiles; keep them short with captions.
 
 ## Tutorial voiceovers
-Narration lines live in `tools/tutorials/narration.json` (one line per `T.card`/`T.cap`, in order). Put each scene's ElevenLabs audio (one paragraph per line) at `tools/tutorials/voice/<name>.mp3`, run `node tools/tutorials/voice-split.js <name>`, then `record.sh <name>`: the video waits for each spoken line and the audio is mixed in.
+Narration lines live in `tools/tutorials/narration.json` (one line per `T.card`/`T.cap`, in order). Put each scene's ElevenLabs audio (one paragraph per line) at `tools/tutorials/voice/<name>.mp3`, run `python3 tools/tutorials/voice_split.py <name>`, then `record.sh <name>`: the video waits for each spoken line and the audio is mixed in.
