@@ -2208,7 +2208,7 @@ function reminders() {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.jpg': 'image/jpeg', '.gif': 'image/gif',
   '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
-  '.pdf': 'application/pdf', '.csv': 'text/csv; charset=utf-8' };
+  '.pdf': 'application/pdf', '.csv': 'text/csv; charset=utf-8', '.mp4': 'video/mp4' };
 for (const [ext, type] of Object.entries(DOC_TYPES)) if (!TYPES['.' + ext]) TYPES['.' + ext] = type;
 // Map data comes from OpenFreeMap (vector maps) with OpenStreetMap as a fallback; nothing else loads from other sites.
 const SECURITY_HEADERS = {
@@ -2223,13 +2223,21 @@ const SECURITY_HEADERS = {
   'Cross-Origin-Resource-Policy': 'same-origin',
 };
 if (HOSTED) SECURITY_HEADERS['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
-function serveFile(res, file) {
+function serveFile(res, file, req) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404, SECURITY_HEADERS); return res.end('Not found'); }
     const ext = path.extname(file).toLowerCase();
+    // Videos: answer byte-range requests (iPhones won't play a video without them).
+    const rg = ext === '.mp4' && req && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    if (rg) {
+      let a = rg[1] === '' ? Math.max(0, st.size - Number(rg[2])) : Number(rg[1]); let b = rg[1] !== '' && rg[2] !== '' ? Math.min(Number(rg[2]), st.size - 1) : st.size - 1;
+      if (a > b || a >= st.size) { res.writeHead(416, Object.assign({ 'Content-Range': `bytes */${st.size}` }, SECURITY_HEADERS)); return res.end(); }
+      res.writeHead(206, Object.assign({ 'Content-Type': 'video/mp4', 'Content-Length': b - a + 1, 'Content-Range': `bytes ${a}-${b}/${st.size}`, 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400' }, SECURITY_HEADERS));
+      return fs.createReadStream(file, { start: a, end: b }).pipe(res);
+    }
     const immutable = ext === '.woff2' || file.includes(path.sep + 'vendor' + path.sep);
     res.writeHead(200, Object.assign({ 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Content-Length': st.size,
-      'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache' }, SECURITY_HEADERS));
+      'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache' }, ext === '.mp4' ? { 'Accept-Ranges': 'bytes' } : {}, SECURITY_HEADERS));
     fs.createReadStream(file).pipe(res);
   });
 }
@@ -2268,7 +2276,7 @@ async function handler(req, res) {
     if (rel === '/') rel = '/index.html';
     const file = path.normalize(path.join(PUBLIC, rel));
     if (!file.startsWith(PUBLIC + path.sep)) { res.writeHead(403, SECURITY_HEADERS); return res.end(); }
-    if (fs.existsSync(file)) return serveFile(res, file);
+    if (fs.existsSync(file)) return serveFile(res, file, req);
     return serveFile(res, path.join(PUBLIC, 'index.html'));
   } catch (e) {
     const code = e instanceof HttpError ? e.code : 500;

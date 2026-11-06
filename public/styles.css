@@ -1443,3 +1443,9 @@ label.btn { cursor: pointer; }
 .arch-folder > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; list-style: none; padding: 8px 2px 10px; }
 .arch-folder > summary::-webkit-details-marker { display: none; }
 .arch-folder:not([open]) > summary { opacity: .8; }
+
+.tut-promo { margin-bottom: 14px; display: grid; gap: 10px; }
+.tut-body { display: grid; gap: 14px; margin-top: 12px; }
+.tut-vid { width: 100%; max-width: 300px; aspect-ratio: 540 / 1168; border-radius: 16px; background: #0f4f2f; display: block; margin: 0 auto; }
+.tut-vid.wide { max-width: 100%; aspect-ratio: 16 / 9; }
+@media (min-width: 760px) { .tut-body { grid-template-columns: 260px 1fr; align-items: start; } .tut-body .tut-vid { margin: 0; } }
