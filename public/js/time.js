@@ -368,15 +368,15 @@ function ensureSheetStatus() {
 }
 function sheetSt(uid, ym) { if (ym > thisMonth()) return { s: 'future' }; return ((S.sheetStatus || {})[ym] || {})[uid] || (ym === thisMonth() ? { s: 'progress' } : null); }
 const ST_LABEL = { future: 'Future', progress: 'In progress', complete: 'Completed', incomplete: 'Not complete' };
-const stPill = (st) => st ? `<span class="pill ts-st ${st.s}">${st.s === 'complete' ? icSize('check', 12) : st.s === 'incomplete' ? icSize('flag', 12) : ''}${ST_LABEL[st.s] || ''}</span>` : '';
+const stPill = (st) => st ? `<span class="pill ts-st ts-${st.s}">${st.s === 'complete' ? icSize('check', 12) : st.s === 'incomplete' ? icSize('flag', 12) : ''}${ST_LABEL[st.s] || ''}</span>` : '';
 const shortDay = (ds) => parseD(ds).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 function sheetBanner(uid, ym, me) {
   const st = sheetSt(uid, ym); if (!st) return '';
   const who = me ? 'your' : esc(member(uid).name.split(' ')[0]) + '’s';
-  if (st.s === 'progress') return `<div class="card ts-banner progress">${icSize('clock', 20)}<div class="grow"><b>${esc(monthLabel(ym))} is in progress</b><div class="small muted">This timesheet updates live as ${me ? 'you log' : 'they log'} time each day.${st.missing && st.missing.length ? ` ${plural(st.missing.length, 'earlier working day')} still ${st.missing.length === 1 ? 'has' : 'have'} no time.` : ''}</div></div></div>`;
-  if (st.s === 'complete') return `<div class="card ts-banner complete">${icSize('check', 20)}<div class="grow"><b>${esc(monthLabel(ym))} is complete</b><div class="small muted">${st.uploaded ? 'Using the uploaded timesheet.' : 'Every working day is filled in.'} It’s filed in the timesheet archive.</div></div>
+  if (st.s === 'progress') return `<div class="card ts-banner ts-progress">${icSize('clock', 20)}<div class="grow"><b>${esc(monthLabel(ym))} is in progress</b><div class="small muted">This timesheet updates live as ${me ? 'you log' : 'they log'} time each day.${st.missing && st.missing.length ? ` ${plural(st.missing.length, 'earlier working day')} still ${st.missing.length === 1 ? 'has' : 'have'} no time.` : ''}</div></div></div>`;
+  if (st.s === 'complete') return `<div class="card ts-banner ts-complete">${icSize('check', 20)}<div class="grow"><b>${esc(monthLabel(ym))} is complete</b><div class="small muted">${st.uploaded ? 'Using the uploaded timesheet.' : 'Every working day is filled in.'} It’s filed in the timesheet archive.</div></div>
     <button class="btn sm primary" data-act="ts-review" data-user="${uid}" data-ym="${ym}">${ic('eye')}<span>Review timesheet</span></button></div>`;
-  if (st.s === 'incomplete') return `<div class="card ts-banner incomplete">${icSize('flag', 20)}<div class="grow"><b>${esc(monthLabel(ym))} isn’t complete</b><div class="small">${plural(st.missing.length, 'working day')} with little or no time logged. Fill ${st.missing.length === 1 ? 'it' : 'them'} in (or log holiday) and ${who} timesheet files itself in the archive.</div>
+  if (st.s === 'incomplete') return `<div class="card ts-banner ts-incomplete">${icSize('flag', 20)}<div class="grow"><b>${esc(monthLabel(ym))} isn’t complete</b><div class="small">${plural(st.missing.length, 'working day')} with little or no time logged. Fill ${st.missing.length === 1 ? 'it' : 'them'} in (or log holiday) and ${who} timesheet files itself in the archive.</div>
     <div class="row wrap tight" style="margin-top:8px">${st.missing.slice(0, 12).map((ds) => `<button class="btn sm" data-act="add-time" data-date="${ds}" data-user="${uid}">${ic('plus')}${esc(shortDay(ds))}</button>`).join('')}${st.missing.length > 12 ? `<span class="small muted">+${st.missing.length - 12} more</span>` : ''}</div></div></div>`;
   return '';
 }
@@ -466,7 +466,21 @@ function tsDay(uid, ds, list) {
         ${uid === S.user.id && ds === todayStr() ? `<button class="btn sm" data-act="finish-day">${ic('moon')}${rec.finishedAt ? 'Day notes' : 'Finish for today'}</button>` : ''}</div>
     </div>` : ''}</div>`;
 }
-A['ts-open'] = (el) => { S.openDay = S.openDay === el.dataset.k ? null : el.dataset.k; renderView(false); };
+A['ts-open'] = (el) => {
+  const k = el.dataset.k; const was = S.openDay; S.openDay = was === k ? null : k;
+  // Redraw only the days that change, so nothing else on the page jumps or replays.
+  const redraw = (key, opening) => {
+    const head = $(`[data-act="ts-open"][data-k="${CSS.escape(key)}"]`); const node = head && head.closest('.tsday'); if (!node) return false;
+    const ds = key.slice(-10), uid = key.slice(0, -10);
+    const tmp = document.createElement('div'); tmp.innerHTML = tsDay(uid, ds, monthStats(uid, ds.slice(0, 7)).byDay[ds] || []);
+    const nn = tmp.firstElementChild;
+    if (opening && motionOK()) { nn.classList.remove('open'); node.replaceWith(nn); void nn.offsetWidth; nn.classList.add('open'); const b = nn.querySelector('.tsday-body'); if (b) b.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'ease-out' }); }
+    else node.replaceWith(nn);
+    return true;
+  };
+  const ok = (was && was !== k ? redraw(was, false) : true) && redraw(k, S.openDay === k);
+  if (!ok) renderView(false); else $('#view')._html = null;
+};
 A['ts-approve'] = async (el) => {
   try { const r = await capi('POST', `/days/${el.dataset.date}/approve`, { userId: el.dataset.user, approve: el.dataset.on === '1' }); S.days[r.item.id] = r.item; scheduleRender(); toast(el.dataset.on === '1' ? 'Approved' : 'Approval removed'); }
   catch (e) { toast(e.message, true); }
@@ -576,8 +590,8 @@ function adminFolder(view) {
   const next = Object.keys(all).find((ym) => ym > cur);
   return seg + `${bad.length ? `<div class="section-head"><h2 class="row tight" style="color:var(--red)">${icSize('flag', 18)}Not complete <span class="count">${bad.length}</span></h2></div>
       <p class="small muted" style="margin:-4px 0 10px">These months have working days with no time logged. The person and admins are reminded at the start of each month and every Monday. Once filled in, they move to the archive by themselves.</p>
-      <div class="files" style="margin-bottom:22px">${bad.map(([ym, id]) => file(id, ym, all[ym][id])).join('')}</div>` : `<div class="card ts-banner complete" style="margin-bottom:18px">${icSize('check', 20)}<div class="grow"><b>Every finished month is complete</b><div class="small muted">They’re all filed in the Archive tab.</div></div></div>`}
-    <div class="section-head row between wrap"><h2>${esc(monthLabel(cur))} <span class="pill ts-st progress">In progress</span></h2>${zip(cur, 'Download all (.zip)')}</div>
+      <div class="files" style="margin-bottom:22px">${bad.map(([ym, id]) => file(id, ym, all[ym][id])).join('')}</div>` : `<div class="card ts-banner ts-complete" style="margin-bottom:18px">${icSize('check', 20)}<div class="grow"><b>Every finished month is complete</b><div class="small muted">They’re all filed in the Archive tab.</div></div></div>`}
+    <div class="section-head row between wrap"><h2>${esc(monthLabel(cur))} <span class="pill ts-st ts-progress">In progress</span></h2>${zip(cur, 'Download all (.zip)')}</div>
     <div class="files">${curIds.map((id) => file(id, cur, all[cur][id])).join('')}</div>
     ${next ? `<p class="small muted" style="margin-top:10px">${esc(monthLabel(next))} timesheets are <b>future</b> — they start filling in on the 1st.</p>` : ''}
     <div class="section"><div class="section-head"><h2>Whole year ${cur.slice(0, 4)}</h2></div><div class="files">${curIds.map((id) => `<a class="filecard" href="/api/c/${S.cid}/timesheet/${id}/${cur.slice(0, 4)}" download="${esc(yearFile(member(id).name, cur.slice(0, 4)))}"><span class="xl-ico" aria-hidden="true">XLS</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(yearFile(member(id).name, cur.slice(0, 4)))}</b><span class="tiny muted">${esc(member(id).name)}</span></div>${ic('download')}</a>`).join('')}</div></div>
