@@ -93,6 +93,8 @@ VIEWS.project = {
     const unread = S.unread['project:' + p.id] || 0;
     const ts = projectTasks(p.id);
     const tabs = [['tasks', `Tasks${ts.length ? ` <span class="muted">${ts.filter((t) => t.done).length}/${ts.length}</span>` : ''}`], ['timeline', 'Timeline'], ['photos', `Photos${nPh ? ` <span class="muted">${nPh}</span>` : ''}`]];
+    const nMaps = Object.values(S.mhMaps).filter((m) => m.projectId === p.id).length;
+    tabs.push(['maps', `Maps${nMaps ? ` <span class="muted">${nMaps}</span>` : ''}`]);
     if (p.chat) tabs.push(['chat', `Chat${unread ? ` <span class="count">${unread}</span>` : ''}`]);
     const canEdit = canEditProject(p); const canDel = isAdmin() || p.createdBy === S.user.id;
     const cur = myRunning(); const here = cur && cur.projectId === p.id;
@@ -104,6 +106,7 @@ VIEWS.project = {
         <div class="row tight wrap">
           ${p.archived ? '' : here ? `<a class="btn danger" href="#/home">${ic('stop')}<span>Timer running</span></a>` : `<button class="btn primary" data-act="work-here" data-id="${p.id}">${ic('play')}<span>Work on this</span></button>`}
           ${canEdit ? `<button class="btn sm" data-act="edit-project" data-id="${p.id}">${ic('edit')}<span>Edit</span></button>` : ''}
+          ${p.archived ? '' : `<button class="btn sm" data-act="proj-attach" data-id="${p.id}" aria-haspopup="menu">${ic('clip')}<span>Add attachment</span></button>`}
           <button class="btn sm icon" data-act="project-menu" data-id="${p.id}" aria-label="More for this project" aria-haspopup="menu">${ic('more')}</button>
           ${canDel ? '' : ''}</div></div>
       ${p.archived ? `<div class="info-box" style="margin-bottom:12px">This project is archived. Its tasks and time are kept — restore it to work on it again.</div>` : ''}
@@ -116,6 +119,7 @@ VIEWS.project = {
       <button class="btn primary" data-act="photos-add" data-job="${p.id}">${ic('camera')}<span>Add photos</span></button></div>
       <div id="photo-gallery" data-job="${p.id}" data-drop="${p.id}">${photoGalleryInner(p.id)}</div>`;
     if (tab === 'chat') return chatPane('project:' + p.id, true);
+    if (tab === 'maps') return projectMapsTab(p);
     return projectTasksTab(p);
   },
 };
@@ -693,3 +697,8 @@ A['cal-save'] = async (el) => {
   try { const r = await capi('PATCH', '', { settings: { calendars: list } }); if (r.company) S.company = Object.assign(S.company, r.company); closeSheets(); renderView(false); toast('Calendars saved'); }
   catch (e) { const er = sh.querySelector('[data-err]'); if (er) er.textContent = e.message; }
 };
+
+// "Add attachment" on a project: photos, or a manhole map.
+A['proj-attach'] = (el) => popMenu(el, `<div class="head"><b>Add to this project</b></div>
+  <button class="mi" data-act="photos-add" data-job="${el.dataset.id}">${ic('camera')}Photos</button>
+  <button class="mi" data-act="mh-new-map" data-project="${el.dataset.id}">${mhIcon('cover', 18)}Manhole map</button>`);

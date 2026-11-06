@@ -8,7 +8,7 @@ document.addEventListener('pointerdown', (e) => { lastTapEl = e.target.closest &
 
 // ---------------------------------------------------------------- page transitions
 const NAV_DEPTH = { home: 0, projects: 0, jobs: 0, calendar: 0, pings: 0, team: 0, clients: 0, more: 0, chat: 0,
-  settings: 1, profile: 1, sheets: 1, companies: 1, privacy: 1, terms: 1, project: 1, ping: 1, person: 1, client: 1, company: 2, job: 2 };
+  settings: 1, profile: 1, sheets: 1, companies: 1, privacy: 1, terms: 1, project: 1, ping: 1, person: 1, client: 1, company: 2, job: 2, files: 1, mhmap: 2 };
 function navDepth(name, args) { if (name === 'chat') return args && args[0] ? 1 : 0; return NAV_DEPTH[name] != null ? NAV_DEPTH[name] : 1; }
 function navDirection(prev, next) {
   if (!prev || !prev.name) return 'tab';

@@ -455,6 +455,7 @@ VIEWS.more = {
         <button data-act="edit-tabs">${ic('edit')}<span class="grow">Edit tab bar</span>${ic('right')}</button>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
+        <a href="#/files">${ic('folder')}<span class="grow">Files</span><span class="tiny muted">Manhole maps · photos</span>${ic('right')}</a>
         <a href="#/tutorials">${ic('play')}<span class="grow">Tutorials</span><span class="tiny muted">${TUTORIALS.length + 1} videos</span>${ic('right')}</a>
         <button data-act="demo-co">${ic('building')}<span class="grow">Demo</span><span class="tiny muted">Practice company</span>${ic('right')}</button>
       </div></div>

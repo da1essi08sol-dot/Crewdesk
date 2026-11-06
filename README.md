@@ -74,3 +74,15 @@ Direct messages and group chats are private to the people in them — admins can
 - Every request is checked on the server against the person’s company, role and access. Uploads need sign-in and the right access, and file types are checked by their contents.
 - Strict Content Security Policy, HSTS, no third-party scripts. Map data comes from OpenFreeMap (vector maps), with OpenStreetMap as a fallback.
 - Security events (sign-ins, failures, locks, resets) are logged.
+
+
+## Manhole maps
+
+Projects can have any number of **manhole maps** (project → Maps, project → Add attachment → Manhole map, or More → Files → Create manhole map).
+Only people who can see the project can open its maps, records and photos — this is checked on the server for every request.
+Manhole types (presets) are shared company-wide and anyone can add or edit them.
+
+| Setting | What it does |
+| --- | --- |
+| `GOOGLE_MAPS_KEY` | Optional. A Google Maps Platform key with **Maps JavaScript API** and **Geocoding API** enabled (add **Maps Static API** for satellite backgrounds in the PDF exports). Restrict it to your site's address (HTTP referrers) in Google Cloud. Without a key the maps use free Esri satellite imagery and OpenStreetMap search. |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Optional. Cloudflare R2 for photos and uploaded files, so they don't fill the database. Create a bucket and an API token with Object Read & Write on it. Files uploaded before this was set keep working. |

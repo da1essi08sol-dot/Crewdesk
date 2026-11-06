@@ -38,6 +38,7 @@ async function loadCompany(keepView = false) {
   Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, tasks: st.tasks, clients: st.clients, pings: st.pings,
     photos: st.photos, projects: st.projects, events: st.events, finance: st.finance, chats: st.chats, invites: st.invites || [], favs: st.favs || { projects: [] },
     inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg, suggestions: st.suggestions || {}, gdrive: st.gdrive || null, sheetUploads: st.sheetUploads || {}, totals: st.totals || { tasks: {}, projects: {} }, projectCounts: st.projectCounts || {} });
+  S.mhPresets = st.mhPresets || {}; S.mhMaps = st.mhMaps || {}; S.mhCounts = st.mhCounts || {}; S.mapsKey = st.mapsKey || ''; if (!keepView) S.manholes = {};
   // Time: keep older months already fetched, and replace the recent ones with what the server just sent.
   if (!keepView) { S.entries = {}; S.days = {}; S.loaded = {}; }
   const cut = Date.now() - 62 * 864e5;
@@ -227,7 +228,7 @@ function scheduleRender() {
   requestAnimationFrame(() => { rafPending = false; if (!S.company) return; updateChrome(); renderView(true); });
 }
 window.addEventListener('hashchange', () => {
-  document.documentElement.classList.remove('map-open'); const strayMap = document.querySelector('body > .map-wrap'); if (strayMap) strayMap.remove();
+  document.documentElement.classList.remove('map-open'); if (!/^#\/mhmap\//.test(location.hash) && typeof mhClose === 'function') mhClose(); const strayMap = document.querySelector('body > .map-wrap'); if (strayMap) strayMap.remove();
   const r = parseHash();
   if (!S.user) return publicRoute(r);
   if (!S.company) {
@@ -383,6 +384,7 @@ function searchAll(q) {
     ['Archived projects', 'archive', '#/projects', 'archive old finished jobs folders clear pdf report', () => { S.projFilter = 'archived'; }], ['Calendar', 'cal', '#/calendar', 'events diary schedule site visits gateshead warrington calendars'],
     ['Chat', 'chat', '#/chat', 'messages group dm talk'], ['Pings', 'ping', '#/pings', 'announcements notices'], ['My timesheet', 'timesheet', '#/timesheet', 'hours overtime holiday xlsx download upload month year review'],
     ['Team & map', 'team', '#/team', 'people staff colleagues map locations'], ['Clients', 'contacts', '#/clients', 'customers contacts'], ['Suggestions', 'bulb', '#/suggest', 'ideas bugs hr question feedback'],
+    ['Files', 'folder', '#/files', 'manhole maps photos attachments documents drawings'], ['Manhole maps', 'pin', '#/files', 'manhole drainage sewer utility survey map satellite'],
     ['Tutorials', 'play', '#/tutorials', 'help videos guide how to learn tour promo'], ['My settings', 'user', '#/profile', 'profile photo name theme dark light tabs password notifications'],
     ['Spreadsheets', 'sheet', '#/sheets', 'finance money invoices excel'], ['Privacy', 'lock', '#/privacy', 'data policy'], ['Terms', 'help', '#/terms', 'conditions']];
   if (isAdmin()) PAGES.push(['Admin dashboard', 'admin', '#/admin', 'working now people overview'], ['Timesheets (admin)', 'timesheet', '#/admin/timesheets', 'everyone zip incomplete google drive'],
