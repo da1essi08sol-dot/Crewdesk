@@ -487,7 +487,7 @@ function stateFor(x) {
   mhSeed(x.c.id, d); out.mhPresets = d.mhPresets; out.mhMaps = {};
   for (const mp of Object.values(d.mhMaps)) if (canSeeTask(x, mp)) out.mhMaps[mp.id] = mhPublicMap(mp);
   out.mhCounts = {}; for (const r of Object.values(d.manholes)) if (!r.deleted && out.mhMaps[r.mapId]) out.mhCounts[r.mapId] = (out.mhCounts[r.mapId] || 0) + 1;
-  out.mapsKey = overFree('gMaps') ? '' : (process.env.GOOGLE_MAPS_KEY || '');
+  out.mapsKey = overFree('gMaps') ? '' : ((process.env.GOOGLE_MAPS_KEY || process.env.GOOGLE_MAPS_API_KEY) || '');
   out.tasks = {}; out.projectCounts = {};
   for (const t of Object.values(d.tasks)) {
     const p = d.projects[t.projectId]; if (!p || !out.projects[p.id]) continue;
@@ -1344,7 +1344,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     for (const [n, e] of Object.entries(db.fileIndex)) if (e.cid === cid) { const k = e.kind || 'other'; files[k] = files[k] || { n: 0, bytes: 0 }; files[k].n++; files[k].bytes += db.meta.fsize[n] || 0; }
     const records = {}; for (const k of Object.keys(d)) { try { records[k] = Buffer.byteLength(JSON.stringify(d[k])); } catch (_) {} }
     let dbBytes = 0; try { dbBytes = Buffer.byteLength(JSON.stringify(db)); } catch (_) {}
-    return json(res, 200, { month: u.month, lockAt: LOCK_AT, free: Object.assign({ db: 0.5e9 }, FREE), used: { bytes: usedBytes(), db: dbBytes, r2A: u.r2A, r2B: u.r2B, gMaps: u.gMaps, gGeo: u.gGeo, gStatic: u.gStatic }, r2: r2.configured(), google: !!process.env.GOOGLE_MAPS_KEY, files, records });
+    return json(res, 200, { month: u.month, lockAt: LOCK_AT, free: Object.assign({ db: 0.5e9 }, FREE), used: { bytes: usedBytes(), db: dbBytes, r2A: u.r2A, r2B: u.r2B, gMaps: u.gMaps, gGeo: u.gGeo, gStatic: u.gStatic }, r2: r2.configured(), google: !!(process.env.GOOGLE_MAPS_KEY || process.env.GOOGLE_MAPS_API_KEY), files, records });
   }
   if (sub === '/data/test' && M === 'GET') {
     const results = [];
@@ -2183,7 +2183,7 @@ function mhRegister(x, mp, p, list, fields) {
     { name: 'Summary', cols: [24, 12, 12], rows: sum }], `${mp.name} manhole register`);
 }
 // A satellite picture behind the labelled map, from Google's Static Maps when a key is set (optional).
-const STATIC_KEY = process.env.GOOGLE_MAPS_SERVER_KEY || process.env.GOOGLE_MAPS_KEY || '';
+const STATIC_KEY = process.env.GOOGLE_MAPS_SERVER_KEY || (process.env.GOOGLE_MAPS_KEY || process.env.GOOGLE_MAPS_API_KEY) || '';
 const merc = (lat, lng, z) => { const s = Math.sin((lat * Math.PI) / 180); const n = 256 * 2 ** z; return { x: ((lng + 180) / 360) * n, y: (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n }; };
 function mhFit(list, mp, W, H) {
   const pts = list.length ? list : [mp.center];
