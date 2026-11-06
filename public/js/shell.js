@@ -227,6 +227,7 @@ function scheduleRender() {
   requestAnimationFrame(() => { rafPending = false; if (!S.company) return; updateChrome(); renderView(true); });
 }
 window.addEventListener('hashchange', () => {
+  document.documentElement.classList.remove('map-open'); const strayMap = document.querySelector('body > .map-wrap'); if (strayMap) strayMap.remove();
   const r = parseHash();
   if (!S.user) return publicRoute(r);
   if (!S.company) {

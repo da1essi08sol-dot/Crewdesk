@@ -429,28 +429,32 @@ F.ping = async (f, d, close) => {
 };
 
 // ============================================================ TEAM & MAP
+S.teamOpen = S.teamOpen || {};
 VIEWS.team = {
   render() {
-    const sharing = !!S.user.shareLocation;
-    return `<div class="page-head"><div><h1>Team</h1><div class="sub">${plural(Object.keys(S.members).length, 'person', 'people')} in ${esc(S.company.name)}</div></div>${canInvite() ? `<button class="btn primary" data-act="invite-new">${ic('userplus')}<span>Invite people</span></button>` : ''}</div>
+    const sharing = !!S.user.shareLocation; const n = Object.keys(S.members).length; const online = Object.values(S.members).filter((m) => m.online).length;
+    return `<div class="page-head"><div><h1>Team</h1><div class="sub">${plural(n, 'person', 'people')} in ${esc(S.company.name)}</div></div>${canInvite() ? `<button class="btn primary" data-act="invite-new">${ic('userplus')}<span>Invite people</span></button>` : ''}</div>
       <div class="stack">
-        <div class="grid halves">
-          <div><div class="section-head"><h2>People</h2></div><div class="card flush" id="team-people">${this.people()}</div></div>
-          <div><div class="section-head"><h2>Teams</h2>${isAdmin() ? `<button class="btn sm" data-act="team-edit">${ic('plus')}New team</button>` : ''}</div><div id="team-teams">${this.teams()}</div></div>
-        </div>
-        <div class="section-head" style="margin:14px 0 0"><h2>Map</h2>
+        <div class="section-head" style="margin:0"><h2>Map</h2>
           <div class="seg" role="radiogroup" aria-label="Map style">${Object.entries(MAP_STYLES).map(([k, l]) => `<button type="button" class="${mapStyle() === k ? 'on' : ''}" data-act="map-style" data-s="${k}" role="radio" aria-checked="${mapStyle() === k}">${l}</button>`).join('')}</div></div>
+        <div class="map-wrap"><div id="map" role="region" aria-label="Map of people and project sites"></div>
+          <button class="map-fs" type="button" data-act="map-full" aria-label="Full screen map">${icSize('expand', 18)}</button></div>
         <label class="loc-banner">${ic('locate')}<div class="grow"><b>Share my live location</b><div class="small muted">Your company sees where you are while Crewdesk is open on your phone. Turn it off any time.</div></div>
           <span class="switch"><input type="checkbox" ${sharing ? 'checked' : ''} data-change="share-loc" aria-label="Share my live location"><i></i></span></label>
         ${!window.isSecureContext ? `<div class="warn">Location needs a secure <b>https://</b> link.</div>` : ''}
-        <div id="map" role="region" aria-label="Map of people and project sites"></div>
-        <span class="small muted">Zoom right in to see buildings, house numbers and footpaths.</span>
+        <details class="card flush drop" ${S.teamOpen.people ? 'open' : ''} data-drop="people"><summary class="drop-head"><span class="grow"><b>People</b><span class="small muted"> · ${n}${online ? ` · <span class="pos">${online} online</span>` : ''}</span></span>${avatarStack(Object.keys(S.members).slice(0, 6), 5)}<span class="chev">${icSize('right', 16)}</span></summary>
+          <div id="team-people">${this.people()}</div></details>
+        <div class="section-head" style="margin:10px 0 0"><h2>Teams</h2>${isAdmin() ? `<button class="btn sm" data-act="team-edit">${ic('plus')}New team</button>` : ''}</div>
+        <div id="team-teams">${this.teams()}</div>
       </div>`;
   },
-  mount() { drawMap(); },
-  update() { const a = $('#team-people'), b = $('#team-teams'); if (a) a.innerHTML = this.people(); if (b) b.innerHTML = this.teams(); updateMap(); },
-  people() {
-    const ms = Object.values(S.members).sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
+  mount() {
+    drawMap();
+    $$('details[data-drop]').forEach((d) => d.addEventListener('toggle', () => { S.teamOpen[d.dataset.drop] = d.open; }));
+  },
+  update() { const a = $('#team-people'), b = $('#team-teams'); if (a) a.innerHTML = this.people(); if (b) { b.innerHTML = this.teams(); $$('details[data-drop]', b).forEach((d) => d.addEventListener('toggle', () => { S.teamOpen[d.dataset.drop] = d.open; })); } updateMap(); },
+  people(ids) {
+    const ms = (ids ? ids.map((id) => S.members[id]).filter(Boolean) : Object.values(S.members)).sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
     return `<div class="list">${ms.map((m) => `<a class="item" href="#/person/${m.id}">${avatar(m, '', { dot: true, link: false })}
       <div class="grow"><div class="row tight"><b class="ellipsis">${esc(m.name)}</b>${m.id === S.user.id ? '<span class="tiny muted">(you)</span>' : ''}</div>
       <div class="small muted ellipsis">${esc([m.title, m.dept, m.online ? 'Online' : 'Last seen ' + timeAgo(m.lastSeen)].filter(Boolean).join(' · '))}</div></div>
@@ -459,14 +463,33 @@ VIEWS.team = {
   },
   teams() {
     const ts = Object.values(S.teams).sort((a, b) => a.name.localeCompare(b.name));
-    if (!ts.length) return `<div class="card empty small">${ic('layers')}<div>No teams yet.${isAdmin() ? ' Create teams like “Electrical” or “North crew”, then people can join them.' : ''}</div></div>`;
-    return `<div class="stack tight">${ts.map((t) => { const inT = (t.members || []).includes(S.user.id); return `<div class="card" style="padding:12px 14px">
-      <div class="row"><span class="team-swatch" style="background:${esc(t.color)}"></span><b class="grow ellipsis">${esc(t.name)}</b>
-      <button class="btn sm ${inT ? '' : 'primary'}" data-act="team-${inT ? 'leave' : 'join'}" data-id="${t.id}">${inT ? 'Leave' : 'Join'}</button>
-      ${isAdmin() ? `<button class="btn ghost sm icon" data-act="team-edit" data-id="${t.id}" aria-label="Edit team">${ic('edit')}</button>` : ''}</div>
-      <div class="row" style="margin-top:8px">${(t.members || []).length ? avatarStack(t.members, 8) + `<span class="small muted">${plural(t.members.length, 'member')}</span>` : '<span class="small muted">No one yet</span>'}</div></div>`; }).join('')}</div>`;
+    if (!ts.length) return `<div class="card empty small">${ic('layers')}<div>No teams yet.${isAdmin() ? ' Create teams like “Gateshead office” or “North crew”, then people can join them.' : ' An admin can create teams for you to join.'}</div></div>`;
+    return `<div class="stack tight">${ts.map((t) => { const mem = (t.members || []).filter((id) => S.members[id]); const inT = mem.includes(S.user.id); const k = 'team:' + t.id;
+      return `<details class="card flush drop team-card" style="--c:${esc(t.color)}" ${S.teamOpen[k] ? 'open' : ''} data-drop="${k}"><summary class="drop-head"><span class="team-swatch"></span>
+        <span class="grow" style="min-width:0">${isAdmin() ? `<input class="team-name" value="${esc(t.name)}" maxlength="60" data-change="team-rename" data-id="${t.id}" aria-label="Team name" title="Tap to rename">` : `<b class="ellipsis" style="display:block">${esc(t.name)}</b>`}
+          <span class="small muted">${mem.length ? plural(mem.length, 'member') : 'No one yet'}${inT ? ' · you’re in it' : ''}</span></span>
+        ${mem.length ? avatarStack(mem, 4) : ''}<span class="chev">${icSize('right', 16)}</span></summary>
+        <div class="team-body">${mem.length ? `<div class="list">${mem.map((id) => { const m = S.members[id]; return `<div class="item">${avatar(m, 'sm')}<div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(m.name)}${id === S.user.id ? ' <span class="tiny muted">(you)</span>' : ''}</b><span class="small muted ellipsis" style="display:block">${esc(m.title || ROLE[m.role] || '')}</span></div>
+            ${isAdmin() && id !== S.user.id ? `<button class="btn ghost sm" data-act="team-remove" data-id="${t.id}" data-user="${id}">Remove</button>` : ''}</div>`; }).join('')}</div>` : '<div class="empty small" style="padding:14px">No one in this team yet.</div>'}
+          <div class="row wrap tight team-actions"><button class="btn sm ${inT ? '' : 'primary'}" data-act="team-${inT ? 'leave' : 'join'}" data-id="${t.id}">${inT ? 'Leave team' : `${ic('plus')}Join team`}</button>
+            ${isAdmin() ? `<button class="btn sm" data-act="team-edit" data-id="${t.id}">${ic('userplus')}Manage members</button><button class="btn sm ghost danger" data-act="team-del" data-id="${t.id}">${ic('trash')}Delete</button>` : ''}</div></div></details>`; }).join('')}</div>`;
   },
 };
+C['team-rename'] = async (el) => { const t = S.teams[el.dataset.id]; const v = el.value.trim(); if (!t || !v || v === t.name) { el.value = t ? t.name : ''; return; } try { await saveItem('teams', t.id, { name: v }); toast('Team renamed'); } catch (e) { el.value = t.name; toast(e.message, true); } };
+A['team-remove'] = async (el) => { const t = S.teams[el.dataset.id]; if (!t) return; try { await saveItem('teams', t.id, { members: (t.members || []).filter((x) => x !== el.dataset.user) }); toast(`${firstName(el.dataset.user)} removed from ${t.name}`); } catch (e) { toast(e.message, true); } };
+// Full-screen map with an ✕ to come back.
+A['map-full'] = () => {
+  const w = $('.map-wrap'); if (!w) return; w._home = document.createComment('map'); w.before(w._home); document.body.appendChild(w); // out of the page so it really covers the screen
+  w.classList.add('full'); document.documentElement.classList.add('map-open');
+  w.insertAdjacentHTML('beforeend', `<button class="map-x" type="button" data-act="map-unfull" aria-label="Close full screen map">${icSize('x', 22)}</button>`);
+  const fsb = w.querySelector('.map-fs'); if (fsb) fsb.hidden = true; mapResize();
+  const onKey = (e) => { if (e.key === 'Escape') A['map-unfull'](); }; document.addEventListener('keydown', onKey); w._key = onKey;
+};
+A['map-unfull'] = () => {
+  const w = $('.map-wrap.full'); if (!w) return; w.classList.add('closing');
+  setTimeout(() => { w.classList.remove('full', 'closing'); document.documentElement.classList.remove('map-open'); if (w._home && w._home.isConnected) { w._home.replaceWith(w); } else w.remove(); const x = w.querySelector('.map-x'); if (x) x.remove(); const fsb = w.querySelector('.map-fs'); if (fsb) fsb.hidden = false; if (w._key) document.removeEventListener('keydown', w._key); mapResize(); }, motionOK() ? 200 : 0);
+};
+function mapResize() { if (!map) return; setTimeout(() => { try { mapKind === 'gl' ? map.resize() : map.invalidateSize(); } catch (_) {} }, 30); }
 C['share-loc'] = (el) => enableSharing(el.checked, el);
 A['team-join'] = async (el) => { try { const r = await capi('POST', `/teams/${el.dataset.id}/join`); S.teams[r.item.id] = r.item; scheduleRender(); } catch (e) { toast(e.message, true); } };
 A['team-leave'] = async (el) => { try { const r = await capi('POST', `/teams/${el.dataset.id}/leave`); S.teams[r.item.id] = r.item; scheduleRender(); } catch (e) { toast(e.message, true); } };
@@ -569,7 +592,7 @@ function openMapCard(p, el) {
       <div class="row tight wrap small" style="margin-top:4px">${far ? `<span class="pill">${icSize('pin', 12)}${esc(far)}</span>` : ''}${now.length ? `<span class="pill live-p">${avatarStack(now, 3)}${now.length} on site now</span>` : ''}</div></div></div>
     <a class="btn primary block mc-go" href="${primary[1]}" target="_blank" rel="noopener">${icSize('route', 18)}<span>Directions from here · ${primary[0]}</span></a>
     <div class="mc-alt"><a class="btn sm" href="${isIOS() ? L2.google : L2.apple}" target="_blank" rel="noopener">${isIOS() ? 'Google Maps' : 'Apple Maps'}</a><a class="btn sm" href="${L2.waze}" target="_blank" rel="noopener">Waze</a>
-      <a class="btn sm" href="#/project/${p.id}">${icSize('folder', 14)}Open</a><button class="btn sm" type="button" data-act="cp-pick" data-id="${p.id}">${icSize('play', 14)}Work here</button></div>`;
+      <a class="btn sm" href="#/project/${p.id}">${icSize('folder', 14)}Open project</a></div>`;
   box.appendChild(card);
   card.querySelector('.map-card-x').onclick = (e) => { e.stopPropagation(); closeMapCard(); };
   ['click', 'mousedown', 'touchstart', 'wheel', 'dblclick'].forEach((t) => card.addEventListener(t, (e) => e.stopPropagation(), { passive: true }));
@@ -731,3 +754,6 @@ F.client = async (f, d, close) => {
   const item = await saveItem('clients', f.dataset.id || null, d);
   close(); if (f._onSaved) f._onSaved(item); else if (!f.dataset.id) location.hash = '#/client/' + item.id;
 };
+// Typing a team name inside its header mustn't open or close the dropdown.
+document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('summary .team-name')) e.preventDefault(); }, true);
+['keydown', 'keyup'].forEach((t) => document.addEventListener(t, (e) => { if (e.target.closest && e.target.closest('summary .team-name')) { if (e.key === 'Enter' && t === 'keydown') { e.preventDefault(); e.target.blur(); } else if (e.key === ' ' || e.key === 'Enter') e.stopPropagation(); } }, true));
