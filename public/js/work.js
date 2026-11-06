@@ -24,8 +24,7 @@ function projectCard(p) {
   const now = workingOn(p.id).map((e) => e.userId);
   const plan = projectPlanMins(p); const act = plan ? projectPlanActual(p) : projectMins(p.id);
   const people = [...new Set(ts.flatMap((t) => t.assignees || []).concat(p.visibility === 'selected' ? [p.createdBy, ...(p.members || [])] : []))];
-  return `<a class="projcard ${p.archived ? 'archived' : ''}" href="#/project/${p.id}">
-    <span class="swatch" style="background:${esc(p.color || '#18693f')}"></span>
+  return `<a class="projcard ${p.archived ? 'archived' : ''}${projFill(p)}" href="#/project/${p.id}">
     <div class="row between top"><div class="grow" style="min-width:0">${p.ref ? `<span class="ref">${esc(p.ref)}</span>` : ''}<h3>${esc(p.name)}</h3></div>${starBtn('projects', p.id)}</div>
     ${p.address || S.clients[p.clientId] ? `<div class="small muted ellipsis">${esc([S.clients[p.clientId] && S.clients[p.clientId].name, p.address].filter(Boolean).join(' · '))}</div>` : ''}
     <div class="row wrap tight">${lockPill(p)}${p.archived ? '<span class="pill">Archived</span>' : ''}${now.length ? `<span class="pill live">${plural(now.length, 'person', 'people')} working now</span>` : ''}${p.chat ? `<span class="pill">${icSize('chat', 12)}Chat</span>` : ''}</div>
@@ -143,7 +142,7 @@ function projectTasksTab(p) {
       <div class="card"><h3 style="margin-bottom:8px">Working on it now</h3>${now.length ? `<div class="stack tight">${now.map((e) => `<div class="row">${avatar(member(e.userId), 'sm', { dot: true })}<div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(member(e.userId).name)}</b><span class="tiny muted ellipsis" style="display:block">${esc(cat(e.category).label)}${e.taskId && S.tasks[e.taskId] ? ' · ' + esc(S.tasks[e.taskId].title) : ''} · since ${clock(e.start)}</span></div><span class="mono small" data-since="${e.start}">${fmtElapsed(Date.now() - e.start)}</span></div>`).join('')}</div>` : '<div class="small muted">Nobody right now.</div>'}</div>
       <div class="card"><div class="section-head" style="margin-bottom:8px"><h3>Who’s worked on it</h3><a class="small" href="#/project/${p.id}/timeline">Timeline</a></div>
         ${crew.length ? `<div class="stack tight">${crew.map(([id, m]) => `<div class="row">${avatar(member(id), 'xs')}<span class="grow ellipsis">${personName(id)}</span><span class="mono small">${esc(fmtDur(m, true))}</span></div>`).join('')}</div>` : '<div class="small muted">No time logged yet.</div>'}
-        <a class="btn sm block" style="margin-top:12px" href="/api/c/${S.cid}/projects/${p.id}/timesheet" download>${ic('download')}Project timesheet (Excel)</a></div>
+        <a class="btn sm block" style="margin-top:12px" href="/api/c/${S.cid}/projects/${p.id}/timesheet" download="${esc(projFile(p))}">${ic('download')}Project timesheet (Excel)</a></div>
       <div class="card"><dl class="kv">
         <dt>Site</dt><dd>${p.address ? esc(p.address) : p.lat != null ? '<span class="muted">Pinned on map</span>' : '<span class="muted">No address</span>'}${p.address || p.lat != null ? `<div style="margin-top:6px"><a class="btn sm" target="_blank" rel="noopener noreferrer" href="${dirLink(p)}">${ic('nav')}Directions</a></div>` : ''}</dd>
         <dt>Dates</dt><dd>${p.start ? esc(fmtDate(p.start, true)) : '—'} → ${p.due ? esc(fmtDate(p.due, true)) : '—'}</dd>
@@ -178,7 +177,7 @@ function projectTimeline(p) {
   const total = list.filter((e) => cat(e.category).paid).reduce((a, e) => a + entryMins(e), 0);
   const days = Object.keys(byDay).sort().reverse();
   return `<div class="row wrap between" style="margin-bottom:12px"><div class="small muted">${plural(days.length, 'day')} · ${esc(fmtDur(total))} logged · ${plural(new Set(list.map((e) => e.userId)).size, 'person', 'people')}</div>
-      <a class="btn sm" href="/api/c/${S.cid}/projects/${p.id}/timesheet" download>${ic('download')}Download timesheet</a></div>
+      <a class="btn sm" href="/api/c/${S.cid}/projects/${p.id}/timesheet" download="${esc(projFile(p))}">${ic('download')}Download timesheet</a></div>
     <div class="stack">${days.map((ds) => {
       const es = byDay[ds]; const people = [...new Set(es.map((e) => e.userId))];
       const mins = es.filter((e) => cat(e.category).paid).reduce((a, e) => a + entryMins(e), 0);
@@ -205,7 +204,7 @@ function dayBar(list, opts = {}) {
 
 // ---- project sheets and actions
 function projectSheet(p) {
-  const v = p || { name: '', ref: '', description: '', clientId: '', color: PALETTE[Object.keys(S.projects).length % PALETTE.length], visibility: 'all', members: [], start: '', due: '', address: '', plannedHours: '' };
+  const v = p || { name: '', ref: '', description: '', clientId: '', color: PROJECT_COLORS[Object.keys(S.projects).length % PROJECT_COLORS.length], visibility: 'all', members: [], start: '', due: '', address: '', plannedHours: '' };
   const canAccess = !p || canManageAccess(p);
   sheet(`${sheetHead(p ? 'Edit project' : 'New project')}
     <form class="stack" data-form="project" data-id="${p ? p.id : ''}">
@@ -217,7 +216,7 @@ function projectSheet(p) {
         <label class="field"><span>Start</span><input type="date" name="start" value="${esc(v.start)}"></label>
         <label class="field"><span>Finish by</span><input type="date" name="due" value="${esc(v.due)}"></label>
         <label class="field"><span>Planned hours (optional)</span><input type="number" name="plannedHours" min="0" step="0.5" inputmode="decimal" value="${v.plannedHours || ''}" placeholder="Leave blank to add up the tasks"></label>
-        <div class="field"><span>Colour</span><div class="row wrap tight">${PALETTE.map((c) => `<label style="cursor:pointer"><input type="radio" name="color" value="${c}" ${c === v.color ? 'checked' : ''} class="sr-only"><span class="team-swatch" style="width:24px;height:24px;border-radius:6px;display:block;background:${c};outline:${c === v.color ? '2px solid var(--ink)' : 'none'};outline-offset:2px" data-swatch></span></label>`).join('')}</div></div>
+        <div class="field full"><span>Colour</span><div class="color-pick" role="radiogroup" aria-label="Colour">${[''].concat(PROJECT_COLORS).map((c) => `<label class="cp-opt ${c ? '' : 'none'}" title="${c ? c : 'No colour'}"><input type="radio" name="color" value="${c}" ${c === (v.color || '') ? 'checked' : ''} class="sr-only"><span style="${c ? `background:${c};color:${inkOn(c)}` : ''}">${c ? 'Aa' : 'None'}</span></label>`).join('')}</div><span class="hint">The whole project button takes this colour. Writing switches to black or white so it’s easy to read.</span></div>
         <label class="field full"><span>Description</span><textarea name="description" placeholder="What it is, who it’s for, access, equipment…">${esc(v.description)}</textarea></label>
       </div>
       ${canAccess ? visibilityField(v.visibility, v.members || [], 'Who can see this project') : `<div class="info-box small">${ic('lock')} Only the person who started this project, or an admin, can change who sees it.</div>`}
@@ -225,7 +224,7 @@ function projectSheet(p) {
       <div class="sheet-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${p ? 'Save changes' : 'Create project'}</button></div>
     </form>`, swatchPicker);
 }
-function swatchPicker(sh) { sh.addEventListener('change', (e) => { if (e.target.name === 'color') $$('[data-swatch]', sh).forEach((s) => { s.style.outline = s.previousElementSibling.checked ? '2px solid var(--ink)' : 'none'; }); }); }
+function swatchPicker() {} // the colour picker is styled with :checked, nothing to do
 F.project = async (f, d, close) => {
   const body = { name: d.name, ref: d.ref, description: d.description, clientId: d.clientId, color: d.color, start: d.start, due: d.due, address: d.address, plannedHours: Number(d.plannedHours) || 0 };
   if (d.visibility) { body.visibility = d.visibility; body.members = picked(f, 'viewers'); }
@@ -240,7 +239,7 @@ A['project-menu'] = (el) => {
   popMenu(el, `${canEdit ? `<button class="mi" data-act="archive-project" data-id="${p.id}">${ic(p.archived ? 'restore' : 'archive')}${p.archived ? 'Restore project' : 'Archive project'}</button>` : ''}
     ${canEdit ? (p.chat ? `<button class="mi" data-act="close-chat" data-id="${p.id}">${ic('chat')}Close the project chat</button>` : `<button class="mi" data-act="open-chat" data-id="${p.id}">${ic('chat')}Open a project chat</button>`) : ''}
     ${canEdit ? `<button class="mi" data-act="project-here" data-id="${p.id}">${ic('locate')}${p.lat != null ? 'Re-pin the site here' : 'Pin the site at my location'}</button>` : ''}
-    <a class="mi" href="/api/c/${S.cid}/projects/${p.id}/timesheet" download>${ic('download')}Download project timesheet</a>
+    <a class="mi" href="/api/c/${S.cid}/projects/${p.id}/timesheet" download="${esc(projFile(p))}">${ic('download')}Download project timesheet</a>
     <button class="mi" data-act="new-event" data-project="${p.id}">${ic('cal')}Add to calendar</button>
     ${canDel ? `<div class="sep"></div><button class="mi danger" data-act="del-project" data-id="${p.id}">${ic('trash')}Delete project</button>` : ''}`);
 };
@@ -330,8 +329,23 @@ function calendarItems(from, to) {
     if (t.done || !t.date || t.date < from || t.date > to || !S.projects[t.projectId] || S.projects[t.projectId].archived) continue;
     out.push({ kind: 'task', id: t.id, date: t.date, title: t.title, sub: S.projects[t.projectId].name + (t.planMins ? ' · ' + fmtDur(t.planMins, true) : ''), link: '#/project/' + t.projectId });
   }
-  return out.sort((a, b) => (a.date + (a.time || '00:00')).localeCompare(b.date + (b.time || '00:00')));
+  return out.filter(calShow).sort((a, b) => (a.date + (a.time || '00:00')).localeCompare(b.date + (b.time || '00:00')) || (a.kind === 'event' ? -1 : 1));
 }
+// Calendar filters: "Just me", and which kinds of thing to show (remembered on this device).
+S.calMine = store.get('cd_calMine') === '1';
+S.calHide = new Set((store.get('cd_calHide') || '').split(',').filter(Boolean));
+const calKind = (it) => (it.kind === 'start' || it.kind === 'due' ? 'project' : it.kind);
+function calShow(it) {
+  if (S.calHide && S.calHide.has(calKind(it))) return false;
+  if (!S.calMine) return true;
+  const me = S.user.id;
+  if (it.kind === 'event') { const e = it.ev; return e.createdBy === me || !(e.participants || []).length || e.participants.includes(me); }
+  if (it.kind === 'task') return (S.tasks[it.id].assignees || []).includes(me);
+  const p = S.projects[it.id];
+  return !!p && (p.createdBy === me || (p.members || []).includes(me) || projectTasks(p.id).some((t) => (t.assignees || []).includes(me)));
+}
+A['cal-mine'] = () => { S.calMine = !S.calMine; store.set('cd_calMine', S.calMine ? '1' : null); renderView(false); };
+A['cal-kind'] = (el) => { const k = el.dataset.k; S.calHide.has(k) ? S.calHide.delete(k) : S.calHide.add(k); store.set('cd_calHide', [...S.calHide].join(',') || null); renderView(false); };
 
 // Colours, as in Apple Calendar: events blue (or their own colour), project starts green, due dates orange, tasks purple.
 const CAL_C = { event: '#0a84ff', start: '#30b158', due: '#ff9500', task: '#af52de' };
@@ -349,6 +363,45 @@ function agItem(it) {
   const tm = it.kind === 'event' ? (it.time ? `<b>${esc(it.time)}</b>${it.ev.end ? esc(it.ev.end) : ''}` : '<b>All day</b>') : it.kind === 'task' ? '<b>Task</b>Planned' : `<b>${it.kind === 'due' ? 'Due' : 'Starts'}</b>Project`;
   const body = `<span class="bar" style="--c:${c}"></span><span class="tm">${tm}</span><span class="grow" style="min-width:0"><span class="ti ellipsis" style="display:block">${esc(itTitle(it))}</span><span class="tiny muted ellipsis" style="display:block">${esc(it.sub || '')}</span></span>${it.kind === 'event' && (it.ev.participants || []).length ? avatarStack(it.ev.participants, 3) : ''}`;
   return it.kind === 'event' ? `<button class="ag-item" data-act="event-open" data-id="${it.id}">${body}</button>` : `<a class="ag-item" href="${it.link}">${body}</a>`;
+}
+// Schedule rows (phones, week and list views): time on the left, a tinted card with a coloured edge on the right.
+function schedItem(it) {
+  const c = esc(itColor(it));
+  const tm = it.kind === 'event' ? (it.time ? `<b>${esc(it.time)}</b>${it.ev.end ? `<span>${esc(it.ev.end)}</span>` : ''}` : '<b>All day</b>') : it.kind === 'task' ? '<b>Task</b>' : `<b>${it.kind === 'due' ? 'Due' : 'Starts'}</b>`;
+  const people = it.kind === 'event' && (it.ev.participants || []).length ? avatarStack(it.ev.participants, 3) : it.kind === 'task' && (S.tasks[it.id].assignees || []).length ? avatarStack(S.tasks[it.id].assignees, 3) : '';
+  const body = `<span class="si-time">${tm}</span><span class="si-card" style="--c:${c}"><span class="si-title">${esc(itTitle(it))}</span>${it.sub ? `<span class="si-sub">${esc(it.sub)}</span>` : ''}${people ? `<span class="si-people">${people}</span>` : ''}</span>`;
+  return it.kind === 'event' ? `<button class="si" data-act="event-open" data-id="${it.id}">${body}</button>` : `<a class="si" href="${it.link}">${body}</a>`;
+}
+function dayLabel2(ds) { return ds === todayStr() ? 'Today' : days(ds) === 1 ? 'Tomorrow' : days(ds) === -1 ? 'Yesterday' : parseD(ds).toLocaleDateString('en-GB', { weekday: 'long' }); }
+function dayGroup(ds, its, opts = {}) {
+  const d = parseD(ds);
+  return `<section class="cg ${ds === S.calDate && opts.mark !== false ? 'sel' : ''} ${ds === todayStr() ? 'today' : ''} ${ds < todayStr() ? 'past' : ''}" data-day="${ds}">
+    <div class="cg-date" aria-hidden="true"><span>${d.toLocaleDateString('en-GB', { weekday: 'short' })}</span><b>${d.getDate()}</b></div>
+    <div class="cg-main"><div class="cg-head"><h3>${esc(dayLabel2(ds))} <span>${esc(d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }))}</span></h3>
+      <button class="btn sm ghost icon" data-act="new-event" data-date="${ds}" aria-label="Add something on ${esc(d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))}">${ic('plus')}</button></div>
+      ${its.length ? `<div class="cg-items">${its.map(schedItem).join('')}</div>` : `<div class="cg-none">Nothing planned</div>`}</div></section>`;
+}
+// A run of days as a schedule. Empty days are skipped (unless `showEmpty`), with a note saying how many were skipped.
+function schedule(from, to, opts = {}) {
+  const its = calendarItems(from, to); const by = {};
+  for (const it of its) (by[it.date] = by[it.date] || []).push(it);
+  let html = ''; let gap = 0; let month = '';
+  const flushGap = () => { if (gap && !opts.showEmpty) html += `<div class="cg-gap">${gap === 1 ? '1 day' : gap + ' days'} with nothing planned</div>`; gap = 0; };
+  for (let d = parseD(from); dstr(d) <= to; d.setDate(d.getDate() + 1)) {
+    const ds = dstr(d);
+    if (opts.months && ds.slice(0, 7) !== month) { flushGap(); month = ds.slice(0, 7); html += `<h2 class="cg-month">${esc(monthLabel(month))}</h2>`; }
+    const list = by[ds] || [];
+    if (list.length || opts.showEmpty || ds === opts.keep || (ds === todayStr() && opts.keepToday)) { flushGap(); html += dayGroup(ds, list, opts); }
+    else gap++;
+  }
+  flushGap();
+  return html || `<div class="card empty small">${ic('cal')}<div>Nothing planned${S.calMine || S.calHide.size ? ' that matches your filters' : ''}.</div></div>`;
+}
+function calFilters() {
+  const kinds = [['event', 'Events', CAL_C.event], ['task', 'Tasks', CAL_C.task], ['project', 'Project dates', CAL_C.start]];
+  return `<div class="cal-filters" role="toolbar" aria-label="Show">
+    <button class="cf ${S.calMine ? 'on' : ''}" data-act="cal-mine" aria-pressed="${S.calMine}">${icSize('user', 14)}Just me</button>
+    ${kinds.map(([k, l, c]) => `<button class="cf kind ${S.calHide.has(k) ? 'off' : 'on'}" data-act="cal-kind" data-k="${k}" aria-pressed="${!S.calHide.has(k)}" style="--c:${c}"><i></i>${l}</button>`).join('')}</div>`;
 }
 // Coloured bars under a date (one per item, up to three; with more, two bars and "+N") — easier to spot than dots.
 function calMarks(its, always = false) {
@@ -413,20 +466,27 @@ VIEWS.calendar = {
       const lastRow = cells[35].getMonth() !== cur.getMonth() ? 35 : 42;
       const items = calendarItems(dstr(cells[0]), dstr(cells[lastRow - 1]));
       const max = calWide() ? 3 : 0;
+      const monthStart = dstr(first); const mEnd = dstr(new Date(cur.getFullYear(), cur.getMonth() + 1, 0));
+      const fromSel = sel >= monthStart && sel <= mEnd ? sel : monthStart;
+      const earlier = calendarItems(monthStart, dstr(addDays(parseD(fromSel), -1))).length;
       body = `<div class="cal-surface ${anim}" data-swipe="cal"><div class="cal-dows">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) => `<span class="${i > 4 ? 'we' : ''}">${calWide() ? d : d[0]}</span>`).join('')}</div>
         <div class="cal-grid" role="grid">${cells.slice(0, lastRow).map((d) => { const ds = dstr(d); const its = items.filter((x) => x.date === ds); const wk = d.getDay() === 0 || d.getDay() === 6;
           return `<div class="cal-cell ${d.getMonth() !== cur.getMonth() ? 'other' : ''} ${ds === todayStr() ? 'today' : ''} ${ds === sel ? 'sel' : ''} ${wk ? 'we' : ''}" role="gridcell" data-act="cal-pick" data-d="${ds}" tabindex="0" aria-selected="${ds === sel}" aria-label="${esc(d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))}${its.length ? ', ' + plural(its.length, 'item') : ''}">
             <span class="dn">${d.getDate()}</span>
             <span class="evs">${its.slice(0, max).map(calPill).join('')}${its.length > max && max ? `<span class="cal-more">${its.length - max} more</span>` : ''}</span>
             ${calMarks(its)}</div>`; }).join('')}</div></div>
-        ${dayAgenda(sel)}`;
+        ${calWide() ? dayAgenda(sel) : `<div class="sched ${S.calAgAnim ? 'cal-anim' : ''}">${earlier && fromSel > monthStart ? `<button class="cg-earlier" data-act="cal-pick" data-d="${monthStart}">${icSize('down', 14, 'transform:rotate(180deg)')} ${plural(earlier, 'earlier item')} this month</button>` : ''}${schedule(fromSel, mEnd, { keep: fromSel })}</div>`}`;
     } else if (view === 'week') {
       const st = monday(cur); const en = addDays(st, 6);
       title = st.getMonth() === en.getMonth() ? `${st.getDate()}–${en.getDate()} ${en.toLocaleDateString('en-GB', { month: 'short' })} <span class="yr">${en.getFullYear()}</span>`
         : `${st.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${en.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} <span class="yr">${en.getFullYear()}</span>`;
       body = calWide()
         ? `<div class="cal-surface ${anim}" data-swipe="cal">${timeline([0, 1, 2, 3, 4, 5, 6].map((i) => dstr(addDays(st, i))))}</div>`
-        : `<div class="cal-surface ${anim}" data-swipe="cal">${weekStrip(sel)}</div>${dayAgenda(sel)}`;
+        : `<div class="cal-surface ${anim}" data-swipe="cal">${weekStrip(sel)}</div><div class="sched ${S.calAgAnim ? 'cal-anim' : ''}">${schedule(dstr(st), dstr(en), { showEmpty: true })}</div>`;
+    } else if (view === 'list') {
+      const st = monday(cur); const en = addDays(st, 55);
+      title = `${st.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${en.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} <span class="yr">${en.getFullYear()}</span>`;
+      body = `<div class="sched list ${anim}" data-swipe="cal">${schedule(dstr(st), dstr(en), { months: true, keepToday: true, mark: false })}</div>`;
     } else {
       title = `${cur.getDate()} ${cur.toLocaleDateString('en-GB', { month: 'long' })} <span class="yr">${cur.getFullYear()}</span>`;
       body = `<div class="cal-surface ${anim}" data-swipe="cal">${weekStrip(sel)}<div style="border-top:.5px solid var(--line)">${timeline([sel])}</div></div>`;
@@ -435,11 +495,14 @@ VIEWS.calendar = {
     return `<div class="cal-top"><div class="cal-title"><div class="sub">${view === 'day' ? esc(cur.toLocaleDateString('en-GB', { weekday: 'long' })) : 'Calendar'}</div><h1 aria-live="polite">${title}</h1></div>
         <button class="btn primary icon" data-act="new-event" data-date="${sel}" aria-label="New event" title="New event" style="border-radius:50%">${ic('plus')}</button>
         <div class="cal-ctrls"><div class="cal-nav"><button class="btn icon" data-act="cal-step" data-d="-1" aria-label="Previous ${view}">${ic('left')}</button><button class="btn sm today-btn" data-act="cal-today">Today</button><button class="btn icon" data-act="cal-step" data-d="1" aria-label="Next ${view}">${ic('right')}</button></div>
-        <div class="seg" data-seg="calview">${[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([k, l]) => `<button class="${view === k ? 'on' : ''}" data-act="cal-view" data-v="${k}">${l}</button>`).join('')}</div></div></div>
+        <div class="seg" data-seg="calview">${[['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['list', 'List']].map(([k, l]) => `<button class="${view === k ? 'on' : ''}" data-act="cal-view" data-v="${k}">${l}</button>`).join('')}</div></div></div>
+      ${calFilters()}
       ${body}
       <div class="cal-legend"><span><i style="--c:${CAL_C.event}"></i>Events</span><span><i style="--c:${CAL_C.task}"></i>Tasks</span><span><i style="--c:${CAL_C.start}"></i>Project starts</span><span><i style="--c:${CAL_C.due}"></i>Due dates</span><span class="grow"></span><span>Shared with ${esc(S.company.name)}</span></div>`;
   },
   mount() {
+    if (S.calView === 'week' && !calWide() && S.calScrollTo) { const g = $(`.cg[data-day="${S.calScrollTo}"]`); if (g) g.scrollIntoView({ block: 'start', behavior: motionOK() ? 'smooth' : 'auto' }); }
+    S.calScrollTo = null;
     const sc = $('.tl-scroll');
     if (sc && !sc.dataset.scrolled) { const now = $('.tl-now', sc); const first = $('.tl-ev', sc); const tgt = now || first; if (tgt) sc.scrollTop = Math.max(0, tgt.offsetTop - 80); sc.dataset.scrolled = '1'; }
     const sw = $('[data-swipe="cal"]'); if (!sw) return;
@@ -453,7 +516,7 @@ function calGo(ds, anim) { S.calDate = ds; S.calAnim = anim || ''; history.repla
 function calStep(n) {
   const d = parseD(S.calDate);
   if (S.calView === 'month') { const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); }
-  else d.setDate(d.getDate() + (S.calView === 'week' ? 7 : 1) * n);
+  else d.setDate(d.getDate() + (S.calView === 'week' ? 7 : S.calView === 'list' ? 28 : 1) * n);
   S.calAgAnim = true; calGo(dstr(d), n > 0 ? 'from-right' : 'from-left');
 }
 A['cal-view'] = (el) => { S.calView = el.dataset.v; store.set('cd_calView', S.calView); S.calAnim = ' '; S.calAgAnim = true; renderView(false); };
@@ -464,6 +527,7 @@ A['cal-pick'] = (el, e) => {
   const ds = el.dataset.d;
   if (ds === S.calDate && S.calView === 'month' && calWide()) { S.calView = 'day'; store.set('cd_calView', 'day'); return calGo(ds, ' '); } // second click opens the day
   const other = S.calView === 'month' && parseD(ds).getMonth() !== parseD(S.calDate).getMonth();
+  if (S.calView === 'week' && !calWide()) S.calScrollTo = ds;
   S.calAgAnim = true; calGo(ds, other ? (ds > S.calDate ? 'from-right' : 'from-left') : '');
 };
 A['cal-goday'] = (el) => { S.calView = 'day'; store.set('cd_calView', 'day'); calGo(el.dataset.d, ' '); };

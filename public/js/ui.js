@@ -147,10 +147,15 @@ function openDoc(f) {
   const el = document.createElement('div');
   el.className = 'docview'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', f.name);
   const pdf = ext === 'pdf';
-  el.innerHTML = `<div class="docview-top"><button class="btn sm" data-dact="close">Done</button><div class="nm">${esc(f.name)}</div><button class="btn sm icon" data-dact="save" aria-label="Save or share ${esc(f.name)}">${ic('download')}</button></div>
-    ${pdf ? `<iframe src="${esc(f.url)}?view=1" title="${esc(f.name)}"></iframe>`
-      : `<div class="doc-card"><span class="ext ${esc(ext)}">${esc(ext || 'file')}</span><b style="font-size:17px;overflow-wrap:anywhere">${esc(f.name)}</b><span class="muted small">${f.size ? fileSize(f.size) + ' · ' : ''}This kind of file can’t be previewed in Crewdesk.</span>
-        <button class="btn primary" data-dact="save">${ic('download')}Save or open in another app</button></div>`}`;
+  const sheetDoc = ext === 'xlsx' && 'DecompressionStream' in window;
+  const card = (msg) => `<div class="doc-card"><span class="ext ${esc(ext)}">${esc(ext || 'file')}</span><b style="font-size:17px;overflow-wrap:anywhere">${esc(f.name)}</b><span class="muted small">${f.size ? fileSize(f.size) + ' · ' : ''}${msg}</span>
+        <button class="btn primary" data-dact="save">${ic('download')}Save or open in another app</button><button class="btn" data-dact="close">${ic('back')}Back to Crewdesk</button></div>`;
+  el.innerHTML = `<div class="docview-top"><button class="btn sm" data-dact="close">${ic('back')}Back</button><div class="nm">${esc(f.name)}</div><button class="btn sm" data-dact="save" aria-label="Save or share ${esc(f.name)}">${ic('download')}<span class="hide-xs">Save</span></button></div>
+    ${pdf ? `<iframe src="${esc(f.url)}${f.url.includes('?') ? '&' : '?'}view=1" title="${esc(f.name)}"></iframe>`
+      : sheetDoc ? `<div class="xlsx-view" data-xlsx><div class="empty small">Opening the spreadsheet…</div></div>`
+      : card('This kind of file can’t be previewed in Crewdesk.')}`;
+  if (sheetDoc) prefetchBlob(f.url).then((b) => xlsxPreview(b)).then((html) => { const box = $('[data-xlsx]', el); if (box) { box.innerHTML = html; box.addEventListener('click', (e) => { const t = e.target.closest('[data-sheet]'); if (!t) return; $$('[data-sheet]', box).forEach((x) => x.classList.toggle('on', x === t)); $$('.xs-sheet', box).forEach((x, i) => x.classList.toggle('hidden', String(i) !== t.dataset.sheet)); }); } })
+    .catch(() => { const box = $('[data-xlsx]', el); if (box) box.outerHTML = card('A preview couldn’t be shown, but you can still save it.'); });
   document.body.appendChild(el);
   const back = document.activeElement;
   docView = { el, back, pushed: true };
@@ -179,3 +184,86 @@ const fileAttrs = (f) => `data-url="${esc(f.url)}" data-name="${esc(f.name)}" da
 const fileFromEl = (el) => ({ url: el.dataset.url, name: el.dataset.name, ext: el.dataset.ext, size: Number(el.dataset.size) || 0 });
 A['file-open'] = (el) => openDoc(fileFromEl(el));
 A['file-save'] = (el) => saveFile(el.dataset.url, el.dataset.name);
+
+// ---- spreadsheet preview (.xlsx): unzip in the browser, read the cells, colours and number formats, show them as a table.
+async function readZipEntries(buf) {
+  const dv = new DataView(buf); let eocd = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('Not a spreadsheet');
+  const n = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true);
+  const out = {}; const dec = new TextDecoder();
+  for (let i = 0; i < n; i++) {
+    const method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = dec.decode(new Uint8Array(buf, p + 46, nl)); const start = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true);
+    out[name] = { method, data: new Uint8Array(buf, start, size) }; p += 46 + nl + xl + cl;
+  }
+  return async (name) => {
+    const e = out[name]; if (!e) return null;
+    if (e.method === 0) return dec.decode(e.data);
+    return new Response(new Blob([e.data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  };
+}
+async function xlsxPreview(blob) {
+  const read = await readZipEntries(await blob.arrayBuffer());
+  const xml = (t) => (t ? new DOMParser().parseFromString(t, 'application/xml') : null);
+  const tags = (doc, n) => (doc ? [...doc.getElementsByTagNameNS('*', n)] : []);
+  const wb = xml(await read('xl/workbook.xml')); const rels = xml(await read('xl/_rels/workbook.xml.rels'));
+  const sst = tags(xml(await read('xl/sharedStrings.xml')), 'si').map((si) => tags(si, 't').map((t) => t.textContent).join(''));
+  const st = xml(await read('xl/styles.xml'));
+  const fmts = {}; tags(st, 'numFmt').forEach((f) => { fmts[f.getAttribute('numFmtId')] = f.getAttribute('formatCode'); });
+  const fills = tags(tags(st, 'fills')[0], 'fill').map((f) => { const c = tags(f, 'fgColor')[0]; const pt = tags(f, 'patternFill')[0]; const rgb = c && c.getAttribute('rgb'); return pt && pt.getAttribute('patternType') === 'solid' && rgb ? '#' + rgb.slice(-6) : ''; });
+  const fonts = tags(tags(st, 'fonts')[0], 'font').map((f) => { const c = tags(f, 'color')[0]; const rgb = c && c.getAttribute('rgb'); return { b: tags(f, 'b').length > 0, c: rgb ? '#' + rgb.slice(-6) : '' }; });
+  const xfs = tags(tags(st, 'cellXfs')[0], 'xf').map((x) => ({ fmt: x.getAttribute('numFmtId'), fill: fills[Number(x.getAttribute('fillId'))] || '', font: fonts[Number(x.getAttribute('fontId'))] || {} }));
+  const kind = (id) => { const code = fmts[id] || ''; if (['18', '19', '20', '21', '45', '46', '47'].includes(id) || /h+:m/i.test(code)) return 'time'; if (['14', '15', '16', '17', '22'].includes(id) || /[dy]/i.test(code.replace(/"[^"]*"/g, ''))) return 'date'; return ''; };
+  const colN = (c) => [...c].reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0);
+  const colL = (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const fmtVal = (v, xf) => {
+    const k = xf ? kind(xf.fmt) : ''; const n = Number(v);
+    if (k === 'date' && Number.isFinite(n) && n > 0) return new Date(Date.UTC(1899, 11, 30) + Math.round(n * 864e5)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    if (k === 'time' && Number.isFinite(n)) { const m = Math.round((n % 1) * 1440); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; }
+    return Number.isFinite(n) ? String(Math.round(n * 100) / 100) : v;
+  };
+  const sheets = [];
+  for (const sh of tags(wb, 'sheet').slice(0, 8)) {
+    const rid = sh.getAttribute('r:id') || sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    const rel = tags(rels, 'Relationship').find((r) => r.getAttribute('Id') === rid); if (!rel) continue;
+    const doc = xml(await read('xl/' + rel.getAttribute('Target').replace(/^\/?xl\//, '').replace(/^\//, '')));
+    const cells = {}; let maxR = 0, maxC = 0;
+    for (const c of tags(doc, 'c')) {
+      const m = /^([A-Z]+)(\d+)$/.exec(c.getAttribute('r') || ''); if (!m) continue;
+      const r = Number(m[2]), col = colN(m[1]); if (r > 400 || col > 40) continue;
+      const xf = xfs[Number(c.getAttribute('s') || 0)]; const t = c.getAttribute('t'); const v = tags(c, 'v')[0];
+      let val = '';
+      if (t === 's') val = sst[Number(v && v.textContent)] || '';
+      else if (t === 'inlineStr') val = tags(c, 't').map((x) => x.textContent).join('');
+      else if (t === 'b') val = v && v.textContent === '1' ? 'TRUE' : 'FALSE';
+      else if (v) val = t === 'str' || t === 'e' ? v.textContent : fmtVal(v.textContent, xf);
+      if (!val && !(xf && xf.fill)) continue;
+      cells[r + ':' + col] = { val, xf }; maxR = Math.max(maxR, r); maxC = Math.max(maxC, col);
+    }
+    let rows = '';
+    for (let r = 1; r <= maxR; r++) {
+      let tr = `<th>${r}</th>`;
+      for (let c = 1; c <= maxC; c++) {
+        const cell = cells[r + ':' + c];
+        const style = cell && cell.xf ? [cell.xf.fill ? `background:${cell.xf.fill}` : '', cell.xf.font.c && cell.xf.font.c !== '#000000' ? `color:${cell.xf.font.c}` : '', cell.xf.font.b ? 'font-weight:700' : ''].filter(Boolean).join(';') : '';
+        tr += `<td${style ? ` style="${style}"` : ''}>${cell ? esc(cell.val) : ''}</td>`;
+      }
+      rows += `<tr>${tr}</tr>`;
+    }
+    sheets.push({ name: sh.getAttribute('name'), html: maxR ? `<table class="xs-table"><thead><tr><th></th>${Array.from({ length: maxC }, (_, i) => `<th>${colL(i + 1)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty small">This sheet is empty.</div>' });
+  }
+  if (!sheets.length) throw new Error('No sheets');
+  return `${sheets.length > 1 ? `<div class="xs-tabs">${sheets.map((x, i) => `<button class="${i ? '' : 'on'}" data-sheet="${i}">${esc(x.name)}</button>`).join('')}</div>` : ''}
+    ${sheets.map((x, i) => `<div class="xs-sheet ${i ? 'hidden' : ''}">${x.html}</div>`).join('')}`;
+}
+// On phones, a download link would replace the app with the file (and there's no way back), so open it inside the app instead.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a[download]');
+  if (!a || !isTouch() || e.defaultPrevented) return;
+  const href = a.getAttribute('href') || '';
+  if (!href.startsWith('/api/') && !href.startsWith('/uploads/')) return;
+  e.preventDefault(); e.stopPropagation(); closeMenu();
+  const name = a.getAttribute('download') || 'file';
+  openDoc({ url: href, name, ext: (name.split('.').pop() || '').toLowerCase() });
+}, true);

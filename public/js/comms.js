@@ -21,7 +21,7 @@ function channelList(active) {
   const row = (ch, info) => {
     const lm = S.lastMsg[ch]; const un = S.unread[ch] || 0;
     const preview = lm ? (lm.system ? lm.text : `${lm.userId === S.user.id ? 'You' : firstName(lm.userId)}: ${lm.text}`) : info.sub;
-    const icon = info.kind === 'dm' ? avatar(member(info.other), 'sm', { link: false, dot: true }) : `<span class="chan-ico" ${info.project ? `style="color:${esc(info.project.color || 'var(--accent)')}"` : ''}>${ic(info.icon)}</span>`;
+    const icon = info.kind === 'dm' ? avatar(member(info.other), 'sm', { link: false, dot: true }) : `<span class="chan-ico" ${info.project && info.project.color ? `style="background:${esc(info.project.color)};color:${inkOn(info.project.color)}"` : ''}>${ic(info.icon)}</span>`;
     return `<a class="chan ${active === ch ? 'on' : ''}" href="#/chat/${ch}" ${active === ch ? 'aria-current="page"' : ''}>${icon}
       <div class="grow"><div class="row between"><b class="ellipsis">${esc(info.name)}</b>${lm ? `<span class="tiny muted" style="flex:none">${timeAgo(lm.at)}</span>` : ''}</div>
         <div class="row between"><span class="small muted ellipsis ${typingText(ch) ? 'typing' : ''}" data-preview="${esc(ch)}" data-text="${esc(preview)}">${esc(typingText(ch) || preview)}</span>${un ? `<span class="count">${un}</span>` : ''}</div></div></a>`;
@@ -623,7 +623,7 @@ VIEWS.person = {
           <div><div class="section-head"><h2>Recent activity</h2></div><div class="card">${activity.length ? `<ul class="hist">${activity.map((a) => `<li><span class="grow">${esc(a.text)}${a.project ? ` · <a href="#/project/${a.project.id}">${esc(a.project.name)}</a>` : a.ping ? ` · <a href="#/ping/${a.ping.id}">Open</a>` : ''}</span><time title="${esc(fmtDateTime(a.at))}">${timeAgo(a.at)}</time></li>`).join('')}</ul>` : '<div class="small muted">Nothing recent you can see.</div>'}</div></div>
         </div>
         <div class="stack">
-          <div class="card"><h3 style="margin-bottom:8px">Projects</h3>${projects.length ? `<div class="stack tight">${projects.map((p) => `<a href="#/project/${p.id}" class="row" style="text-decoration:none;color:inherit"><span class="team-swatch" style="background:${esc(p.color || '#18693f')}"></span><span class="ellipsis">${esc(p.name)}</span></a>`).join('')}</div>` : '<div class="small muted">None.</div>'}</div>
+          <div class="card"><h3 style="margin-bottom:8px">Projects</h3>${projects.length ? `<div class="stack tight">${projects.map((p) => `<a href="#/project/${p.id}" class="proj-chip${projFill(p)}">${esc(projLabel(p))}</a>`).join('')}</div>` : '<div class="small muted">None.</div>'}</div>
           ${(m.companies || []).length ? `<div class="card"><h3 style="margin-bottom:8px">Companies</h3><div class="stack tight">${m.companies.map((c) => `<a href="#/company/${c.id}" class="row" style="text-decoration:none;color:inherit">${coLogo(c, 28)}<span class="grow ellipsis">${esc(c.name)}</span>${c.public ? '' : `<span class="tiny muted">${icSize('lock', 12)} Private</span>`}</a>`).join('')}</div></div>` : ''}
           <div class="card"><h3 style="margin-bottom:8px">Teams</h3>${Object.values(S.teams).filter((t) => (t.members || []).includes(id)).map((t) => `<div class="row tight small"><span class="team-swatch" style="background:${esc(t.color)}"></span>${esc(t.name)}</div>`).join('') || '<div class="small muted">None.</div>'}</div>
           ${canManage || (S.role === 'owner' && !me) ? `<div class="card"><h3 style="margin-bottom:8px">Manage</h3><div class="row wrap tight">

@@ -167,7 +167,7 @@ const S = {
   members: {}, teams: {}, tasks: {}, clients: {}, pings: {}, photos: {}, projects: {}, events: {}, finance: {}, chats: {}, entries: {}, days: {}, suggestions: {},
   invites: [], favs: { projects: [] }, inbox: [], locations: {}, unread: {}, lastMsg: {}, msgs: {}, msgsMore: {}, loaded: {}, gdrive: null,
   projFilter: 'active', projSearch: '', clientSearch: '', openDay: null, sugFilter: 'open',
-  calView: store.get('cd_calView') || 'month', calDate: todayStr(), pingTab: 'pings',
+  calView: ['day', 'week', 'month', 'list'].includes(store.get('cd_calView')) ? store.get('cd_calView') : 'month', calDate: todayStr(), pingTab: 'pings',
 };
 // Registries the view files fill in.
 const VIEWS = {}; const A = {}; const C = {}; const I = {}; const F = {};
@@ -415,3 +415,15 @@ async function ensureMonth(uid, ym) {
   } catch (e) { delete S.loaded[key]; toast(e.message, true); return false; }
 }
 const dayRec = (uid, ds) => S.days[uid + '_' + ds] || null;
+
+// ============================================================ project colours: the whole button takes the colour,
+// and the writing turns black or white, whichever is easier to read on it. A project can also have no colour.
+const PROJECT_COLORS = ['#18693f', '#1f57a4', '#7b3fa8', '#b0284f', '#0b7285', '#a35200', '#57564f', '#7fd1ae', '#8ec5ff', '#f7c548', '#ffad85', '#f2a7d0', '#c9d6df'];
+function inkOn(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return '';
+  const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const n = parseInt(m[1], 16); const L = 0.2126 * lin(n >> 16) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? '#1c1c1e' : '#ffffff'; // higher contrast wins
+}
+const projFill = (p) => (p && p.color && inkOn(p.color) ? ` pfill" style="--pc:${esc(p.color)};--pt:${inkOn(p.color)}` : '');
+const projFile = (p) => `${p.ref ? p.ref + ' ' : ''}${p.name} timesheet`.replace(/[\\/:*?"<>|]+/g, '_').trim().slice(0, 80) + '.xlsx';

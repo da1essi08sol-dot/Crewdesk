@@ -532,7 +532,7 @@ const RULES = {
       if ('ref' in b) o.ref = str(b.ref, 30);
       if ('description' in b) o.description = str(b.description, 5000);
       if ('clientId' in b) o.clientId = x.d.clients[b.clientId] ? b.clientId : '';
-      if ('color' in b) o.color = color(b.color);
+      if ('color' in b) o.color = b.color === '' ? '' : color(b.color); // '' = no colour
       if ('start' in b) o.start = date(b.start);
       if ('due' in b) o.due = date(b.due);
       if ('address' in b) o.address = str(b.address, 300);

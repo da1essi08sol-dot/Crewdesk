@@ -150,8 +150,8 @@ A['choose-project'] = () => {
 };
 function cpList(q, cur) {
   const ps = projectChoices().filter((p) => !q || [p.name, p.ref, p.address].join(' ').toLowerCase().includes(q.toLowerCase()));
-  return `<div class="list">${ps.map((p) => `<button class="item ${p.id === cur ? 'on' : ''}" data-act="cp-pick" data-id="${p.id}"><span class="team-swatch" style="background:${esc(p.color || '#18693f')}"></span><span class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(p.name)}</b><span class="tiny muted ellipsis" style="display:block">${esc([p.ref, p.address].filter(Boolean).join(' · ') || 'No job number')}</span></span>${p.id === cur ? icSize('check', 18, 'color:var(--accent)') : ''}</button>`).join('') || '<div class="empty small">No projects match.</div>'}
-    <button class="item ${cur === '' ? 'on' : ''}" data-act="cp-pick" data-id=""><span class="team-swatch" style="background:var(--line-2)"></span><span class="grow"><b>Not on a project</b><span class="tiny muted" style="display:block">Office, training, admin, holiday…</span></span>${cur === '' ? icSize('check', 18, 'color:var(--accent)') : ''}</button></div>`;
+  return `<div class="list">${ps.map((p) => `<button class="item ${p.id === cur ? 'on' : ''}${projFill(p)}" data-act="cp-pick" data-id="${p.id}"><span class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(p.name)}</b><span class="tiny muted ellipsis" style="display:block">${esc([p.ref, p.address].filter(Boolean).join(' · ') || 'No job number')}</span></span>${p.id === cur ? icSize('check', 20, 'flex:none') : ''}</button>`).join('') || '<div class="empty small">No projects match.</div>'}
+    <button class="item ${cur === '' ? 'on' : ''}" data-act="cp-pick" data-id=""><span class="grow"><b>Not on a project</b><span class="tiny muted" style="display:block">Office, training, admin, holiday…</span></span>${cur === '' ? icSize('check', 20, 'flex:none') : ''}</button></div>`;
 }
 I['cp-search'] = (el) => { const box = $('[data-cp-list]'); if (box) box.innerHTML = cpList(el.value, currentProjectId()); };
 A['cp-pick'] = (el) => {
@@ -202,22 +202,23 @@ VIEWS.home = {
     const runningBase = list.filter((e) => e.end && cat(e.category).paid).reduce((a, e) => a + entryMins(e), 0);
     const target = dayHours() * 60;
     const head = `<div class="home-head"><div class="sub">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</div><h1>${greeting()}, ${esc(S.user.name.split(' ')[0])}</h1></div>`;
-    const picker = `<button class="proj-pick" data-act="choose-project" aria-label="Change the project you’re on"><span class="team-swatch" style="background:${esc(p ? p.color : 'var(--line-2)')}"></span><span class="grow" style="min-width:0"><span class="tiny muted" style="display:block">Working on</span><b class="ellipsis" style="display:block">${esc(p ? projLabel(p) : 'Not on a project')}</b></span>${icSize('down', 18, 'color:var(--muted);flex:none')}</button>`;
+    const picker = `<button class="proj-pick${projFill(p)}" data-act="choose-project" aria-label="Change the project you’re on"><span class="grow" style="min-width:0"><span class="pp-label">Project</span><span class="pp-name">${esc(p ? projLabel(p) : 'Not on a project')}</span></span><span class="pp-change">Change</span></button>`;
     let timer;
     if (!chosen) {
       const ps = projectChoices().slice(0, 6);
       timer = `<div class="card choose-card"><h2>Which project are you on?</h2><p class="small muted" style="margin:4px 0 12px">Pick one and the big <b>+</b> appears — tap it whenever you start something.</p>
-        <div class="choose-grid">${ps.map((x) => `<button class="choose-btn" data-act="cp-pick" data-id="${x.id}"><span class="team-swatch" style="background:${esc(x.color || '#18693f')}"></span><span class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(x.name)}</b><span class="tiny muted ellipsis" style="display:block">${esc(x.ref || x.address || 'Project')}</span></span></button>`).join('')}
+        <div class="choose-grid">${ps.map((x) => `<button class="choose-btn${projFill(x)}" data-act="cp-pick" data-id="${x.id}"><span class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(x.name)}</b><span class="tiny muted ellipsis" style="display:block">${esc(x.ref || x.address || 'Project')}</span></span></button>`).join('')}
           <button class="choose-btn" data-act="choose-project">${icSize('search', 18, 'color:var(--muted)')}<span class="grow"><b>${ps.length ? 'Another project…' : 'Choose a project…'}</b></span></button>
-          <button class="choose-btn" data-act="cp-pick" data-id=""><span class="team-swatch" style="background:var(--line-2)"></span><span class="grow"><b>Not on a project</b><span class="tiny muted" style="display:block">Office, training…</span></span></button></div></div>`;
+          <button class="choose-btn" data-act="cp-pick" data-id=""><span class="grow"><b>Not on a project</b><span class="tiny muted" style="display:block">Office, training…</span></span></button></div></div>`;
     } else {
       timer = `<div class="timer-card ${run ? 'is-running' : ''} ${run && run.category === 'lunch' ? 'is-lunch' : ''}">${picker}
         <div class="timer">
-          <button class="bigbtn ${run ? 'running' : ''}" data-act="timer" aria-label="${run ? 'Stop the timer' : 'Start logging what you’re doing'}">${run ? ic('stop') : ic('plus')}</button>
-          <div class="timer-info" aria-live="polite">${run ? `<div class="elapsed mono" data-since="${run.start}">${fmtElapsed(Date.now() - run.start)}</div>
-              <div class="what ellipsis">${esc(runT ? runT.title : run.tname || cat(run.category).label)}</div>
-              <div class="small muted ellipsis">${run.category === 'lunch' ? 'Lunch' : esc([cat(run.category).label, runP && runP.id !== pid ? projLabel(runP) : ''].filter(Boolean).join(' · '))} · since ${clock(run.start)}</div>${runningPlanMsg(run)}`
-            : `<div class="what">Tap <b>+</b> to start</div><div class="small muted">Log what you’re doing as you go — your timesheet fills itself in.</div>`}</div>
+          ${run ? `<div class="state live"><i></i>${run.category === 'lunch' ? 'On lunch' : 'Logging time'}</div>` : `<div class="state">Not logging time</div>`}
+          <button class="bigbtn ${run ? 'running' : ''}" data-act="timer" aria-label="${run ? 'Stop the timer' : 'Start logging what you’re doing'}">${run ? ic('stop') : ic('plus')}<span class="bb-label">${run ? 'Stop' : 'Start'}</span></button>
+          <div class="timer-info" aria-live="polite">${run ? `<div class="elapsed" data-since="${run.start}">${fmtElapsed(Date.now() - run.start)}</div>
+              <div class="what">${esc(runT ? runT.title : run.tname || cat(run.category).label)}</div>
+              <div class="meta"><i class="cdot" style="background:${cat(run.category).color}"></i>${run.category === 'lunch' ? 'Lunch' : esc([cat(run.category).label, runP && runP.id !== pid ? projLabel(runP) : ''].filter(Boolean).join(' · '))} · started ${clock(run.start)}</div>${runningPlanMsg(run)}`
+            : `<div class="explain">Press <b>Start</b> when you begin something, and <b>Stop</b> when you finish. Your timesheet fills itself in.</div>`}</div>
         </div>
         ${run ? `<div class="quick">${run.category === 'lunch' ? `<button class="btn" data-act="back-to-work">${ic('play')}<span>Back to work</span></button>` : `<button class="btn" data-act="lunch">${ic('coffee')}<span>Lunch</span></button><button class="btn" data-act="switch-task">${ic('refresh')}<span>Switch task</span></button>`}</div>` : ''}
       </div>`;
@@ -272,7 +273,7 @@ function dayOT(uid, ds, st) {
 function monthMini(uid) {
   const ym = thisMonth(); const m = monthStats(uid, ym);
   return `<div class="mini-kpis"><div><b>${esc(fmtDur(m.paid, true))}</b><span>logged</span></div><div><b>${m.days}</b><span>${m.days === 1 ? 'day' : 'days'}</span></div><div><b class="${m.ot > 0 ? 'pos' : m.ot < 0 ? 'neg' : ''}">${fmtSigned(m.ot)}</b><span>overtime</span></div></div>
-    <a class="btn sm block" style="margin-top:10px" href="/api/c/${S.cid}/timesheet/${uid}/${ym}" download>${ic('download')}${esc(monthFile(member(uid).name, ym))}</a>`;
+    <a class="btn sm block" style="margin-top:10px" href="/api/c/${S.cid}/timesheet/${uid}/${ym}" download="${esc(monthFile(member(uid).name, ym))}">${ic('download')}${esc(monthFile(member(uid).name, ym))}</a>`;
 }
 
 // ============================================================ adding and changing time
@@ -329,7 +330,7 @@ A['finish-day'] = () => {
   const byP = Object.entries(st.byProject).sort((a, b) => b[1] - a[1]);
   sheet(`${sheetHead(rec.finishedAt ? 'Your day' : 'Finish for today')}
     <div class="finish-sum"><div><b>${esc(fmtDur(st.paid))}</b><span>logged today</span></div><div><b class="${st.ot > 0 ? 'pos' : st.ot < 0 ? 'neg' : ''}">${fmtSigned(st.ot)}</b><span>${st.ot < 0 ? 'short of a full day' : 'overtime'}</span></div><div><b>${list.length}</b><span>${list.length === 1 ? 'entry' : 'entries'}</span></div></div>
-    ${byP.length || st.nonprod ? `<div class="stack tight small" style="margin:4px 0 12px">${byP.map(([pid, m]) => `<div class="row"><span class="team-swatch" style="background:${esc((S.projects[pid] || {}).color || 'var(--line-2)')}"></span><span class="grow ellipsis">${esc(projLabel(S.projects[pid]) || 'Deleted project')}</span><span class="mono">${esc(fmtDur(m, true))}</span></div>`).join('')}${st.nonprod ? `<div class="row"><span class="team-swatch" style="background:var(--line-2)"></span><span class="grow">Non-productive</span><span class="mono">${esc(fmtDur(st.nonprod, true))}</span></div>` : ''}</div>` : ''}
+    ${byP.length || st.nonprod ? `<div class="stack tight small" style="margin:4px 0 12px">${byP.map(([pid, m]) => `<div class="row"><span class="grow ellipsis">${esc(projLabel(S.projects[pid]) || 'Deleted project')}</span><span class="mono">${esc(fmtDur(m, true))}</span></div>`).join('')}${st.nonprod ? `<div class="row"><span class="grow">Non-productive</span><span class="mono">${esc(fmtDur(st.nonprod, true))}</span></div>` : ''}</div>` : ''}
     <form class="stack" data-form="finish-day">
       <p class="small muted" style="margin:0">Quick notes for you and your manager — all optional. They go with today’s timesheet.</p>
       <label class="field"><span>${icSize('sun', 14, 'vertical-align:-2px')} What went well?</span><textarea name="well" rows="2" placeholder="e.g. Finished the boundary survey early">${esc(rec.well || '')}</textarea></label>
@@ -373,8 +374,8 @@ VIEWS.timesheet = {
         <div class="kpi"><span class="v">${approved}</span><span class="l">Days approved</span></div>
       </div>
       <div class="ts-actions">
-        <a class="btn primary" href="/api/c/${S.cid}/timesheet/${uid}/${ym}" download>${ic('download')}<span>${esc(monthFile(m.name, ym))}</span></a>
-        <a class="btn" href="/api/c/${S.cid}/timesheet/${uid}/${ym.slice(0, 4)}" download>${ic('download')}<span>Whole year (${ym.slice(0, 4)})</span></a>
+        <a class="btn primary" href="/api/c/${S.cid}/timesheet/${uid}/${ym}" download="${esc(monthFile(m.name, ym))}">${ic('download')}<span>${esc(monthFile(m.name, ym))}</span></a>
+        <a class="btn" href="/api/c/${S.cid}/timesheet/${uid}/${ym.slice(0, 4)}" download="${esc(yearFile(m.name, ym.slice(0, 4)))}">${ic('download')}<span>Whole year (${ym.slice(0, 4)})</span></a>
         <button class="btn" data-act="add-time" data-date="${ym === thisMonth() ? todayStr() : end}" data-user="${uid}">${ic('plus')}<span>Add time</span></button>
       </div>
       ${loading && !Object.keys(ms.byDay).length ? '<div class="skeleton" style="height:240px;margin-top:16px"></div>' : `<div class="card flush ts-days" style="margin-top:16px">${shown.length ? shown.map((ds) => tsDay(uid, ds, ms.byDay[ds] || [])).join('') : '<div class="empty small">Nothing in this month yet.</div>'}</div>`}
@@ -490,11 +491,11 @@ function adminFolder() {
     : !g.connected ? `<div class="card stack"><div class="row">${icSize('upload', 22, 'color:var(--accent-text);flex:none')}<div class="grow"><h3>Copy to Google Drive automatically</h3><p class="small muted" style="margin:4px 0 0">Connect your Google Drive once. Every time someone’s time changes, their timesheet is updated in a “Crewdesk timesheets” folder, sorted by year and month. Crewdesk can only see the files it puts there.</p></div></div><button class="btn primary" data-act="drive-connect">${ic('link')}Connect Google Drive</button></div>`
     : `<div class="card stack"><div class="row wrap">${icSize('check', 22, 'color:var(--ok);flex:none')}<div class="grow" style="min-width:0"><h3>Google Drive connected</h3><p class="small muted" style="margin:4px 0 0">${esc(g.email || 'Google account')} · ${g.lastSync ? 'last copied ' + timeAgo(g.lastSync) : 'not copied yet'}${g.lastError ? ` · <span class="neg">${esc(g.lastError)}</span>` : ''}</p></div></div>
         <div class="row wrap tight">${g.folderUrl ? `<a class="btn sm" href="${esc(g.folderUrl)}" target="_blank" rel="noopener noreferrer">${ic('folder')}Open folder</a>` : ''}<button class="btn sm" data-act="drive-sync">${ic('refresh')}Copy this month now</button><button class="btn sm ghost" data-act="drive-off">Disconnect</button></div></div>`;
-  return `<div class="row between wrap" style="margin-bottom:12px">${adminMonthNav('timesheets')}<a class="btn primary" href="/api/c/${S.cid}/timesheets/${ym}" download>${ic('download')}<span>Download all (.zip)</span></a></div>
+  return `<div class="row between wrap" style="margin-bottom:12px">${adminMonthNav('timesheets')}<a class="btn primary" href="/api/c/${S.cid}/timesheets/${ym}" download="Timesheets_${MONTHS_SHORT[Number(ym.slice(5, 7)) - 1]}_${ym.slice(0, 4)}.zip">${ic('download')}<span>Download all (.zip)</span></a></div>
     ${loading ? '<div class="skeleton" style="height:200px"></div>' : `<div class="files">${ids.map((id) => { const m = monthStats(id, ym); const name = member(id).name;
       return `<div class="filecard"><span class="xl-ico" aria-hidden="true">XLS</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(monthFile(name, ym))}</b><span class="tiny muted ellipsis" style="display:block">${esc(name)} · ${esc(fmtDur(m.paid, true))} · OT ${fmtSigned(m.ot)}</span></div>
-        <a class="btn sm icon" href="#/timesheet/${ym}/${id}" aria-label="Open ${esc(name)}’s timesheet">${ic('eye')}</a><a class="btn sm icon primary" href="/api/c/${S.cid}/timesheet/${id}/${ym}" download aria-label="Download ${esc(monthFile(name, ym))}">${ic('download')}</a></div>`; }).join('')}</div>`}
-    <div class="section"><div class="section-head"><h2>Whole year ${y}</h2></div><div class="files">${ids.map((id) => `<a class="filecard" href="/api/c/${S.cid}/timesheet/${id}/${y}" download><span class="xl-ico" aria-hidden="true">XLS</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(yearFile(member(id).name, y))}</b><span class="tiny muted">${esc(member(id).name)} · summary, every entry, day notes</span></div>${ic('download')}</a>`).join('')}</div></div>
+        <a class="btn sm icon" href="#/timesheet/${ym}/${id}" aria-label="Open ${esc(name)}’s timesheet">${ic('eye')}</a><a class="btn sm icon primary" href="/api/c/${S.cid}/timesheet/${id}/${ym}" download="${esc(monthFile(name, ym))}" aria-label="Download ${esc(monthFile(name, ym))}">${ic('download')}</a></div>`; }).join('')}</div>`}
+    <div class="section"><div class="section-head"><h2>Whole year ${y}</h2></div><div class="files">${ids.map((id) => `<a class="filecard" href="/api/c/${S.cid}/timesheet/${id}/${y}" download="${esc(yearFile(member(id).name, y))}"><span class="xl-ico" aria-hidden="true">XLS</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(yearFile(member(id).name, y))}</b><span class="tiny muted">${esc(member(id).name)} · summary, every entry, day notes</span></div>${ic('download')}</a>`).join('')}</div></div>
     <div class="section">${drive}</div>
     <p class="tiny muted">Monthly files use your company’s “Time &amp; Overtime Sheet” template, named with each person’s initials. They’re made fresh each time you download, so they always include the latest changes.</p>`;
 }
