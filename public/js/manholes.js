@@ -66,6 +66,13 @@ function esriStyle(layer) {
   return { version: 8, sources, layers };
 }
 let gmapsP = null;
+// Google shows a watermarked "for development purposes only" map when billing is off or the key is wrong: switch to the free map instead.
+function mhGoogleBroken(why) {
+  if (window.__cdGmFailed) return; window.__cdGmFailed = true;
+  toast(`${why} — showing the free satellite map instead`, true);
+  if (MH.id && MH.eng && MH.eng.kind === 'google') VIEWS.mhmap.mount(MH.id);
+}
+(() => { const ce = console.error; console.error = function (...a) { try { const t = String(a[0] || ''); if (/Google Maps JavaScript API error: (\w+)/.test(t)) mhGoogleBroken(/Billing/.test(t) ? 'Google Maps billing isn’t switched on' : 'Google Maps rejected the key'); } catch (_) {} return ce.apply(this, a); }; })();
 function loadGoogleMaps(key) {
   if (window.google && window.google.maps && window.google.maps.Map) return Promise.resolve();
   return (gmapsP = gmapsP || new Promise((resolve, reject) => {
@@ -73,7 +80,7 @@ function loadGoogleMaps(key) {
     const s = document.createElement('script'); s.async = true; s.onerror = () => { gmapsP = null; reject(new Error('Google Maps didn’t load')); };
     s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly&libraries=geometry&callback=__cdGmaps&loading=async`;
     document.head.appendChild(s);
-    window.gm_authFailure = () => { toast('Google Maps rejected the key — showing the free satellite map instead', true); window.__cdGmFailed = true; };
+    window.gm_authFailure = () => mhGoogleBroken('Google Maps rejected the key');
   }));
 }
 async function mhEngine(el, view) {
