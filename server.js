@@ -2080,7 +2080,14 @@ async function timeApi(req, res, url, x, sub) {
       r.finishedAt = now();
       const run = runningFor(d, user.id, cid);
       if (run) { const before = Object.assign({}, run); run.end = Math.max(run.start + 1000, Math.floor(now() / 1000) * 1000); run.updatedAt = now(); putEntry(c, run, before); stopped = run; }
-    } else if (b.finished === false) r.finishedAt = 0;
+      r.stoppedId = run ? run.id : ''; r.stoppedEnd = run ? run.end : 0;
+    } else if (b.finished === false) {
+      // Undo "finish for today": reopen the day, and restart the timer it stopped (if nothing has changed since).
+      r.finishedAt = 0;
+      const e = r.stoppedId && d.entries[r.stoppedId];
+      if (e && e.end === r.stoppedEnd && e.userId === user.id && !runningFor(d, user.id, cid)) { const before = Object.assign({}, e); e.end = 0; e.updatedAt = now(); putEntry(c, e, before); stopped = e; }
+      r.stoppedId = ''; r.stoppedEnd = 0;
+    }
     r.updatedAt = now(); touchDay(cid, r); upsert(cid, 'days', r); syncSoon(c, user.id, [m[1].slice(0, 7)]);
     return json(res, 200, { item: r, stopped });
   }

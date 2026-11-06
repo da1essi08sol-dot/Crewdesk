@@ -236,7 +236,7 @@ VIEWS.home = {
           ${planToday ? `<div class="small muted" style="margin-top:8px">${icSize('flag', 13, 'vertical-align:-2px')} Planned for you today: ${plural(todays.length, 'task')}, ${esc(fmtDur(planToday))} — ${esc(fmtDur(todays.reduce((a, t) => a + taskMins(t.id), 0)))} done so far</div>` : ''}</div>
         <div><div class="section-head"><h2>Today’s log</h2><button class="btn sm" data-act="add-time" data-date="${today}">${ic('plus')}<span>Add time</span></button></div>
           <div class="card flush">${list.length ? list.map((e) => logRow(e)).join('') : `<div class="empty small">${ic('clock')}<div>Nothing yet today. Everything you start and stop shows here, ready for your timesheet.</div></div>`}</div></div>
-        <div class="finish-wrap">${rec && rec.finishedAt ? `<div class="card finished row">${icSize('check', 20, 'color:var(--ok);flex:none')}<div class="grow"><b>Day finished at ${clock(rec.finishedAt)}</b><div class="small muted">${esc(fmtDur(st.paid))} logged${st.ot > 0 ? ` · ${fmtSigned(st.ot)} overtime` : ''}</div></div><button class="btn sm" data-act="finish-day">${rec.well || rec.wrong || rec.improve ? 'Edit notes' : 'Add notes'}</button></div>`
+        <div class="finish-wrap">${rec && rec.finishedAt ? `<div class="card finished row">${icSize('check', 20, 'color:var(--ok);flex:none')}<div class="grow"><b>Day finished at ${clock(rec.finishedAt)}</b><div class="small muted">${esc(fmtDur(st.paid))} logged${st.ot > 0 ? ` · ${fmtSigned(st.ot)} overtime` : ''}</div></div><div class="row tight"><button class="btn sm ghost" data-act="reopen-day">${ic('restore')}<span>Undo</span></button><button class="btn sm" data-act="finish-day">${rec.well || rec.wrong || rec.improve ? 'Edit notes' : 'Add notes'}</button></div></div>`
           : `<button class="btn block xl finish" data-act="finish-day">${ic('moon')}<span>Finish for today</span></button>`}</div>
       </div>
       <div class="stack">
@@ -341,12 +341,17 @@ A['finish-day'] = () => {
       <div class="sheet-foot"><button type="button" class="btn" data-close>Not yet</button><button class="btn primary">${rec.finishedAt ? 'Save notes' : `${ic('moon')}<span>Finish my day</span>`}</button></div>
     </form>`);
 };
+async function reopenDay() {
+  try { const r = await capi('PUT', `/days/${todayStr()}`, { finished: false }); S.days[r.item.id] = r.item; if (r.stopped) S.entries[r.stopped.id] = r.stopped;
+    syncTimerChrome(); scheduleRender(); toast(r.stopped && !r.stopped.end ? 'Day reopened — your timer is running again' : 'Day reopened'); } catch (e) { toast(e.message, true); }
+}
+A['reopen-day'] = async () => { if (await confirmBox('Reopen today?', 'Your day goes back to not finished. If finishing stopped your timer, it starts running again from where it was.', 'Reopen day', false)) reopenDay(); };
 F['finish-day'] = async (f, d, close) => {
   const today = todayStr(); const rec = dayRec(S.user.id, today) || {};
   const r = await capi('PUT', `/days/${today}`, { well: d.well, wrong: d.wrong, improve: d.improve, finished: rec.finishedAt ? undefined : true });
   S.days[r.item.id] = r.item; if (r.stopped) S.entries[r.stopped.id] = r.stopped;
   close(); syncTimerChrome(); scheduleRender();
-  if (!rec.finishedAt) { const st = dayStats(entriesOn(S.user.id, today)); toast(`Day finished — ${fmtDur(st.paid)} logged. Nice work!`); }
+  if (!rec.finishedAt) { const st = dayStats(entriesOn(S.user.id, today)); toast(`Day finished — ${fmtDur(st.paid)} logged. Nice work!`, false, '', { label: 'Undo', fn: () => reopenDay() }); }
   else toast('Notes saved');
 };
 
