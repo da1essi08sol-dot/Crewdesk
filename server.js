@@ -1755,7 +1755,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
 
   // --- time: entries, days, timesheets (see timeApi)
   if (/^\/mh\//.test(sub)) return manholeApi(req, res, url, x, sub);
-  if (/^\/(entries|days|timesheet|timesheets|gdrive|stats)(\/|$)|^\/projects\/[A-Za-z0-9]+\/(timesheet|pdf)$/.test(sub)) return timeApi(req, res, url, x, sub);
+  if (/^\/(entries|days|timesheet|timesheets|gdrive|stats)(\/|$)|^\/projects\/[A-Za-z0-9]+\/(timesheet|pdf|handover)$/.test(sub)) return timeApi(req, res, url, x, sub);
 
   // --- generic collections
   if ((m = /^\/(projects|tasks|clients|pings|events|finance|teams|suggestions)(?:\/([A-Za-z0-9]+))?$/.exec(sub))) {
@@ -1959,7 +1959,7 @@ function mhSnap(r, p) { if (p) { r.type = { name: p.name, color: p.color, icon: 
 const MH_LABEL = { lat: 'position', lng: 'position', presetId: 'type', ref: 'reference', description: 'description', status: 'status' };
 function mhApplyPatch(x, mp, r, b) {
   const changed = [];
-  const set = (k, v) => { const cur = k.startsWith('survey.') ? r.survey[k.slice(7)] : r[k]; if (JSON.stringify(cur) === JSON.stringify(v)) return; if (k.startsWith('survey.')) r.survey[k.slice(7)] = v; else r[k] = v; r.fv[k] = r.v + 1; changed.push(k); };
+  const set = (k, v) => { const cur = k.startsWith('survey.') ? r.survey[k.slice(7)] : r[k]; if (JSON.stringify(cur) === JSON.stringify(v)) return; if (k.startsWith('survey.')) r.survey[k.slice(7)] = v; else r[k] = v; r.fv[k] = r.v + 1; r.fb = r.fb || {}; r.fb[k] = x.user.id; changed.push(k); };
   if ('ref' in b) { const v = str(b.ref, 20).toUpperCase() || bad('Give the manhole a reference'); if (Object.values(x.d.manholes).some((o) => o.mapId === mp.id && o.id !== r.id && !o.deleted && o.ref === v)) bad(`${v} is already used on this map`); set('ref', v); }
   if ('presetId' in b) { const p = x.d.mhPresets[b.presetId]; if (!p) bad('That manhole type no longer exists'); set('presetId', p.id); mhSnap(r, p); }
   if ('lat' in b) set('lat', mhLat(b.lat));
@@ -2080,7 +2080,7 @@ async function manholeApi(req, res, url, x, sub) {
       const b = await readBody(req); const base = Number(b.base) || 0;
       // Someone else changed one of these same fields since you opened it: stop and show both.
       const sent = []; for (const k of Object.keys(b)) if (k !== 'base' && k !== 'survey') sent.push(k); if (b.survey) for (const k of Object.keys(b.survey)) sent.push('survey.' + k);
-      const clash = base ? sent.filter((k) => (r.fv[k] || 0) > base) : [];
+      const clash = base ? sent.filter((k) => (r.fv[k] || 0) > base && (r.fb || {})[k] !== user.id) : []; // your own earlier saves never count as a clash
       if (clash.length && !b.force) throw new HttpError(409, 'Someone else changed this manhole while you were editing it. Check their changes, then save again.', { conflict: clash, item: r });
       const before = { lat: r.lat, lng: r.lng, status: r.status, type: r.type && r.type.name, ref: r.ref };
       const changed = mhApplyPatch(x, mp, r, b);
@@ -2195,22 +2195,21 @@ function mhFit(list, mp, W, H) {
 async function mhStaticMap(list, mp) {
   if (typeof fetch !== 'function') return null;
   const { c, z } = mhFit(list, mp, 640, 640);
-  if (!STATIC_KEY || overFree('gStatic')) { // free Esri imagery for the same area
-    try { const R = 6378137, x = c.lng * Math.PI / 180 * R, y = Math.log(Math.tan(Math.PI / 4 + c.lat * Math.PI / 360)) * R, h = 320 * 156543.03392804097 / 2 ** z;
-      const r = await fetch(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${x - h},${y - h},${x + h},${y + h}&bboxSR=3857&imageSR=3857&size=1280,1280&format=jpg&f=image`);
-      if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null; return { data: Buffer.from(await r.arrayBuffer()), w: 1280, h: 1280, c, z }; } catch (_) { return null; }
+  const jpeg = async (u) => { try { const r = await fetch(u); if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null; return { data: Buffer.from(await r.arrayBuffer()), w: 1280, h: 1280, c, z }; } catch (_) { return null; } };
+  let img = null;
+  if (STATIC_KEY && !overFree('gStatic')) { countUse('gStatic'); img = await jpeg(`https://maps.googleapis.com/maps/api/staticmap?center=${c.lat},${c.lng}&zoom=${z}&size=640x640&scale=2&maptype=satellite&format=jpg&key=${encodeURIComponent(STATIC_KEY)}`); if (img) img.src = 'Google'; }
+  if (!img) { // free Esri imagery of exactly the same square (Web Mercator)
+    const C = merc(c.lat, c.lng, z), w = 40075016.68557849 / (256 * 2 ** z), x = C.x * w - 20037508.342789244, y = 20037508.342789244 - C.y * w, h = 320 * w;
+    img = await jpeg(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${x - h},${y - h},${x + h},${y + h}&bboxSR=3857&imageSR=3857&size=1280,1280&format=jpg&f=image`); if (img) img.src = 'Esri, Maxar, Earthstar Geographics';
   }
-  countUse('gStatic');
-  const u = `https://maps.googleapis.com/maps/api/staticmap?center=${c.lat},${c.lng}&zoom=${z}&size=640x640&scale=2&maptype=satellite&format=jpg&key=${encodeURIComponent(STATIC_KEY)}`;
-  const r = await fetch(u); if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null;
-  return { data: Buffer.from(await r.arrayBuffer()), w: 1280, h: 1280, c, z };
+  return img;
 }
+const unmerc = (x, y, z) => { const n = 256 * 2 ** z; return { lng: (x / n) * 360 - 180, lat: (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n))) * 180) / Math.PI }; };
 function mhDrawMap(doc, d, list, mp, bg, top, size) {
   const x0 = doc.m + (doc.inner - size) / 2, y0 = top - size;
-  let proj; let zUsed;
-  if (bg) { const C = merc(bg.c.lat, bg.c.lng, bg.z); zUsed = bg.z; proj = (r) => { const p = merc(r.lat, r.lng, bg.z); return { x: x0 + size / 2 + ((p.x - C.x) / 640) * size, y: y0 + size / 2 - ((p.y - C.y) / 640) * size }; }; doc.image(bg.data, bg.w, bg.h, x0, y0, size, size); }
-  else { const { c, z } = mhFit(list, mp, size, size); zUsed = z; const C = merc(c.lat, c.lng, z); doc.rect(x0, y0, size, size, '#eef3ef');
-    for (let i = 1; i < 6; i++) { doc.line(x0 + (size * i) / 6, y0, x0 + (size * i) / 6, y0 + size, '#dbe4dd', 0.4); doc.line(x0, y0 + (size * i) / 6, x0 + size, y0 + (size * i) / 6, '#dbe4dd', 0.4); }
+  let proj; let zUsed; let bgC;
+  if (bg) { const C = merc(bg.c.lat, bg.c.lng, bg.z); zUsed = bg.z; bgC = { C, k: 640 / size }; proj = (r) => { const p = merc(r.lat, r.lng, bg.z); return { x: x0 + size / 2 + ((p.x - C.x) / 640) * size, y: y0 + size / 2 - ((p.y - C.y) / 640) * size }; }; doc.image(bg.data, bg.w, bg.h, x0, y0, size, size); }
+  else { const { c, z } = mhFit(list, mp, size, size); zUsed = z; const C = merc(c.lat, c.lng, z); bgC = { C, k: 1 }; doc.rect(x0, y0, size, size, '#eef3ef');
     proj = (r) => { const p = merc(r.lat, r.lng, z); return { x: x0 + size / 2 + (p.x - C.x), y: y0 + size / 2 - (p.y - C.y) }; }; }
   for (const r of list) {
     const p = proj(r); if (p.x < x0 || p.x > x0 + size || p.y < y0 || p.y > y0 + size) continue;
@@ -2219,9 +2218,21 @@ function mhDrawMap(doc, d, list, mp, bg, top, size) {
   }
   // north arrow and scale bar
   doc.rect(x0 + size - 30, y0 + size - 40, 22, 32, '#ffffff'); doc.text('N', x0 + size - 22.5, y0 + size - 20, 10, { bold: true }); doc.line(x0 + size - 19, y0 + size - 35, x0 + size - 19, y0 + size - 24, '#1d2421', 1.4);
-  const mPerPt = (156543.03392 * Math.cos((((list[0] || mp.center).lat) * Math.PI) / 180)) / 2 ** zUsed * (bg ? 640 / size : 1);
-  const nice = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000].find((v) => v / mPerPt > 50) || 5000; const len = nice / mPerPt;
-  doc.rect(x0 + 8, y0 + 8, len + 16, 22, '#ffffff'); doc.rect(x0 + 16, y0 + 14, len, 3, '#1d2421'); doc.text(nice >= 1000 ? nice / 1000 + ' km' : nice + ' m', x0 + 16, y0 + 20, 7.5, { bold: true });
+  // Metres per PDF point at the map centre (Web Mercator), so the grid, scale bar and coordinates all agree.
+  const cLat = unmerc(bgC.C.x, bgC.C.y, zUsed).lat;
+  const mPerPt = (40075016.68557849 * Math.cos((cLat * Math.PI) / 180)) / (256 * 2 ** zUsed) * bgC.k;
+  const nice = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000].find((v) => v / mPerPt > 60) || 5000; const len = nice / mPerPt;
+  // grid: one line every `nice` metres, through the centre
+  const gc = bg ? '#ffffff' : '#c9d6cc', gw = bg ? 0.35 : 0.5;
+  for (let i = -Math.ceil(size / 2 / len); i <= Math.ceil(size / 2 / len); i++) { const o = size / 2 + i * len; if (o <= 0 || o >= size) continue; doc.line(x0 + o, y0, x0 + o, y0 + size, gc, gw); doc.line(x0, y0 + o, x0 + size, y0 + o, gc, gw); }
+  doc.rect(x0 + 8, y0 + 8, len + 16, 26, '#ffffff'); doc.rect(x0 + 16, y0 + 18, len / 2, 3, '#1d2421'); doc.rect(x0 + 16 + len / 2, y0 + 18, len / 2, 3, '#8a948f');
+  doc.text('0', x0 + 14, y0 + 24, 6.5); doc.text(nice >= 1000 ? nice / 1000 + ' km' : nice + ' m', x0 + 12 + len, y0 + 24, 6.5, { bold: true }); doc.text(`Grid ${nice >= 1000 ? nice / 1000 + ' km' : nice + ' m'}`, x0 + 16, y0 + 11, 6, { color: '#55605a' });
+  // corner coordinates (WGS84)
+  const corner = (px, py) => unmerc(bgC.C.x + (px - size / 2) * bgC.k, bgC.C.y + (py - size / 2) * bgC.k, zUsed);
+  const tl = corner(0, 0), br = corner(size, size); const f = (v) => v.toFixed(5);
+  doc.text(`${f(tl.lat)}, ${f(tl.lng)}`, x0, y0 + size + 3, 6.5, { color: '#55605a' });
+  const brT = `${f(br.lat)}, ${f(br.lng)}`; doc.text(brT, x0 + size - doc.textWidth(brT, 6.5), y0 - 8, 6.5, { color: '#55605a' });
+  if (bg && bg.src) { const t = 'Imagery ' + bg.src; doc.text(t, x0 + size - doc.textWidth(t, 6) - 4, y0 + 4, 6, { color: '#ffffff' }); }
   return y0;
 }
 function mhPdf(x, mp, p, list, fields, what, bg) {
@@ -2658,6 +2669,30 @@ async function timeApi(req, res, url, x, sub) {
     }
     return sendDownload(res, `Timesheets_${ts.MONTHS[mo - 1]}_${y}.zip`, writeZip(files), 'application/zip');
   }
+  // Client handover: everything in a project in one tidy zip — report, photos, files and manhole maps.
+  if ((m = /^\/projects\/([A-Za-z0-9]+)\/handover$/.exec(sub)) && M === 'GET') {
+    const p = projectOf(x, m[1]); if (!p || !canSeeProject(x, p)) notFound('Project not found');
+    const base = ts.safeName(`${p.ref ? p.ref + ' ' : ''}${p.name}`); const out = []; const used = new Set();
+    const nm = (path0) => { let n = path0, i = 2; while (used.has(n)) { n = path0.replace(/(\.[^./]+)?$/, ` (${i++})$1`); } used.add(n); return n; };
+    const clean = (t) => String(t || '').replace(/[\\/:*?"<>|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const grab = async (url) => { if (typeof url !== 'string' || !url.startsWith('/uploads/')) return null; try { return await storage.getFile(url.slice(9)); } catch (_) { return null; } };
+    const ext = (url, f) => (String(url).match(/\.(\w+)$/) || [, (f && /png/.test(f.type) ? 'png' : 'jpg')])[1];
+    out.push({ name: nm(`${base} project report.pdf`), data: projectPdf(x, p) });
+    const photos = Object.values(d.photos).filter((ph) => ph.projectId === p.id).sort((a, b) => (a.takenAt || a.createdAt) - (b.takenAt || b.createdAt));
+    let n = 0; for (const ph of photos) { const f = await grab(ph.url); if (f) out.push({ name: nm(`Photos/${String(++n).padStart(3, '0')}${ph.caption ? ' ' + clean(ph.caption) : ''}.${ext(ph.url, f)}`), data: f.data }); }
+    for (const f0 of Object.values(d.files)) { if (!f0.scope || f0.scope.ch !== 'project:' + p.id) continue; const f = await grab(f0.url); if (f) out.push({ name: nm(`Files/${clean(f0.name) || 'file'}`), data: f.data }); }
+    for (const mp of Object.values(d.mhMaps).filter((q) => q.projectId === p.id)) {
+      const list = Object.values(d.manholes).filter((r) => r.mapId === mp.id && !r.deleted).sort((a, b) => a.ref.localeCompare(b.ref, 'en', { numeric: true }));
+      const dir = `Manhole maps/${clean(mp.name) || 'Map'}`;
+      await mhLoadPhotos(list); const bg = await mhStaticMap(list, mp).catch(() => null);
+      out.push({ name: nm(`${dir}/${clean(mp.name)} manhole report.pdf`), data: mhPdf(x, mp, p, list, [], 'report', bg) });
+      out.push({ name: nm(`${dir}/${clean(mp.name)} labelled map.pdf`), data: mhPdf(x, mp, p, list, [], 'map', bg) });
+      out.push({ name: nm(`${dir}/${clean(mp.name)} manhole register.xlsx`), data: mhRegister(x, mp, p, list, MH_FIELDS.map(([k]) => k)) });
+      for (const r of list) { let i = 0; for (const ph of r.photos || []) { const f = await grab(ph.url); if (f) out.push({ name: nm(`${dir}/Photos/${clean(r.ref)} ${++i}${ph.caption ? ' ' + clean(ph.caption) : ''}.${ext(ph.url, f)}`), data: f.data }); } }
+    }
+    mhPhotoCache.clear();
+    return sendDownload(res, `${base} - client handover.zip`, writeZip(out.map((e) => ({ name: `${base}/${e.name}`, data: e.data }))), 'application/zip');
+  }
   // The whole project on paper: details, plan vs actual, tasks, people, time log and chat.
   if ((m = /^\/projects\/([A-Za-z0-9]+)\/pdf$/.exec(sub)) && M === 'GET') {
     const p = projectOf(x, m[1]); if (!p || !canSeeProject(x, p)) notFound('Project not found');
@@ -2791,7 +2826,7 @@ const SECURITY_HEADERS = {
   // Manhole maps add Google Maps (when a key is set), Esri satellite imagery and OpenStreetMap place search.
   'Content-Security-Policy': "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
     "img-src 'self' data: blob: https://tiles.openfreemap.org https://tile.openstreetmap.org https://*.googleapis.com https://*.gstatic.com https://*.google.com https://server.arcgisonline.com https://services.arcgisonline.com; " +
-    "font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://tiles.openfreemap.org https://*.googleapis.com https://maps.gstatic.com https://server.arcgisonline.com https://services.arcgisonline.com https://nominatim.openstreetmap.org; worker-src 'self' blob:; child-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://tiles.openfreemap.org https://*.googleapis.com https://maps.gstatic.com https://server.arcgisonline.com https://services.arcgisonline.com https://nominatim.openstreetmap.org https://api.postcodes.io https://photon.komoot.io; worker-src 'self' blob:; child-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   'X-Content-Type-Options': 'nosniff',
   // Sends only this site's address (never the page path) to map servers, which their usage policy requires.
   'Referrer-Policy': 'strict-origin-when-cross-origin',

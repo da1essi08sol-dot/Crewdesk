@@ -246,6 +246,7 @@ A['project-menu'] = (el) => {
     ${canEdit ? `<button class="mi" data-act="project-here" data-id="${p.id}">${ic('locate')}${p.lat != null ? 'Re-pin the site here' : 'Pin the site at my location'}</button>` : ''}
     ${canEdit && p.archived ? `<button class="mi" data-act="archive-folder" data-id="${p.id}">${ic('folder')}Move to folder…</button>` : ''}
     ${isAdmin() && p.chat ? `<button class="mi danger" data-act="chat-clear" data-ch="project:${p.id}">${ic('trash')}Clear project chat history</button>` : ''}
+    <a class="mi" href="/api/c/${S.cid}/projects/${p.id}/handover" download>${ic('download')}Client handover (zip: report, photos, files, manholes)</a>
     <a class="mi" href="/api/c/${S.cid}/projects/${p.id}/pdf" download="${esc(projFile(p).replace(/\.xlsx$/i, '') + '.pdf')}">${ic('download')}Download project report (PDF)</a>
     <a class="mi" href="/api/c/${S.cid}/projects/${p.id}/timesheet" download="${esc(projFile(p))}">${ic('download')}Download project timesheet</a>
     <button class="mi" data-act="new-event" data-project="${p.id}">${ic('cal')}Add to calendar</button>

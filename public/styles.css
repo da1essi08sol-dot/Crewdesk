@@ -1621,7 +1621,7 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .mh.editing #mh-map { box-shadow: inset 0 0 0 3px #f59f00; }
 .mh-tools { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 4; display: grid; gap: 8px; pointer-events: none; max-width: 560px; }
 .mh-tools > * { pointer-events: auto; }
-.mh-search { position: relative; display: flex; align-items: center; background: var(--surface); border-radius: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+.mh-search { position: relative; z-index: 3; display: flex; align-items: center; background: var(--surface); border-radius: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
 .mh-search > span { padding: 0 6px 0 12px; color: var(--muted); display: flex; }
 .mh-search input { flex: 1; min-width: 0; border: 0; background: none; height: 44px; font: 15px var(--font); color: var(--ink); outline: none; }
 .mh-results { position: absolute; left: 0; right: 0; top: 50px; background: var(--surface); border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.3); overflow: hidden; max-height: 50vh; overflow-y: auto; }
@@ -1648,18 +1648,20 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .mh-dotic { width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--c); color: #fff; box-shadow: inset 0 -2px 0 rgba(0,0,0,.15); }
 .mh-dotic.sm { width: 22px; height: 22px; }
 /* markers */
-.mhm { position: relative; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: var(--c); color: #fff; border: 2.5px solid #fff; box-shadow: 0 0 0 2.5px var(--s), 0 3px 10px rgba(0,0,0,.45); display: grid; place-items: center; cursor: pointer; transition: transform .3s var(--spring), box-shadow .2s; touch-action: none; }
+.mhm { position: relative; box-sizing: border-box; width: 32px; height: 32px; margin: -16px 0 0 -16px; border-radius: 50%; background: var(--c); color: #fff; border: 2.5px solid #fff; box-shadow: 0 0 0 2.5px var(--s), 0 3px 10px rgba(0,0,0,.45); display: grid; place-items: center; cursor: pointer; transition: scale .3s var(--spring), box-shadow .2s; touch-action: none; }
+.mhm-ic { display: grid; place-items: center; width: 100%; height: 100%; line-height: 0; pointer-events: none; }
+.mhm-ic svg { display: block; width: 19px; height: 19px; filter: drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
 .maplibregl-marker .mhm { margin: 0; }
-.mhm-ref { position: absolute; top: 31px; left: 50%; transform: translateX(-50%); padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.95); color: #1d2421; font: 800 10.5px var(--font); white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.3); pointer-events: none; }
+.mhm-ref { position: absolute; top: 32px; left: 50%; transform: translateX(-50%); padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.95); color: #1d2421; font: 800 10.5px var(--font); white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.3); pointer-events: none; }
 .mh.far .mhm-ref { display: none; }
 .mhm-tick { position: absolute; top: -6px; right: -7px; width: 15px; height: 15px; border-radius: 50%; background: #30a46c; color: #fff; display: grid; place-items: center; border: 1.5px solid #fff; }
-.mhm:hover { transform: scale(1.12); }
-.mhm.sel { transform: scale(1.3); z-index: 10; box-shadow: 0 0 0 3px var(--s), 0 0 0 9px color-mix(in srgb, var(--c) 35%, transparent), 0 6px 16px rgba(0,0,0,.5); }
+.mhm:hover { filter: brightness(1.08); }
+.mhm.sel { scale: 1.3; z-index: 10; box-shadow: 0 0 0 3px var(--s), 0 0 0 9px color-mix(in srgb, var(--c) 35%, transparent), 0 6px 16px rgba(0,0,0,.5); }
 .mhm.pop { animation: mh-pop .5s var(--bounce); }
-@keyframes mh-pop { 0% { transform: scale(1); } 40% { transform: scale(1.5); } 100% { transform: scale(1.3); } }
+@keyframes mh-pop { 0% { scale: 1; } 40% { scale: 1.5; } 100% { scale: 1.3; } }
 .mhm.drop-in { animation: mh-drop .55s var(--bounce); }
-@keyframes mh-drop { from { transform: translateY(-40px) scale(.6); opacity: 0; } }
-.mh.editing .mhm { cursor: grab; } .mhm.dragging { cursor: grabbing; transform: scale(1.35); }
+@keyframes mh-drop { from { translate: 0 -40px; scale: .6; opacity: 0; } }
+.mh.editing .mhm { cursor: grab; } .mhm.dragging { cursor: grabbing; scale: 1.35; }
 .mh-me { width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: #2f7de1; border: 3px solid #fff; box-shadow: 0 0 0 8px rgba(47,125,225,.25), 0 1px 4px rgba(0,0,0,.4); }
 .maplibregl-marker .mh-me { margin: 0; }
 /* record panel: right side on big screens, bottom sheet on phones */
@@ -1745,3 +1747,8 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .tut-pvid { width: 100%; max-width: 420px; max-height: calc(100dvh - 150px); aspect-ratio: 390 / 664; border-radius: 16px; background: #000; }
 .tut-pvid.wide { max-width: 1000px; aspect-ratio: 16 / 9; }
 .tut-player .tut-written { width: 100%; max-width: 1000px; }
+.mh-dotic svg, .mh-dotic > * { display: block; margin: auto; }
+
+.mh-chip.on { background: var(--accent, #1a9d6b); color: #fff; }
+.mh-modebar { transition: opacity .4s, visibility .4s; } .mh-modebar.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+@media (max-width: 560px) { .mh-cl { display: none; } .mh-toolrow { gap: 5px; } .mh-chip { padding: 0 11px; } .mh-toolrow .mh-chip { flex: 0 1 auto; } }

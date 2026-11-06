@@ -77,7 +77,7 @@ function loadGoogleMaps(key) {
   }));
 }
 async function mhEngine(el, view) {
-  if (S.mapsKey && !window.__cdGmFailed) { try { const ok = await capi('POST', '/usage/gmaps', { kind: 'map' }).catch(() => ({ ok: true })); if (!ok.ok) throw new Error('limit'); await loadGoogleMaps(S.mapsKey); return mhGoogle(el, view); } catch (_) { /* fall back */ } }
+  if (S.mapsKey && !window.__cdGmFailed && !MH.free) { try { const ok = await capi('POST', '/usage/gmaps', { kind: 'map' }).catch(() => ({ ok: true })); if (!ok.ok) throw new Error('limit'); await loadGoogleMaps(S.mapsKey); return mhGoogle(el, view); } catch (_) { /* fall back */ } }
   if (!window.maplibregl) { loadCss('/vendor/maplibre/maplibre-gl.css'); await loadScript('/vendor/maplibre/maplibre-gl-csp.js'); maplibregl.setWorkerUrl('/vendor/maplibre/maplibre-gl-csp-worker.js'); }
   return mhLibre(el, view);
 }
@@ -85,11 +85,27 @@ function mhLibre(el, view) {
   let layer = view.layer || 'satellite';
   const m = new maplibregl.Map({ container: el, style: esriStyle(layer), center: [view.center.lng, view.center.lat], zoom: view.zoom, maxZoom: 22, attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false });
   m.touchZoomRotate.disableRotation();
-  m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+  m.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'bottom-right');
+  // 3D buildings: free OpenStreetMap building heights (OpenFreeMap), drawn over the satellite picture.
+  let three = false;
+  const add3d = () => {
+    try {
+      if (!m.getSource('ofm')) m.addSource('ofm', { type: 'vector', url: 'https://tiles.openfreemap.org/planet' });
+      if (!m.getLayer('b3d')) m.addLayer({ id: 'b3d', type: 'fill-extrusion', source: 'ofm', 'source-layer': 'building', minzoom: 14,
+        paint: { 'fill-extrusion-color': ['interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 6], 0, '#e9e4d8', 40, '#cfc6b3'],
+          'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 6], 'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0], 'fill-extrusion-opacity': 0.82 } });
+    } catch (e) { console.warn('3D buildings', e); }
+  };
   const markers = new Map();
   return {
     kind: 'free',
-    setLayer(l) { layer = l; m.setStyle(esriStyle(l)); },
+    setLayer(l) { layer = l; m.setStyle(esriStyle(l)); if (three) m.once('style.load', add3d); },
+    set3d(on) {
+      three = !!on;
+      if (three) { if (m.isStyleLoaded()) add3d(); else m.once('load', add3d); m.dragRotate.enable(); m.touchZoomRotate.enableRotation(); m.easeTo({ pitch: 60, zoom: Math.max(m.getZoom(), 16.5), duration: 900 }); }
+      else { try { if (m.getLayer('b3d')) m.removeLayer('b3d'); } catch (_) {} m.easeTo({ pitch: 0, bearing: 0, duration: 700 }); m.dragRotate.disable(); m.touchZoomRotate.disableRotation(); }
+    },
+    is3d: () => three,
     getView: () => ({ center: { lat: m.getCenter().lat, lng: m.getCenter().lng }, zoom: m.getZoom(), layer }),
     onViewChange(cb) { m.on('moveend', () => cb()); },
     onClick(cb) { m.on('click', (e) => cb({ lat: e.lngLat.lat, lng: e.lngLat.lng })); },
@@ -152,10 +168,29 @@ function mhGoogle(el, view) {
     attribution: 'Google',
   };
 }
-async function mhSearchPlaces(q, eng) {
+const MH_PC = /^\s*([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})?\s*$/i;
+async function mhSearchPlaces(q, eng, typing) {
   const ll = /^\s*(-?\d{1,2}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/.exec(q);
   if (ll) return [{ name: `${ll[1]}, ${ll[2]}`, lat: Number(ll[1]), lng: Number(ll[2]), coords: true }];
-  if (eng && eng.geocode) { const r = await eng.geocode(q); if (r.length) return r; }
+  const out = [];
+  const pc = MH_PC.exec(q); // UK postcodes, full or just the start (free postcodes.io)
+  if (pc) {
+    try {
+      if (pc[2]) { const r = await (await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(pc[1] + pc[2])}`)).json(); if (r.result) out.push({ name: `${r.result.postcode} · ${[r.result.admin_ward, r.result.admin_district].filter(Boolean).join(', ')}`, lat: r.result.latitude, lng: r.result.longitude, pc: true }); }
+      else { const r = await (await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(pc[1])}/autocomplete?limit=6`)).json(); for (const p of (r.result || []).slice(0, 5)) out.push({ name: p, postcode: p, pc: true }); }
+    } catch (_) {}
+    if (out.length) return out;
+  }
+  // Google only on Enter (each search counts against the free allowance); suggestions while typing come from free Photon.
+  if (!typing && eng && eng.geocode) { const r = await eng.geocode(q); if (r.length) return r; }
+  try {
+    const v = eng ? eng.getView().center : null;
+    const r = await (await fetch(`https://photon.komoot.io/api/?limit=6&lang=en&bbox=-8.8,49.8,2.0,61&q=${encodeURIComponent(q)}${v ? `&lat=${v.lat}&lon=${v.lng}` : ''}`)).json();
+    for (const f of r.features || []) { const p = f.properties || {}; const street = [p.housenumber, p.street].filter(Boolean).join(' ');
+      out.push({ name: [p.name && p.name !== street ? p.name : '', street, p.city || p.town || p.village || p.county, p.postcode].filter(Boolean).join(', '), lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] }); }
+    if (out.length) return out;
+  } catch (_) {}
+  if (typing) return out;
   try {
     const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=gb&q=${encodeURIComponent(q)}`, { headers: { 'Accept-Language': 'en-GB' } });
     return (await r.json()).map((x) => ({ name: x.display_name, lat: Number(x.lat), lng: Number(x.lon) }));
@@ -165,7 +200,7 @@ async function mhSearchPlaces(q, eng) {
 // ---- page state
 const MH = { id: null, eng: null, marks: new Map(), mode: 'view', sel: null, adding: false, preset: store.get('cd_mhPreset') || '', filter: { status: new Set(), types: new Set() }, me: null, meMk: null, saveT: 0, pend: {} };
 function mhRoot() { let r = $('#mh-root'); if (!r) { r = document.createElement('div'); r.id = 'mh-root'; document.body.appendChild(r); } return r; }
-function mhClose() { const r = $('#mh-root'); if (r) { try { MH.eng && MH.eng.destroy(); } catch (_) {} r.remove(); } MH.eng = null; MH.marks.clear(); MH.id = null; MH.sel = null; MH.adding = false; document.documentElement.classList.remove('mh-on'); if (MH.watch != null) { navigator.geolocation.clearWatch(MH.watch); MH.watch = null; } }
+function mhClose() { MH.hintMode = null; const r = $("#mh-root"); if (r) { try { MH.eng && MH.eng.destroy(); } catch (_) {} r.remove(); } MH.eng = null; MH.marks.clear(); MH.id = null; MH.sel = null; MH.adding = false; document.documentElement.classList.remove('mh-on'); if (MH.watch != null) { navigator.geolocation.clearWatch(MH.watch); MH.watch = null; } }
 
 VIEWS.mhmap = {
   manual: true,
@@ -191,9 +226,10 @@ VIEWS.mhmap = {
           <div class="mh-tools">
             <div class="mh-search"><span>${icSize('search', 16)}</span><input type="search" placeholder="Search address, place or lat, lng" data-mh-search autocomplete="off" enterkeyhint="search" aria-label="Search the map"><div class="mh-results" hidden></div></div>
             <div class="mh-toolrow">
-              <button class="mh-chip" data-act="mh-coords">${icSize('pin', 15)}Coordinates</button>
+              <button class="mh-chip" data-act="mh-coords" aria-label="Coordinates">${icSize('pin', 15)}<span class="mh-cl">Coordinates</span></button>
               <button class="mh-chip" data-act="mh-layers">${icSize('layers', 15)}<span data-layer-label></span></button>
-              <button class="mh-chip" data-act="mh-filter">${icSize('filter', 15)}Filter<i class="mh-fdot" hidden></i></button>
+              <button class="mh-chip${MH.want3d ? ' on' : ''}" data-act="mh-3d" aria-pressed="${!!MH.want3d}">${icSize('layers', 15)}3D</button>
+              <button class="mh-chip" data-act="mh-filter" aria-label="Filter">${icSize('filter', 15)}<span class="mh-cl">Filter</span><i class="mh-fdot" hidden></i></button>
               <button class="mh-chip" data-act="mh-locate" aria-label="Show my location">${icSize('locate', 15)}Me</button>
             </div>
           </div>
@@ -215,6 +251,7 @@ VIEWS.mhmap = {
     if (MH.id !== id) return;
     try { MH.eng = await mhEngine($('#mh-map'), view); } catch (e) { $('#mh-map').innerHTML = `<div class="map-msg">The map couldn’t load: ${esc(e.message)}</div>`; return; }
     if (MH.id !== id) return;
+    if (MH.want3d && MH.eng.set3d) MH.eng.set3d(true);
     MH.eng.onClick((ll) => mhMapClick(ll));
     MH.eng.onViewChange(() => mhViewChanged());
     MH.eng.onZoom((z) => $('#mh-root .mh') && $('#mh-root .mh').classList.toggle('far', z < 16));
@@ -222,7 +259,7 @@ VIEWS.mhmap = {
     mhPaintChrome(); mhSyncMarkers();
     if (!local && mhOnMap(id).length) MH.eng.fit(mhOnMap(id));
     const inp = $('[data-mh-search]'); let t = 0;
-    inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => mhSearch(inp.value), 450); });
+    inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => mhSearch(inp.value), 250); });
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(t); mhSearch(inp.value, true); } if (e.key === 'Escape') { inp.value = ''; mhSearch(''); } });
     const want = parseHash().args[1]; if (want && S.manholes[want]) mhSelect(want, true);
   },
@@ -235,6 +272,7 @@ function mhPaintChrome() {
   $$('#mh-root [data-act="mh-mode"]').forEach((b) => { const on = b.dataset.m === MH.mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   const lv = MH.eng ? MH.eng.getView().layer : 'satellite'; const ll = $('#mh-root [data-layer-label]'); if (ll) ll.textContent = { satellite: 'Satellite', hybrid: 'Hybrid', roadmap: 'Map' }[lv];
   const bar = $('#mh-root .mh-modebar');
+  if (MH.adding || MH.hintMode !== MH.mode) { bar.classList.remove('gone'); clearTimeout(MH.hintT); if (!MH.adding) { MH.hintMode = MH.mode; MH.hintT = setTimeout(() => bar.classList.add('gone'), 2500); } }
   bar.innerHTML = MH.adding ? `${icSize('pin', 16)}<span>Tap the map where <b>${esc(mhNextRef())}</b> is — or</span><button data-act="mh-add-here">use my GPS position</button><button data-act="mh-add-cancel">Cancel</button>`
     : MH.mode === 'edit' ? `${icSize('edit', 15)}<span><b>Edit mode</b> — add, drag and edit manholes</span>` : `${icSize('eye', 15)}<span><b>View mode</b> — tap a manhole to see it</span>`;
   const pr = S.mhPresets[MH.preset] || mhPresetList().find((q) => q.name === 'Unknown') || mhPresetList()[0]; if (pr) MH.preset = pr.id;
@@ -431,18 +469,28 @@ A['mh-photo'] = async () => {
 };
 A['mh-grab'] = () => { const p = $('#mh-root .mh-panel'); if (p) p.classList.toggle('tall'); };
 // search: addresses, places, or typed coordinates
+let mhSeq = 0;
 async function mhSearch(q, go) {
   const box = $('#mh-root .mh-results'); if (!box) return; q = q.trim();
-  if (q.length < 3) { box.hidden = true; return; }
-  const res = await mhSearchPlaces(q, MH.eng);
-  if (go && res.length === 1 && res[0].coords) { box.hidden = true; MH.eng.flyTo(res[0], 19); return; }
+  if (q.length < 2) { box.hidden = true; return; }
+  const seq = ++mhSeq; const hits = mhOnMap(MH.id).filter((r) => r.ref.toLowerCase().includes(q.toLowerCase())).slice(0, 5);
+  if (go && hits.length && hits[0].ref.toLowerCase() === q.toLowerCase()) { box.hidden = true; mhSelect(hits[0].id, true); mhBlur(); return; }
+  let res = await mhSearchPlaces(q, MH.eng, !go); if (seq !== mhSeq) return;
+  if (go) { // Enter: go straight to the best match
+    let top = res[0]; if (top && top.postcode) { const r2 = await mhSearchPlaces(top.postcode, MH.eng, true); top = r2[0]; }
+    if (top && top.lat != null) { box.hidden = true; MH.eng.flyTo(top, top.coords ? 19 : 18); mhBlur(); return; }
+    if (hits.length) { box.hidden = true; mhSelect(hits[0].id, true); mhBlur(); return; }
+  }
   box.hidden = false;
-  box.innerHTML = res.length ? res.map((x, i) => `<button data-act="mh-goto" data-lat="${x.lat}" data-lng="${x.lng}" data-i="${i}">${icSize(x.coords ? 'pin' : 'search', 15)}<span class="ellipsis">${esc(x.name)}</span></button>`).join('') : '<div class="small muted" style="padding:10px 12px">No places found</div>';
-  // manholes on this map whose reference matches
-  const hits = mhOnMap(MH.id).filter((r) => r.ref.toLowerCase().includes(q.toLowerCase())).slice(0, 5);
-  if (hits.length) box.insertAdjacentHTML('afterbegin', hits.map((r) => `<button data-act="mh-goto-mh" data-id="${r.id}">${mhIcon(mhPreset(r).icon, 15)}<span><b>${esc(r.ref)}</b> · ${esc(mhPreset(r).name)}</span></button>`).join(''));
+  box.innerHTML = (hits.map((r) => `<button data-act="mh-goto-mh" data-id="${r.id}">${mhIcon(mhPreset(r).icon, 15)}<span><b>${esc(r.ref)}</b> · ${esc(mhPreset(r).name)}</span></button>`).join('')
+    + res.map((x) => `<button data-act="mh-goto" ${x.postcode ? `data-pc="${esc(x.postcode)}"` : `data-lat="${x.lat}" data-lng="${x.lng}"`}>${icSize(x.coords || x.pc ? 'pin' : 'search', 15)}<span class="ellipsis">${esc(x.name)}</span></button>`).join(''))
+    || '<div class="small muted" style="padding:10px 12px">No places found</div>';
 }
-A['mh-goto'] = (el) => { $('#mh-root .mh-results').hidden = true; MH.eng.flyTo({ lat: Number(el.dataset.lat), lng: Number(el.dataset.lng) }, 18); };
+function mhBlur() { const i = $('[data-mh-search]'); if (i) i.blur(); }
+A['mh-goto'] = async (el) => {
+  if (el.dataset.pc) { const i = $('[data-mh-search]'); if (i) i.value = el.dataset.pc; return mhSearch(el.dataset.pc, true); }
+  $('#mh-root .mh-results').hidden = true; mhBlur(); MH.eng.flyTo({ lat: Number(el.dataset.lat), lng: Number(el.dataset.lng) }, 18);
+};
 A['mh-goto-mh'] = (el) => { $('#mh-root .mh-results').hidden = true; mhSelect(el.dataset.id, true); };
 A['mh-coords'] = () => {
   const v = MH.eng.getView();
@@ -459,6 +507,12 @@ F['mh-coords'] = async (f, d, close) => {
 document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('form[data-form="mh-coords"] button[name="go"]'); if (b) b.form._submitter = b.value; }, true);
 A['mh-layers'] = (el) => popMenu(el, `<div class="head"><b>Map view</b></div>${[['satellite', 'Satellite'], ['hybrid', 'Hybrid (satellite + labels)'], ['roadmap', 'Standard map']].map(([k, l]) => `<button class="mi" data-act="mh-layer" data-l="${k}">${MH.eng.getView().layer === k ? icSize('check', 16) : '<span style="width:16px;display:inline-block"></span>'}${l}</button>`).join('')}
   <div class="sep"></div><div class="tiny muted" style="padding:4px 12px 8px">${MH.eng.kind === 'google' ? 'Imagery © Google' : 'Free Esri satellite imagery. Add a Google Maps key in Render to use Google.'}</div>`);
+A['mh-3d'] = () => {
+  MH.want3d = !MH.want3d;
+  if (MH.eng && MH.eng.set3d) { MH.eng.set3d(MH.want3d); if (!MH.want3d && MH.free && S.mapsKey) { MH.free = false; VIEWS.mhmap.mount(MH.id); return; } const b = $('#mh-root [data-act="mh-3d"]'); if (b) { b.classList.toggle('on', MH.want3d); b.setAttribute('aria-pressed', MH.want3d); } return; }
+  // Google's satellite has no 3D buildings without a paid product, so 3D uses the free map.
+  MH.free = MH.want3d; VIEWS.mhmap.mount(MH.id);
+};
 A['mh-layer'] = (el) => { MH.eng.setLayer(el.dataset.l); mhPaintChrome(); mhViewChanged(); };
 A['mh-filter'] = (el) => {
   const f = MH.filter; const types = [...new Set(mhOnMap(MH.id).map((r) => r.presetId))].map((id) => S.mhPresets[id]).filter(Boolean);
