@@ -160,11 +160,30 @@ function mhGoogle(el, view) {
   // Google Earth-style 3D: photorealistic 3D tiles drawn over the 2D map while 3D is on.
   let m3 = null;
   const set3d = async (on) => {
-    if (!on) { if (m3) { const c = m3.center; if (c) m.setCenter({ lat: c.lat, lng: c.lng }); m3.remove(); m3 = null; } return; }
+    if (!on) { if (m3) { const c = m3.center; if (c) m.setCenter({ lat: c.lat, lng: c.lng }); m3.remove(); m3 = null; } const pad = el.querySelector('.mh-3dpad'); if (pad) pad.remove(); return; }
     if (m3) return;
-    const lib = await g.importLibrary('maps3d'); const c = m.getCenter();
-    m3 = new lib.Map3DElement({ center: { lat: c.lat(), lng: c.lng(), altitude: 0 }, range: Math.max(120, 591657550 / 2 ** m.getZoom() / 3), tilt: 62, heading: 0, mode: 'SATELLITE', defaultUIHidden: true });
+    const lib = await g.importLibrary('maps3d'); const c = m.getCenter(); const phone = matchMedia('(max-width: 700px)').matches;
+    m3 = new lib.Map3DElement({ center: { lat: c.lat(), lng: c.lng(), altitude: 0 }, range: Math.max(60, 591657550 / 2 ** m.getZoom() / 4), tilt: 60, heading: 0, mode: 'SATELLITE',
+      qualityMode: 'FIDELITY', maxMemoryMegabytes: phone ? 768 : 2048, gestureHandling: 'GREEDY', minTilt: 0, maxTilt: 90, minAltitude: 0, defaultUIHidden: true });
     m3.className = 'mh-3d'; el.appendChild(m3);
+    // our own camera pad: works the same with a mouse or a thumb
+    const pad = document.createElement('div'); pad.className = 'mh-3dpad';
+    const B = (a, label, svg) => `<button type="button" data-cam="${a}" aria-label="${label}" title="${label}">${svg}</button>`;
+    pad.innerHTML = B('in', 'Closer', '+') + B('out', 'Further', '−') + B('left', 'Turn left', '⟲') + B('right', 'Turn right', '⟳') + B('up', 'Tilt up', '⤒') + B('down', 'Look down', '⤓') + B('orbit', 'Fly around', '◎') + B('north', 'Face north', 'N');
+    el.appendChild(pad);
+    const cam = (k) => {
+      if (!m3) return; m3.stopCameraAnimation && m3.stopCameraAnimation();
+      const cp = { center: m3.center, range: m3.range, tilt: m3.tilt, heading: m3.heading || 0 };
+      if (k === 'in') cp.range = Math.max(2, cp.range * 0.6); if (k === 'out') cp.range = Math.min(20000, cp.range / 0.6);
+      if (k === 'left') cp.heading = (cp.heading - 30 + 360) % 360; if (k === 'right') cp.heading = (cp.heading + 30) % 360;
+      if (k === 'up') cp.tilt = Math.min(90, cp.tilt + 12); if (k === 'down') cp.tilt = Math.max(0, cp.tilt - 12);
+      if (k === 'north') cp.heading = 0;
+      if (k === 'orbit') return m3.flyCameraAround({ camera: cp, durationMillis: 16000, repeatCount: 1 });
+      m3.flyCameraTo({ endCamera: cp, durationMillis: 450 });
+    };
+    let hold = 0;
+    pad.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-cam]'); if (!b) return; e.preventDefault(); const k = b.dataset.cam; cam(k); if (k !== 'orbit' && k !== 'north') { clearInterval(hold); hold = setInterval(() => cam(k), 380); } });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => pad.addEventListener(ev, () => clearInterval(hold)));
     for (const r of mhOnMap(MH.id).filter(mhVisible)) {
       const mk = new lib.Marker3DInteractiveElement({ position: { lat: r.lat, lng: r.lng }, altitudeMode: 'CLAMP_TO_GROUND', extruded: true, label: r.ref });
       mk.addEventListener('gmp-click', () => mhSelect(r.id)); m3.append(mk);

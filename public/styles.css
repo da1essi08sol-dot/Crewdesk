@@ -1762,3 +1762,7 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .mh-iconlib { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
 .mh-icopt span { min-width: 0; }
 .mh-icopt small { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; hyphens: auto; font-size: 10.5px; }
+.mh-3dpad { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 5; display: grid; grid-template-columns: repeat(2, 44px); gap: 6px; padding: 6px; border-radius: 16px; background: rgba(20,26,23,.72); backdrop-filter: blur(6px); touch-action: none; user-select: none; }
+.mh-3dpad button { width: 44px; height: 44px; border: 0; border-radius: 12px; background: rgba(255,255,255,.14); color: #fff; font: 700 20px/1 var(--font); cursor: pointer; display: grid; place-items: center; }
+.mh-3dpad button:active { background: var(--accent, #1a9d6b); }
+.mh.has-panel .mh-3dpad { display: none; }
