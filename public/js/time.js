@@ -144,20 +144,47 @@ A['switch-task'] = () => openStartSheet({});
 A['choose-project'] = () => {
   const cur = currentProjectId();
   sheet(`${sheetHead('Which project are you on?')}
-    <label class="search" style="margin-bottom:10px"><input class="input" type="search" placeholder="Search projects" data-input="cp-search" aria-label="Search projects" autocomplete="off">${ic('search')}</label>
-    <div class="card flush cp-list" data-cp-list>${cpList('', cur)}</div>
-    ${canCreateProjects() ? `<button class="btn block" style="margin-top:12px" data-act="new-project" data-close>${ic('plus')}New project</button>` : ''}`);
+    <label class="search cp-search"><input class="input" type="search" placeholder="Search name, job number or site" data-input="cp-search" aria-label="Search projects" autocomplete="off">${ic('search')}</label>
+    <div class="cp-list" data-cp-list>${cpList('', cur)}</div>
+    ${canCreateProjects() ? `<button class="btn block" style="margin-top:14px" data-act="new-project" data-close>${ic('plus')}New project</button>` : ''}`, null, { wide: true });
 };
-function cpList(q, cur) {
-  const ps = projectChoices().filter((p) => !q || [p.name, p.ref, p.address].join(' ').toLowerCase().includes(q.toLowerCase()));
-  return `<div class="list">${ps.map((p) => `<button class="item ${p.id === cur ? 'on' : ''}${projFill(p)}" data-act="cp-pick" data-id="${p.id}"><span class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(p.name)}</b><span class="tiny muted ellipsis" style="display:block">${esc([p.ref, p.address].filter(Boolean).join(' · ') || 'No job number')}</span></span>${p.id === cur ? icSize('check', 20, 'flex:none') : ''}</button>`).join('') || '<div class="empty small">No projects match.</div>'}
-    <button class="item ${cur === '' ? 'on' : ''}" data-act="cp-pick" data-id=""><span class="grow"><b>Not on a project</b><span class="tiny muted" style="display:block">Office, training, admin, holiday…</span></span>${cur === '' ? icSize('check', 20, 'flex:none') : ''}</button></div>`;
+// One tile per project: its colour, job number, name, site and client, who's there now and how it's going against plan.
+function cpTile(p, cur, i) {
+  const c = p.color || ''; const on = p.id === cur;
+  const now = typeof workingOn === 'function' ? workingOn(p.id).map((e) => e.userId) : [];
+  const plan = projectPlanMins(p); const act = plan ? projectPlanActual(p) : 0; const pct = plan ? Math.min(100, Math.round((act / plan) * 100)) : 0;
+  const client = (S.clients[p.clientId] || {}).name;
+  return `<button class="cp-tile ${on ? 'on' : ''}" data-act="cp-pick" data-id="${p.id}" style="--c:${esc(c || 'var(--line-2)')};--ct:${c ? inkOn(c) : 'var(--ink)'};--i:${i}" aria-pressed="${on}">
+    <span class="cp-badge">${p.ref ? esc(p.ref) : icSize('folder', 18)}</span>
+    <span class="cp-main"><b class="cp-name">${esc(p.name)}</b>
+      <span class="cp-sub">${esc([p.address, client].filter(Boolean).join(' · ') || 'No site set')}</span>
+      ${now.length || plan ? `<span class="cp-meta">${now.length ? `<span class="cp-live">${avatarStack(now, 3)}${now.length} on it now</span>` : ''}${plan ? `<span class="cp-plan ${act > plan ? 'over' : ''}"><i style="width:${pct}%"></i></span><span class="cp-pct">${pct}%</span>` : ''}</span>` : ''}</span>
+    <span class="cp-check" aria-hidden="true">${icSize('check', 16)}</span></button>`;
 }
-I['cp-search'] = (el) => { const box = $('[data-cp-list]'); if (box) box.innerHTML = cpList(el.value, currentProjectId()); };
+function cpList(q, cur) {
+  const all = projectChoices(); const ql = (q || '').trim().toLowerCase();
+  const ps = all.filter((p) => !ql || [p.name, p.ref, p.address, (S.clients[p.clientId] || {}).name].join(' ').toLowerCase().includes(ql));
+  const recentIds = new Set(); for (const e of userEntries(S.user.id).slice().sort((a, b) => b.start - a.start)) { if (e.projectId && S.projects[e.projectId] && !S.projects[e.projectId].archived) recentIds.add(e.projectId); if (recentIds.size >= 3) break; }
+  let i = 0; const tiles = (list) => list.map((p) => cpTile(p, cur, i++)).join('');
+  const none = `<button class="cp-tile none ${cur === '' ? 'on' : ''}" data-act="cp-pick" data-id="" style="--i:${ps.length}" aria-pressed="${cur === ''}"><span class="cp-badge">${icSize('home', 18)}</span><span class="cp-main"><b class="cp-name">Not on a project</b><span class="cp-sub">Office, training, admin, holiday…</span></span><span class="cp-check" aria-hidden="true">${icSize('check', 16)}</span></button>`;
+  if (!ps.length) return `<div class="empty small" style="padding:22px 0">No projects match “${esc(q)}”.</div>${none}`;
+  if (ql) return `<div class="cp-grid">${tiles(ps)}</div><div class="cp-grid" style="margin-top:10px">${none}</div>`;
+  const recent = ps.filter((p) => recentIds.has(p.id)); const rest = ps.filter((p) => !recentIds.has(p.id));
+  return `${recent.length ? `<div class="cp-head">Recent</div><div class="cp-grid">${tiles(recent)}</div>` : ''}
+    ${rest.length ? `<div class="cp-head">${recent.length ? 'All projects' : 'Projects'}</div><div class="cp-grid">${tiles(rest)}</div>` : ''}
+    <div class="cp-head">Other</div><div class="cp-grid">${none}</div>`;
+}
+I['cp-search'] = (el) => { const box = $('[data-cp-list]'); if (box) { box.innerHTML = cpList(el.value, currentProjectId()); box.classList.add('no-rise'); } };
 A['cp-pick'] = (el) => {
-  setCurrentProject(el.dataset.id); closeSheets(); renderView(false);
-  const run = myRunning();
-  if (run && (run.projectId || '') !== el.dataset.id && run.category !== 'lunch') setTimeout(() => openStartSheet({ projectId: el.dataset.id }), 300);
+  if (el.classList.contains('picked')) return;
+  $$('.cp-tile.on').forEach((t) => t.classList.remove('on')); el.classList.add('on', 'picked');
+  if (navigator.vibrate) try { navigator.vibrate(12); } catch (_) {}
+  const id = el.dataset.id;
+  setTimeout(() => {
+    setCurrentProject(id); closeSheets(); renderView(false);
+    const run = myRunning();
+    if (run && (run.projectId || '') !== id && run.category !== 'lunch') setTimeout(() => openStartSheet({ projectId: id }), 300);
+  }, motionOK() ? 280 : 0);
 };
 
 // ============================================================ HOME: one big button
