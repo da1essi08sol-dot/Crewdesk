@@ -162,18 +162,20 @@ A['cp-pick'] = (el) => {
 
 // ============================================================ HOME: one big button
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
+const shortInfo = (m, running) => `That’s ${fmtDur(Math.max(0, m))} under a standard ${fmtHrs(dayHours())}h day. Starting early and finishing early is normal in surveying — this is only for your records.${running ? '' : ' If you forgot to log something, use Add time.'}`;
+A['verdict-info'] = () => { S.verdictInfo = !S.verdictInfo; renderView(false); };
 function scheduleVerdict(st, running, rec) {
   const s = S.company.settings;
-  if (rec && rec.finishedAt && !running) return st.paid >= dayHours() * 60 ? { cls: 'ok', text: `Day finished${st.ot > 0 ? ` · ${fmtSigned(st.ot)} overtime` : ''}` } : { cls: 'short', text: `Day finished · ${fmtDur(dayHours() * 60 - st.paid)} short of a full day` }; const startM = hhmmToMin(s.dayStart || '08:00'), endM = hhmmToMin(s.dayEnd || '16:30');
+  if (rec && rec.finishedAt && !running) return st.paid >= dayHours() * 60 ? { cls: 'ok', text: `Day finished${st.ot > 0 ? ` · ${fmtSigned(st.ot)} overtime` : ''}` } : { cls: '', text: `Day finished · ${fmtDur(st.paid)} logged`, info: shortInfo(dayHours() * 60 - st.paid, false) }; const startM = hhmmToMin(s.dayStart || '08:00'), endM = hhmmToMin(s.dayEnd || '16:30');
   const target = dayHours() * 60; const nowM = minsOfDay(Date.now());
   if (isWeekend(todayStr())) return st.paid ? { cls: 'over', text: `Weekend work — ${fmtDur(st.paid)} so far (overtime rate 1.5×)` } : { cls: '', text: 'It’s the weekend.' };
   if (st.paid >= target) return { cls: st.paid - target >= 15 ? 'over' : 'ok', text: st.paid - target >= 15 ? `Full day done · ${fmtDur(st.paid - target)} overtime` : 'Full day done' };
-  if (nowM >= endM) return { cls: running ? 'warn' : 'short', text: `${fmtDur(target - st.paid)} short of a full day${running ? '' : ' — add time if you forgot something'}` };
+  if (nowM >= endM) return { cls: '', text: `${fmtDur(st.paid)} logged today`, info: shortInfo(target - st.paid, running) };
   if (nowM <= startM) return { cls: '', text: `Your day starts at ${s.dayStart || '08:00'}` };
   const expected = target * Math.min(1, (nowM - startM) / Math.max(1, endM - startM));
   const diff = st.paid - expected;
   if (diff >= -20) return { cls: 'ok', text: running ? `On schedule · about ${fmtDur(target - st.paid)} to go` : `On schedule · ${fmtDur(target - st.paid)} to go` };
-  return { cls: 'warn', text: `${fmtDur(-diff)} behind schedule${running ? '' : ' — is the timer off by mistake?'}` };
+  return { cls: '', text: running ? `${fmtDur(st.paid)} logged so far` : `${fmtDur(st.paid)} logged so far · timer off`, info: `That’s about ${fmtDur(-diff)} behind a standard day’s pace — completely fine if you started early or are finishing early.${running ? '' : ' If the timer is off by mistake, press + to start it again.'}` };
 }
 function runningPlanMsg(run) {
   const t = S.tasks[run.taskId];
@@ -230,7 +232,7 @@ VIEWS.home = {
       <div class="stack loose">${timer}
         <div class="card day-card"><div class="row between top wrap" style="gap:8px"><div><div class="label">Today</div>
             <div class="day-total"><b ${run && cat(run.category).paid ? `data-base="${runningBase}" data-run="${run.start}"` : ''}>${fmtDur(st.paid)}</b> <span class="muted">of ${fmtHrs(dayHours())}h</span></div></div>
-            <div class="verdict ${v.cls}">${esc(v.text)}</div></div>
+            ${v.info ? `<button type="button" class="verdict ${v.cls} has-info" data-act="verdict-info" aria-expanded="${!!S.verdictInfo}">${esc(v.text)} ${icSize('help', 14, 'vertical-align:-2px;opacity:.6')}</button>${S.verdictInfo ? `<div class="verdict-info small muted">${esc(v.info)}</div>` : ''}` : `<div class="verdict ${v.cls}">${esc(v.text)}</div>`}</div>
           <div class="progress day ${st.paid > target ? 'over' : ''}"><i style="width:${Math.min(100, (st.paid / target) * 100)}%"></i></div>
           ${list.length ? dayBar(list, { date: today }) : ''}
           ${planToday ? `<div class="small muted" style="margin-top:8px">${icSize('flag', 13, 'vertical-align:-2px')} Planned for you today: ${plural(todays.length, 'task')}, ${esc(fmtDur(planToday))} — ${esc(fmtDur(todays.reduce((a, t) => a + taskMins(t.id), 0)))} done so far</div>` : ''}</div>
@@ -272,7 +274,7 @@ function dayOT(uid, ds, st) {
 }
 function monthMini(uid) {
   const ym = thisMonth(); const m = monthStats(uid, ym);
-  return `<div class="mini-kpis"><div><b>${esc(fmtDur(m.paid, true))}</b><span>logged</span></div><div><b>${m.days}</b><span>${m.days === 1 ? 'day' : 'days'}</span></div><div><b class="${m.ot > 0 ? 'pos' : m.ot < 0 ? 'neg' : ''}">${fmtSigned(m.ot)}</b><span>overtime</span></div></div>
+  return `<div class="mini-kpis"><div><b>${esc(fmtDur(m.paid, true))}</b><span>logged</span></div><div><b>${m.days}</b><span>${m.days === 1 ? 'day' : 'days'}</span></div><div><b class="${m.ot > 0 ? 'pos' : ''}">${fmtSigned(m.ot)}</b><span>overtime</span></div></div>
     <a class="btn sm block" style="margin-top:10px" href="/api/c/${S.cid}/timesheet/${uid}/${ym}" download="${esc(monthFile(member(uid).name, ym))}">${ic('download')}${esc(monthFile(member(uid).name, ym))}</a>`;
 }
 
@@ -329,7 +331,7 @@ A['finish-day'] = () => {
   const run = myRunning();
   const byP = Object.entries(st.byProject).sort((a, b) => b[1] - a[1]);
   sheet(`${sheetHead(rec.finishedAt ? 'Your day' : 'Finish for today')}
-    <div class="finish-sum"><div><b>${esc(fmtDur(st.paid))}</b><span>logged today</span></div><div><b class="${st.ot > 0 ? 'pos' : st.ot < 0 ? 'neg' : ''}">${fmtSigned(st.ot)}</b><span>${st.ot < 0 ? 'short of a full day' : 'overtime'}</span></div><div><b>${list.length}</b><span>${list.length === 1 ? 'entry' : 'entries'}</span></div></div>
+    <div class="finish-sum"><div><b>${esc(fmtDur(st.paid))}</b><span>logged today</span></div><div><b class="${st.ot > 0 ? 'pos' : ''}">${st.ot > 0 ? fmtSigned(st.ot) : '0h'}</b><span>overtime</span></div><div><b>${list.length}</b><span>${list.length === 1 ? 'entry' : 'entries'}</span></div></div>
     ${byP.length || st.nonprod ? `<div class="stack tight small" style="margin:4px 0 12px">${byP.map(([pid, m]) => `<div class="row"><span class="grow ellipsis">${esc(projLabel(S.projects[pid]) || 'Deleted project')}</span><span class="mono">${esc(fmtDur(m, true))}</span></div>`).join('')}${st.nonprod ? `<div class="row"><span class="grow">Non-productive</span><span class="mono">${esc(fmtDur(st.nonprod, true))}</span></div>` : ''}</div>` : ''}
     <form class="stack" data-form="finish-day">
       <p class="small muted" style="margin:0">Quick notes for you and your manager — all optional. They go with today’s timesheet.</p>
@@ -401,7 +403,7 @@ VIEWS.timesheet = {
       <div class="kpis">
         <div class="kpi"><span class="v">${esc(fmtDur(ms.paid, true))}</span><span class="l">Hours logged</span></div>
         <div class="kpi"><span class="v">${ms.days}</span><span class="l">Days worked</span></div>
-        <div class="kpi"><span class="v ${ms.ot > 0 ? 'pos' : ms.ot < 0 ? 'neg' : ''}">${fmtSigned(ms.ot)}</span><span class="l">Overtime (${fmtSigned(ms.otPay)} at rate)</span></div>
+        <div class="kpi"><span class="v ${ms.ot > 0 ? 'pos' : ''}">${fmtSigned(ms.ot)}</span><span class="l">Overtime (${fmtSigned(ms.otPay)} at rate)</span></div>
         <div class="kpi"><span class="v">${approved}</span><span class="l">Days approved</span></div>
       </div>
       ${sheetBanner(uid, ym, me)}
@@ -448,7 +450,7 @@ function tsDay(uid, ds, list) {
   const st = dayStats(list); const rec = dayRec(uid, ds) || {}; st.ot = dayOT(uid, ds, st);
   const open = S.openDay === uid + ds;
   const hasNotes = rec.well || rec.wrong || rec.improve;
-  const otChip = st.paid ? `<span class="ot ${st.ot > 0 ? 'pos' : st.ot < 0 ? 'neg' : ''}">${st.ot ? fmtSigned(st.ot) : '±0'}</span>` : '';
+  const otChip = st.paid && st.ot > 0 ? `<span class="ot pos">${fmtSigned(st.ot)}</span>` : '';
   return `<div class="tsday ${open ? 'open' : ''} ${isWeekend(ds) ? 'we' : ''}">
     <button class="tsday-head" data-act="ts-open" data-k="${uid + ds}" aria-expanded="${open}">
       <span class="d"><b>${esc(parseD(ds).toLocaleDateString('en-GB', { weekday: 'short' }))}</b> ${parseD(ds).getDate()}</span>
@@ -543,7 +545,7 @@ function adminPeople() {
   return `<div class="row between wrap" style="margin-bottom:12px">${adminMonthNav('people')}<span class="small muted">Tap someone to see their days, notes and overtime, and to approve or change their time.</span></div>
     ${loading ? '<div class="skeleton" style="height:200px"></div>' : `<div class="card flush"><div class="list">${rows.map(({ id, m }) => { const last = userEntries(id).sort((a, b) => b.start - a.start)[0]; const pending = Object.keys(m.byDay).filter((ds) => dayStats(m.byDay[ds]).ot > 0 && !(dayRec(id, ds) || {}).approvedBy).length;
       return `<a class="item" href="#/timesheet/${ym}/${id}">${avatar(member(id), 'sm', { link: false })}<div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(member(id).name)}</b><span class="tiny muted">${last ? 'Last logged ' + timeAgo(last.end || Date.now()) : 'No time logged yet'}${pending ? ` · <b class="neg">${plural(pending, 'day')} of overtime to approve</b>` : ''}</span></div>
-        <div class="num-cols"><span><b>${esc(fmtDur(m.paid, true))}</b><i>hours</i></span><span><b>${m.days}</b><i>days</i></span><span><b class="${m.ot > 0 ? 'pos' : m.ot < 0 ? 'neg' : ''}">${fmtSigned(m.ot)}</b><i>OT</i></span></div>${icSize('right', 18, 'color:var(--muted);flex:none')}</a>`; }).join('')}</div></div>`}`;
+        <div class="num-cols"><span><b>${esc(fmtDur(m.paid, true))}</b><i>hours</i></span><span><b>${m.days}</b><i>days</i></span><span><b class="${m.ot > 0 ? 'pos' : ''}">${fmtSigned(m.ot)}</b><i>OT</i></span></div>${icSize('right', 18, 'color:var(--muted);flex:none')}</a>`; }).join('')}</div></div>`}`;
 }
 function adminFolder(view) {
   ensureSheetStatus(); const all = S.sheetStatus; const cur = thisMonth(); view = view === 'archive' ? 'archive' : 'current';
