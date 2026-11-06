@@ -72,7 +72,7 @@ function mhGoogleBroken(why) {
   toast(`${why} — showing the free satellite map instead`, true);
   if (MH.id && MH.eng && MH.eng.kind === 'google') VIEWS.mhmap.mount(MH.id);
 }
-(() => { const ce = console.error; console.error = function (...a) { try { const t = String(a[0] || ''); if (/Google Maps JavaScript API error: (\w+)/.test(t)) mhGoogleBroken(/Billing/.test(t) ? 'Google Maps billing isn’t switched on' : 'Google Maps rejected the key'); } catch (_) {} return ce.apply(this, a); }; })();
+
 function loadGoogleMaps(key) {
   if (window.google && window.google.maps && window.google.maps.Map) return Promise.resolve();
   return (gmapsP = gmapsP || new Promise((resolve, reject) => {
@@ -84,7 +84,7 @@ function loadGoogleMaps(key) {
   }));
 }
 async function mhEngine(el, view) {
-  if (S.mapsKey && !window.__cdGmFailed && !MH.free) { try { const ok = await capi('POST', '/usage/gmaps', { kind: 'map' }).catch(() => ({ ok: true })); if (!ok.ok) throw new Error('limit'); await loadGoogleMaps(S.mapsKey); return mhGoogle(el, view); } catch (_) { /* fall back */ } }
+  if (S.mapsKey && !window.__cdGmFailed) { try { const ok = await capi('POST', '/usage/gmaps', { kind: 'map' }).catch(() => ({ ok: true })); if (!ok.ok) throw new Error('limit'); await loadGoogleMaps(S.mapsKey); return mhGoogle(el, view); } catch (_) { /* fall back */ } }
   if (!window.maplibregl) { loadCss('/vendor/maplibre/maplibre-gl.css'); await loadScript('/vendor/maplibre/maplibre-gl-csp.js'); maplibregl.setWorkerUrl('/vendor/maplibre/maplibre-gl-csp-worker.js'); }
   return mhLibre(el, view);
 }
@@ -155,8 +155,25 @@ function mhGoogle(el, view) {
       });
     }
   }
+  // Google shows "For development purposes only" / "can't load Google Maps" when billing or the key is wrong.
+  g.event.addListenerOnce(m, 'tilesloaded', () => setTimeout(() => { if (el.querySelector('.gm-err-container') || /development purposes only/i.test(el.innerText || '')) mhGoogleBroken('Google Maps refused the key (check billing)'); }, 1500));
+  // Google Earth-style 3D: photorealistic 3D tiles drawn over the 2D map while 3D is on.
+  let m3 = null;
+  const set3d = async (on) => {
+    if (!on) { if (m3) { const c = m3.center; if (c) m.setCenter({ lat: c.lat, lng: c.lng }); m3.remove(); m3 = null; } return; }
+    if (m3) return;
+    const lib = await g.importLibrary('maps3d'); const c = m.getCenter();
+    m3 = new lib.Map3DElement({ center: { lat: c.lat(), lng: c.lng(), altitude: 0 }, range: Math.max(120, 591657550 / 2 ** m.getZoom() / 3), tilt: 62, heading: 0, mode: 'SATELLITE', defaultUIHidden: true });
+    m3.className = 'mh-3d'; el.appendChild(m3);
+    for (const r of mhOnMap(MH.id).filter(mhVisible)) {
+      const mk = new lib.Marker3DInteractiveElement({ position: { lat: r.lat, lng: r.lng }, altitudeMode: 'CLAMP_TO_GROUND', extruded: true, label: r.ref });
+      mk.addEventListener('gmp-click', () => mhSelect(r.id)); m3.append(mk);
+    }
+  };
   return {
     kind: 'google',
+    set3d(on) { set3d(on).catch((e) => { console.warn('3D', e); toast('Google 3D couldn’t load here', true); }); },
+    is3d: () => !!m3,
     setLayer(l) { layer = l; m.setMapTypeId(TYPES[l] || 'satellite'); },
     getView: () => ({ center: { lat: m.getCenter().lat(), lng: m.getCenter().lng() }, zoom: m.getZoom(), layer }),
     onViewChange(cb) { m.addListener('idle', cb); },
@@ -516,9 +533,8 @@ A['mh-layers'] = (el) => popMenu(el, `<div class="head"><b>Map view</b></div>${[
   <div class="sep"></div><div class="tiny muted" style="padding:4px 12px 8px">${MH.eng.kind === 'google' ? 'Imagery © Google' : 'Free Esri satellite imagery. Add a Google Maps key in Render to use Google.'}</div>`);
 A['mh-3d'] = () => {
   MH.want3d = !MH.want3d;
-  if (MH.eng && MH.eng.set3d) { MH.eng.set3d(MH.want3d); if (!MH.want3d && MH.free && S.mapsKey) { MH.free = false; VIEWS.mhmap.mount(MH.id); return; } const b = $('#mh-root [data-act="mh-3d"]'); if (b) { b.classList.toggle('on', MH.want3d); b.setAttribute('aria-pressed', MH.want3d); } return; }
-  // Google's satellite has no 3D buildings without a paid product, so 3D uses the free map.
-  MH.free = MH.want3d; VIEWS.mhmap.mount(MH.id);
+  if (MH.eng && MH.eng.set3d) MH.eng.set3d(MH.want3d);
+  const b = $('#mh-root [data-act="mh-3d"]'); if (b) { b.classList.toggle('on', MH.want3d); b.setAttribute('aria-pressed', MH.want3d); }
 };
 A['mh-layer'] = (el) => { MH.eng.setLayer(el.dataset.l); mhPaintChrome(); mhViewChanged(); };
 A['mh-filter'] = (el) => {

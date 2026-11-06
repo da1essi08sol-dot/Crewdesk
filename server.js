@@ -2830,9 +2830,9 @@ for (const [ext, type] of Object.entries(DOC_TYPES)) if (!TYPES['.' + ext]) TYPE
 // Map data comes from OpenFreeMap (vector maps) with OpenStreetMap as a fallback; nothing else loads from other sites.
 const SECURITY_HEADERS = {
   // Manhole maps add Google Maps (when a key is set), Esri satellite imagery and OpenStreetMap place search.
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
     "img-src 'self' data: blob: https://tiles.openfreemap.org https://tile.openstreetmap.org https://*.googleapis.com https://*.gstatic.com https://*.google.com https://server.arcgisonline.com https://services.arcgisonline.com; " +
-    "font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://tiles.openfreemap.org https://*.googleapis.com https://maps.gstatic.com https://server.arcgisonline.com https://services.arcgisonline.com https://nominatim.openstreetmap.org https://api.postcodes.io https://photon.komoot.io; worker-src 'self' blob:; child-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "font-src 'self' https://fonts.gstatic.com; connect-src 'self' blob: data: https://tiles.openfreemap.org https://*.googleapis.com https://*.gstatic.com https://server.arcgisonline.com https://services.arcgisonline.com https://nominatim.openstreetmap.org https://api.postcodes.io https://photon.komoot.io; worker-src 'self' blob:; child-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   'X-Content-Type-Options': 'nosniff',
   // Sends only this site's address (never the page path) to map servers, which their usage policy requires.
   'Referrer-Policy': 'strict-origin-when-cross-origin',
