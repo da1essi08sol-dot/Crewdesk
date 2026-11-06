@@ -1759,3 +1759,6 @@ html.mh-on, html.mh-on body { overflow: hidden; }
   .mh-toolrow { flex: 0 1 auto; min-width: 0; }
 }
 @media (max-width: 400px) { .mh-chip { padding: 0 9px; gap: 4px; font-size: 13px; } .mh-toolrow { gap: 4px; } }
+.mh-iconlib { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+.mh-icopt span { min-width: 0; }
+.mh-icopt small { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; hyphens: auto; font-size: 10.5px; }
