@@ -55,7 +55,7 @@ let db = {};
 let pool = null;
 const CHUNKS = path.join(DATA, 'chunks');
 const chunkFile = (key) => path.join(CHUNKS, encodeURIComponent(key) + '.json');
-const BIG = ['entries', 'days', 'messages'];
+const BIG = ['entries', 'days', 'messages', 'manholes'];
 function mergeChunk(key, data) {
   const [kind, cid] = key.split('|');
   db.data = db.data || {}; const d = db.data[cid] = db.data[cid] || {};
@@ -123,6 +123,14 @@ const pgStore = {
   },
 };
 const storage = DATABASE_URL ? pgStore : fileStore;
+// Photos and files go to Cloudflare R2 when it's set up; files saved before that are still read from where they were.
+const r2 = require('./lib/r2');
+if (r2.configured()) {
+  const base = { putFile: storage.putFile, getFile: storage.getFile, delFile: storage.delFile };
+  storage.putFile = (name, type, buf) => r2.put(path.basename(name), type, buf);
+  storage.getFile = async (name) => (await r2.get(path.basename(name))) || base.getFile(name);
+  storage.delFile = async (name) => { await r2.del(path.basename(name)).catch((e) => console.error('R2 delete:', e.message)); await base.delFile(name).catch(() => {}); };
+}
 
 // Saving: debounced (but never put off for more than 2 seconds), core plus only the pieces that changed.
 let saveTimer = null, firstDirty = 0, writing = Promise.resolve(), dirty = false;
@@ -145,6 +153,7 @@ function buildChunks(only) {
     for (const e of Object.values(d.entries || {})) { const k = `entries|${cid}|${entryDay(e).slice(0, 7)}`; if (want(k)) { if (!out.has(k)) out.set(k, {}); out.get(k)[e.id] = e; } }
     for (const r of Object.values(d.days || {})) { const k = `days|${cid}|${r.date.slice(0, 7)}`; if (want(k)) { if (!out.has(k)) out.set(k, {}); out.get(k)[r.id] = r; } }
     for (const [ch, list] of Object.entries(d.messages || {})) { const k = `messages|${cid}|${ch}`; if (want(k) && list.length) out.set(k, list); }
+    for (const r of Object.values(d.manholes || {})) { const k = `manholes|${cid}|${r.mapId}`; if (want(k)) { if (!out.has(k)) out.set(k, {}); out.get(k)[r.id] = r; } }
   }
   return out;
 }
@@ -331,6 +340,7 @@ function buildFileIndex() {
   for (const [cid, d] of Object.entries(db.data)) {
     if (!db.companies[cid]) continue;
     for (const p of Object.values(d.photos || {})) for (const u of [p.url, p.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'photo', cid, project: p.projectId }; }
+    for (const r of Object.values(d.manholes || {})) for (const ph of r.photos || []) for (const u of [ph.url, ph.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'photo', cid, project: r.projectId }; }
     for (const [ch, list] of Object.entries(d.messages || {})) for (const m of list) for (const u of msgImages(m)) { const n = name(u); if (n) idx[n] = { kind: 'msg', cid, ch }; }
     for (const f of Object.values(d.files || {})) for (const u of [f.url, f.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'file', cid, fileId: f.id }; }
     for (const u of Object.values(d.sheetUploads || {})) idx[u.stored] = { kind: 'sheet', cid, user: u.userId };
@@ -428,7 +438,7 @@ function shapePing(p, x) {
 // What one person may see of one item (null = hidden from them).
 function viewFor(coll, item, x) {
   switch (coll) {
-    case 'tasks': case 'photos': return canSeeTask(x, item) ? item : null;
+    case 'tasks': case 'photos': case 'mhMaps': case 'manholes': return canSeeTask(x, item) ? item : null;
     case 'projects': return canSeeProject(x, item) ? item : null;
     case 'events': return canSeeEvent(x, item) ? item : null;
     case 'finance': return isAdmin(x.role) ? item : null;
@@ -449,6 +459,10 @@ function stateFor(x) {
     out[coll] = o;
   }
   // Tasks of active projects (an archived project's tasks load when you open it); events from the last year on.
+  mhSeed(x.c.id, d); out.mhPresets = d.mhPresets; out.mhMaps = {};
+  for (const mp of Object.values(d.mhMaps)) if (canSeeTask(x, mp)) out.mhMaps[mp.id] = mhPublicMap(mp);
+  out.mhCounts = {}; for (const r of Object.values(d.manholes)) if (!r.deleted && out.mhMaps[r.mapId]) out.mhCounts[r.mapId] = (out.mhCounts[r.mapId] || 0) + 1;
+  out.mapsKey = process.env.GOOGLE_MAPS_KEY || '';
   out.tasks = {}; out.projectCounts = {};
   for (const t of Object.values(d.tasks)) {
     const p = d.projects[t.projectId]; if (!p || !out.projects[p.id]) continue;
@@ -1663,6 +1677,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   }
 
   // --- time: entries, days, timesheets (see timeApi)
+  if (/^\/mh\//.test(sub)) return manholeApi(req, res, url, x, sub);
   if (/^\/(entries|days|timesheet|timesheets|gdrive|stats)(\/|$)|^\/projects\/[A-Za-z0-9]+\/(timesheet|pdf)$/.test(sub)) return timeApi(req, res, url, x, sub);
 
   // --- generic collections
@@ -1714,6 +1729,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
 // A project's tasks, photos and chat go with it. Time already logged stays on people's timesheets, under the project's name.
 function dropProjectData(cid, d, item) {
   const id = item.id;
+  for (const mp of Object.values(d.mhMaps || {})) if (mp.projectId === id) { for (const r of Object.values(d.manholes || {})) if (r.mapId === mp.id) { for (const ph of r.photos || []) { dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); } delete d.manholes[r.id]; } delete d.mhMaps[mp.id]; touchMh(cid, mp.id); }
   for (const t of Object.values(d.tasks)) if (t.projectId === id) delete d.tasks[t.id];
   for (const ph of Object.values(d.photos)) if (ph.projectId === id) { delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); }
   for (const e of Object.values(d.events)) if (e.projectId === id) e.projectId = '';
@@ -1832,6 +1848,361 @@ function sheetAlerts(c, d, nowLocal) {
   }
   if (bad.length) notify(c.id, Object.keys(c.members).filter((id) => isAdmin(c.members[id].role)), `${bad.length} timesheet${bad.length === 1 ? ' isn’t' : 's aren’t'} finished: ${bad.slice(0, 6).join(', ')}${bad.length > 6 ? '…' : ''}`, '#/admin/timesheets');
 }
+// ---------------------------------------------------------------- manhole maps
+// Company-wide presets (anyone can make and edit them) are kept apart from each project's maps and manhole records,
+// which only people who can see that project can open. Records keep a history and a version per field, so two
+// people editing the same manhole can't silently overwrite each other.
+const MH_DEFAULT_PRESETS = [
+  ['Fire water', '#e5484d', 'hydrant', 'Fire Hydrant', 'Fire hydrants and fire mains'],
+  ['Clean water', '#2f7de1', 'tap', 'Water Tap', 'Potable water supply'],
+  ['Surface water', '#30a46c', 'drop', 'Water Drop', 'Rainwater and surface water drainage'],
+  ['Foul water', '#8d5a33', 'drain', 'Drain', 'Foul sewage'],
+  ['Combined sewer', '#8e4ec6', 'pipe', 'Sewer Pipe', 'Combined foul and surface water'],
+  ['Unknown', '#868e96', 'question', 'Question Mark', 'Type not yet identified'],
+];
+const MH_STATUS = ['not_started', 'in_progress', 'completed'];
+const MH_SURVEY = { coverLevel: 'num', invertLevel: 'num', depth: 'num', diameter: 'num', material: 'text', pipeDirection: 'text', pipeDiameter: 'num',
+  pipesIn: 'int', pipesOut: 'int', condition: 'text', accessibility: 'text', observations: 'long' };
+const MH_ICONS = new Set(['hydrant', 'tap', 'drop', 'drain', 'pipe', 'question', 'valve', 'cover', 'warning', 'bolt', 'gas', 'telecom', 'chamber', 'pump', 'meter', 'cable', 'fibre', 'lamp', 'tree', 'flag', 'star', 'grid', 'arrow', 'cross', 'gully', 'outfall', 'interceptor', 'soakaway']);
+function mhSeed(cid, d) {
+  d.mhPresets = d.mhPresets || {}; d.mhMaps = d.mhMaps || {}; d.manholes = d.manholes || {};
+  if (d.mhSeeded) return;
+  d.mhSeeded = true; const t = now(); const c = db.companies[cid];
+  MH_DEFAULT_PRESETS.forEach(([name, colorV, icon, iconName, description], i) => { const id = uid(); d.mhPresets[id] = { id, cid, name, color: colorV, icon, iconName, description, category: 'Drainage & water', order: i, builtIn: true, createdBy: c ? c.ownerId : '', createdAt: t, updatedBy: '', updatedAt: t }; });
+}
+const mhNum = (v, kind) => { if (v === '' || v == null) return null; const n = Number(v); if (!Number.isFinite(n)) bad('Enter a number'); return kind === 'int' ? Math.max(0, Math.round(n)) : Math.round(n * 1000) / 1000; };
+const mhLat = (v) => { const n = Number(v); if (!Number.isFinite(n) || n < -90 || n > 90) bad('Latitude must be between -90 and 90'); return Math.round(n * 1e7) / 1e7; };
+const mhLng = (v) => { const n = Number(v); if (!Number.isFinite(n) || n < -180 || n > 180) bad('Longitude must be between -180 and 180'); return Math.round(n * 1e7) / 1e7; };
+const touchMh = (cid, mapId) => touch('manholes', cid, mapId);
+function mhMapFor(x, id) { const mp = x.d.mhMaps && x.d.mhMaps[id]; if (!mp || !canSeeTask(x, mp)) notFound('That manhole map doesn’t exist, or you don’t have access to its project'); return mp; }
+function mhFor(x, id) { const r = x.d.manholes && x.d.manholes[id]; if (!r || !canSeeTask(x, r)) notFound('That manhole doesn’t exist, or you don’t have access to its project'); return r; }
+function mhLog(mp, by, action, detail) { mp.log = mp.log || []; mp.log.push({ at: now(), by, action, detail: str(detail, 300) }); if (mp.log.length > 1000) mp.log.splice(0, mp.log.length - 1000); }
+function mhHist(r, by, action, detail) { r.history = r.history || []; r.history.push({ at: now(), by, action, detail: str(detail, 300) }); if (r.history.length > 300) r.history.splice(0, r.history.length - 300); if (!r.editors.includes(by)) r.editors.push(by); }
+function mhSnap(r, p) { if (p) { r.type = { name: p.name, color: p.color, icon: p.icon }; } }
+const MH_LABEL = { lat: 'position', lng: 'position', presetId: 'type', ref: 'reference', description: 'description', status: 'status' };
+function mhApplyPatch(x, mp, r, b) {
+  const changed = [];
+  const set = (k, v) => { const cur = k.startsWith('survey.') ? r.survey[k.slice(7)] : r[k]; if (JSON.stringify(cur) === JSON.stringify(v)) return; if (k.startsWith('survey.')) r.survey[k.slice(7)] = v; else r[k] = v; r.fv[k] = r.v + 1; changed.push(k); };
+  if ('ref' in b) { const v = str(b.ref, 20).toUpperCase() || bad('Give the manhole a reference'); if (Object.values(x.d.manholes).some((o) => o.mapId === mp.id && o.id !== r.id && !o.deleted && o.ref === v)) bad(`${v} is already used on this map`); set('ref', v); }
+  if ('presetId' in b) { const p = x.d.mhPresets[b.presetId]; if (!p) bad('That manhole type no longer exists'); set('presetId', p.id); mhSnap(r, p); }
+  if ('lat' in b) set('lat', mhLat(b.lat));
+  if ('lng' in b) set('lng', mhLng(b.lng));
+  if ('description' in b) set('description', str(b.description, 500));
+  if ('status' in b) { if (!MH_STATUS.includes(b.status)) bad('Pick a status'); set('status', b.status); }
+  if (b.survey && typeof b.survey === 'object') for (const [k, kind] of Object.entries(MH_SURVEY)) if (k in b.survey) set('survey.' + k, kind === 'text' ? str(b.survey[k], 120) || null : kind === 'long' ? str(b.survey[k], 3000) || null : mhNum(b.survey[k], kind));
+  return changed;
+}
+function mhPublicMap(mp) { const o = Object.assign({}, mp); delete o.log; return o; }
+function mhView(r) { return r; }
+
+async function manholeApi(req, res, url, x, sub) {
+  const M = req.method; const { c, d, user, role } = x; const cid = c.id; let m;
+  const admin = isAdmin(role);
+  mhSeed(cid, d);
+  // ---- presets (company-wide; any employee)
+  if (sub === '/mh/presets' && M === 'GET') return json(res, 200, { items: Object.values(d.mhPresets) });
+  const presetBody = (b, p) => {
+    if ('name' in b) p.name = str(b.name, 40) || bad('Give the type a name');
+    if ('color' in b) p.color = color(b.color, '#868e96');
+    if ('icon' in b) { if (!MH_ICONS.has(String(b.icon))) bad('Pick an icon from the library'); p.icon = String(b.icon); }
+    if ('iconName' in b) p.iconName = str(b.iconName, 40);
+    if ('description' in b) p.description = str(b.description, 300);
+    if ('category' in b) p.category = str(b.category, 40) || 'Other';
+  };
+  if (sub === '/mh/presets' && M === 'POST') {
+    const b = await readBody(req); const id = uid(); const t = now();
+    const p = { id, cid, name: '', color: '#868e96', icon: 'cover', iconName: 'Manhole Cover', description: '', category: 'Other', order: Object.keys(d.mhPresets).length, createdBy: user.id, createdAt: t, updatedBy: user.id, updatedAt: t };
+    presetBody(b, p); if (!p.name) bad('Give the type a name');
+    d.mhPresets[id] = p; save(); upsert(cid, 'mhPresets', p);
+    return json(res, 200, { item: p });
+  }
+  if ((m = /^\/mh\/presets\/([A-Za-z0-9]+)$/.exec(sub))) {
+    const p = d.mhPresets[m[1]] || notFound('That type was deleted');
+    if (M === 'PATCH') {
+      const b = await readBody(req); presetBody(b, p); p.updatedBy = user.id; p.updatedAt = now();
+      // records of this type pick up the new look; their history keeps what they were
+      for (const r of Object.values(d.manholes)) if (r.presetId === p.id) { mhSnap(r, p); }
+      save(); upsert(cid, 'mhPresets', p); return json(res, 200, { item: p });
+    }
+    if (M === 'DELETE') {
+      if (Object.keys(d.mhPresets).length <= 1) bad('Keep at least one manhole type');
+      delete d.mhPresets[p.id]; save(); removeItem(cid, 'mhPresets', p.id); // records keep their last name, colour and icon
+      return json(res, 200, { ok: true });
+    }
+  }
+  // ---- maps (one project can have many)
+  if (sub === '/mh/maps' && M === 'GET') {
+    const pid = url.searchParams.get('project');
+    const items = Object.values(d.mhMaps).filter((mp) => (!pid || mp.projectId === pid) && canSeeTask(x, mp)).map(mhPublicMap);
+    const counts = {}; for (const r of Object.values(d.manholes)) if (!r.deleted) counts[r.mapId] = (counts[r.mapId] || 0) + 1;
+    return json(res, 200, { items, counts });
+  }
+  const mapBody = (b, mp) => {
+    if ('name' in b) mp.name = str(b.name, 80) || bad('Give the map a name');
+    if ('description' in b) mp.description = str(b.description, 1000);
+    if ('area' in b) mp.area = str(b.area, 200);
+    if ('center' in b && b.center) mp.center = { lat: mhLat(b.center.lat), lng: mhLng(b.center.lng) };
+    if ('zoom' in b) { const z = Number(b.zoom); if (Number.isFinite(z)) mp.zoom = Math.max(1, Math.min(22, Math.round(z * 100) / 100)); }
+    if ('layer' in b) mp.layer = ['satellite', 'hybrid', 'roadmap'].includes(b.layer) ? b.layer : 'satellite';
+  };
+  if (sub === '/mh/maps' && M === 'POST') {
+    const b = await readBody(req);
+    const p = projectOf(x, b.projectId); if (!p || !canSeeProject(x, p)) bad('Pick a project you have access to');
+    const t = now(); const mp = { id: uid(), projectId: p.id, name: '', description: '', area: '', center: p.lat != null ? { lat: p.lat, lng: p.lng } : { lat: 54.97, lng: -1.61 }, zoom: p.lat != null ? 18 : 6, layer: 'satellite', seq: 0, createdBy: user.id, createdAt: t, updatedBy: user.id, updatedAt: t, log: [] };
+    mapBody(b, mp); if (!mp.name) bad('Give the map a name');
+    mhLog(mp, user.id, 'created', `Created the map “${mp.name}”`);
+    d.mhMaps[mp.id] = mp; save(); upsert(cid, 'mhMaps', mhPublicMap(mp));
+    return json(res, 200, { item: mhPublicMap(mp) });
+  }
+  if ((m = /^\/mh\/maps\/([A-Za-z0-9]+)$/.exec(sub))) {
+    const mp = mhMapFor(x, m[1]);
+    if (M === 'GET') return json(res, 200, { item: mhPublicMap(mp), manholes: Object.values(d.manholes).filter((r) => r.mapId === mp.id && (!r.deleted || url.searchParams.get('deleted') === '1')) });
+    if (M === 'PATCH') {
+      const b = await readBody(req); const before = mp.name; mapBody(b, mp);
+      const view = ('center' in b || 'zoom' in b || 'layer' in b) && !('name' in b || 'description' in b || 'area' in b);
+      if (!view) { mp.updatedBy = user.id; mp.updatedAt = now(); mhLog(mp, user.id, 'map-edited', before !== mp.name ? `Renamed the map to “${mp.name}”` : 'Edited the map details'); }
+      save(); if (!view) upsert(cid, 'mhMaps', mhPublicMap(mp)); return json(res, 200, { item: mhPublicMap(mp) });
+    }
+    if (M === 'DELETE') {
+      if (!(admin || mp.createdBy === user.id)) deny('Only the person who made this map, or an admin, can delete it');
+      for (const r of Object.values(d.manholes)) if (r.mapId === mp.id) { for (const ph of r.photos || []) { dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); } delete d.manholes[r.id]; }
+      delete d.mhMaps[mp.id]; touchMh(cid, mp.id); save(); removeItem(cid, 'mhMaps', mp.id);
+      return json(res, 200, { ok: true });
+    }
+  }
+  if ((m = /^\/mh\/maps\/([A-Za-z0-9]+)\/activity$/.exec(sub)) && M === 'GET') {
+    const mp = mhMapFor(x, m[1]); const out = (mp.log || []).map((l) => Object.assign({ ref: '' }, l));
+    for (const r of Object.values(d.manholes)) if (r.mapId === mp.id) for (const h of r.history || []) out.push(Object.assign({ ref: r.ref, mhId: r.id }, h));
+    out.sort((a, b) => b.at - a.at);
+    return json(res, 200, { items: out.slice(0, 400) });
+  }
+  // ---- manholes
+  if ((m = /^\/mh\/maps\/([A-Za-z0-9]+)\/manholes$/.exec(sub)) && M === 'POST') {
+    const mp = mhMapFor(x, m[1]); const b = await readBody(req);
+    const p = d.mhPresets[b.presetId] || Object.values(d.mhPresets).find((q) => q.name === 'Unknown') || Object.values(d.mhPresets)[0];
+    const used = new Set(Object.values(d.manholes).filter((o) => o.mapId === mp.id && !o.deleted).map((o) => o.ref));
+    let ref = str(b.ref, 20).toUpperCase();
+    if (ref && used.has(ref)) bad(`${ref} is already used on this map`);
+    if (!ref) { do { mp.seq = (mp.seq || 0) + 1; ref = 'MH' + String(mp.seq).padStart(3, '0'); } while (used.has(ref)); }
+    const t = now();
+    const r = { id: uid(), mapId: mp.id, projectId: mp.projectId, ref, presetId: p ? p.id : '', type: null, lat: mhLat(b.lat), lng: mhLng(b.lng), description: '', status: 'not_started', survey: {}, photos: [], notes: [],
+      createdBy: user.id, createdAt: t, updatedBy: user.id, updatedAt: t, editors: [user.id], v: 1, fv: {}, history: [] };
+    for (const k of Object.keys(MH_SURVEY)) r.survey[k] = null;
+    mhSnap(r, p);
+    if ('description' in b) r.description = str(b.description, 500);
+    if (b.status && MH_STATUS.includes(b.status)) r.status = b.status;
+    mhHist(r, user.id, 'created', `Added ${ref} (${r.type ? r.type.name : 'no type'}) at ${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`);
+    d.manholes[r.id] = r; mp.updatedAt = t; touchMh(cid, mp.id); save(); upsert(cid, 'manholes', r);
+    return json(res, 200, { item: r });
+  }
+  if ((m = /^\/mh\/manholes\/([A-Za-z0-9]+)$/.exec(sub))) {
+    const r = mhFor(x, m[1]); const mp = mhMapFor(x, r.mapId);
+    if (M === 'GET') return json(res, 200, { item: r });
+    if (M === 'PATCH') {
+      if (r.deleted) bad('That manhole was deleted — restore it first');
+      const b = await readBody(req); const base = Number(b.base) || 0;
+      // Someone else changed one of these same fields since you opened it: stop and show both.
+      const sent = []; for (const k of Object.keys(b)) if (k !== 'base' && k !== 'survey') sent.push(k); if (b.survey) for (const k of Object.keys(b.survey)) sent.push('survey.' + k);
+      const clash = base ? sent.filter((k) => (r.fv[k] || 0) > base) : [];
+      if (clash.length && !b.force) throw new HttpError(409, 'Someone else changed this manhole while you were editing it. Check their changes, then save again.', { conflict: clash, item: r });
+      const before = { lat: r.lat, lng: r.lng, status: r.status, type: r.type && r.type.name, ref: r.ref };
+      const changed = mhApplyPatch(x, mp, r, b);
+      if (!changed.length) return json(res, 200, { item: r });
+      r.v++; r.updatedBy = user.id; r.updatedAt = now();
+      if (changed.includes('lat') || changed.includes('lng')) mhHist(r, user.id, 'moved', `Moved ${r.ref} from ${before.lat.toFixed(6)}, ${before.lng.toFixed(6)} to ${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}`);
+      if (changed.includes('status')) mhHist(r, user.id, 'status', `Status: ${before.status.replace('_', ' ')} → ${r.status.replace('_', ' ')}`);
+      if (changed.includes('presetId')) mhHist(r, user.id, 'type', `Type: ${before.type || '—'} → ${r.type ? r.type.name : '—'}`);
+      if (changed.includes('ref')) mhHist(r, user.id, 'ref', `Reference: ${before.ref} → ${r.ref}`);
+      const other = changed.filter((k) => !['lat', 'lng', 'status', 'presetId', 'ref'].includes(k));
+      if (other.length) mhHist(r, user.id, 'edited', 'Edited ' + [...new Set(other.map((k) => MH_LABEL[k] || k.replace('survey.', '').replace(/([A-Z])/g, ' $1').toLowerCase()))].join(', '));
+      touchMh(cid, r.mapId); save(); upsert(cid, 'manholes', r);
+      return json(res, 200, { item: r, changed });
+    }
+    if (M === 'DELETE') { // kept with its history (and photos) so it can be restored
+      if (r.deleted) return json(res, 200, { item: r });
+      r.deleted = { by: user.id, at: now() }; r.v++; mhHist(r, user.id, 'deleted', `Deleted ${r.ref}`); mhLog(mp, user.id, 'deleted', `Deleted ${r.ref}`);
+      touchMh(cid, r.mapId); save(); upsert(cid, 'manholes', r); return json(res, 200, { item: r });
+    }
+  }
+  if ((m = /^\/mh\/manholes\/([A-Za-z0-9]+)\/restore$/.exec(sub)) && M === 'POST') {
+    const r = mhFor(x, m[1]); if (!r.deleted) return json(res, 200, { item: r });
+    if (Object.values(d.manholes).some((o) => o.mapId === r.mapId && o.id !== r.id && !o.deleted && o.ref === r.ref)) { const mp = d.mhMaps[r.mapId]; mp.seq = (mp.seq || 0) + 1; r.ref = 'MH' + String(mp.seq).padStart(3, '0'); }
+    delete r.deleted; r.v++; mhHist(r, user.id, 'restored', `Restored ${r.ref}`); touchMh(cid, r.mapId); save(); upsert(cid, 'manholes', r); return json(res, 200, { item: r });
+  }
+  if ((m = /^\/mh\/manholes\/([A-Za-z0-9]+)\/notes$/.exec(sub)) && M === 'POST') {
+    const r = mhFor(x, m[1]); const b = await readBody(req); const text = str(b.text, 2000) || bad('Write a note first');
+    const n = { id: uid(), by: user.id, at: now(), text }; r.notes = r.notes || []; r.notes.push(n); r.updatedAt = now(); mhHist(r, user.id, 'note', `Added a note: “${text.slice(0, 80)}${text.length > 80 ? '…' : ''}”`);
+    touchMh(cid, r.mapId); save(); upsert(cid, 'manholes', r); return json(res, 200, { item: r });
+  }
+  if ((m = /^\/mh\/manholes\/([A-Za-z0-9]+)\/notes\/([A-Za-z0-9]+)$/.exec(sub)) && M === 'DELETE') {
+    const r = mhFor(x, m[1]); const n = (r.notes || []).find((q) => q.id === m[2]) || notFound('That note was already deleted');
+    if (!(admin || n.by === user.id)) deny('Only the person who wrote it, or an admin, can delete this note');
+    r.notes = r.notes.filter((q) => q.id !== n.id); mhHist(r, user.id, 'note-deleted', 'Deleted a note'); touchMh(cid, r.mapId); save(); upsert(cid, 'manholes', r); return json(res, 200, { item: r });
+  }
+  if ((m = /^\/mh\/manholes\/([A-Za-z0-9]+)\/photos$/.exec(sub)) && M === 'POST') {
+    const r = mhFor(x, m[1]); throttle('mhphoto:' + user.id, 400, 3600e3, 'You’ve uploaded a lot of photos — wait a while and try again');
+    const b = await readBody(req, 12 * 1024 * 1024);
+    const ref = { kind: 'photo', cid, project: r.projectId };
+    const urlFull = await saveImage(b.image, 8 * 1024 * 1024, ref);
+    const thumb = b.thumb ? await saveImage(b.thumb, 700 * 1024, ref) : urlFull;
+    const ph = { id: uid(), url: urlFull, thumb, caption: str(b.caption, 300), w: Math.round(Number(b.w) || 0), h: Math.round(Number(b.h) || 0), takenAt: Number(b.takenAt) || 0, by: user.id, at: now() };
+    r.photos = r.photos || []; r.photos.push(ph); r.updatedAt = now(); mhHist(r, user.id, 'photo', `Added a photo${ph.caption ? ': ' + ph.caption : ''}`);
+    touchMh(cid, r.mapId); save(); upsert(cid, 'manholes', r); return json(res, 200, { item: r, photo: ph });
+  }
+  if ((m = /^\/mh\/manholes\/([A-Za-z0-9]+)\/photos\/([A-Za-z0-9]+)$/.exec(sub))) {
+    const r = mhFor(x, m[1]); const ph = (r.photos || []).find((q) => q.id === m[2]) || notFound('That photo was already deleted');
+    if (M === 'PATCH') { const b = await readBody(req); ph.caption = str(b.caption, 300); mhHist(r, user.id, 'photo-caption', 'Changed a photo caption'); touchMh(cid, r.mapId); save(); upsert(cid, 'manholes', r); return json(res, 200, { item: r }); }
+    if (M === 'DELETE') {
+      if (!(admin || ph.by === user.id)) deny('Only the person who added it, or an admin, can remove this photo');
+      r.photos = r.photos.filter((q) => q.id !== ph.id); dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb);
+      mhHist(r, user.id, 'photo-removed', 'Removed a photo'); touchMh(cid, r.mapId); save(); upsert(cid, 'manholes', r); return json(res, 200, { item: r });
+    }
+  }
+  // ---- exports
+  if ((m = /^\/mh\/maps\/([A-Za-z0-9]+)\/(register\.xlsx|index\.pdf|map\.pdf|report\.pdf)$/.exec(sub)) && M === 'GET') {
+    const mp = mhMapFor(x, m[1]); const p = d.projects[mp.projectId] || {};
+    const fields = (url.searchParams.get('fields') || '').split(',').filter(Boolean);
+    const list = Object.values(d.manholes).filter((r) => r.mapId === mp.id && !r.deleted).sort((a, b) => a.ref.localeCompare(b.ref, 'en', { numeric: true }));
+    const base = ts.safeName(`${p.ref ? p.ref + ' ' : ''}${mp.name}`);
+    if (m[2] === 'register.xlsx') return sendDownload(res, base + ' manhole register.xlsx', mhRegister(x, mp, p, list, fields));
+    const what = m[2].split('.')[0]; if (what === 'report' && url.searchParams.get('photos') !== '0') await mhLoadPhotos(list); else mhPhotoCache.clear();
+    const bg = what !== 'index' && url.searchParams.get('bg') !== '0' ? await mhStaticMap(list, mp).catch(() => null) : null;
+    return sendDownload(res, base + (what === 'index' ? ' manhole index.pdf' : what === 'map' ? ' manhole map.pdf' : ' manhole report.pdf'), mhPdf(x, mp, p, list, fields, what, bg), 'application/pdf');
+  }
+  notFound();
+}
+
+// ---- exports
+const MH_FIELDS = [
+  ['ref', 'Ref'], ['type', 'Type'], ['lat', 'Latitude'], ['lng', 'Longitude'], ['status', 'Status'], ['description', 'Description'],
+  ['coverLevel', 'Cover level (m)'], ['invertLevel', 'Invert level (m)'], ['depth', 'Depth (m)'], ['diameter', 'Diameter (mm)'], ['material', 'Material'],
+  ['pipeDirection', 'Pipe direction'], ['pipeDiameter', 'Pipe diameter (mm)'], ['pipesIn', 'Pipes in'], ['pipesOut', 'Pipes out'], ['condition', 'Condition'],
+  ['accessibility', 'Accessibility'], ['observations', 'Observations'], ['notes', 'Notes'], ['photos', 'Photos'], ['createdBy', 'Recorded by'], ['createdAt', 'Recorded'], ['updatedAt', 'Last updated'],
+];
+const MH_DEFAULT_FIELDS = ['ref', 'type', 'lat', 'lng', 'status', 'coverLevel', 'invertLevel', 'depth', 'condition'];
+const MH_STATUS_LABEL = { not_started: 'Not started', in_progress: 'In progress', completed: 'Completed' };
+function mhTypeOf(d, r) { const p = d.mhPresets[r.presetId]; return p ? { name: p.name, color: p.color } : r.type || { name: 'Unknown', color: '#868e96' }; }
+function mhVal(d, r, k) {
+  const dd = (t) => (t ? new Date(t).toLocaleDateString('en-GB', { timeZone: TZ, day: 'numeric', month: 'short', year: 'numeric' }) : '');
+  switch (k) {
+    case 'ref': return r.ref; case 'type': return mhTypeOf(d, r).name; case 'lat': return r.lat; case 'lng': return r.lng;
+    case 'status': return MH_STATUS_LABEL[r.status] || r.status; case 'description': return r.description || '';
+    case 'notes': return (r.notes || []).map((n) => `${personNameOf(n.by)}: ${n.text}`).join(' | ');
+    case 'photos': return (r.photos || []).length; case 'createdBy': return personNameOf(r.createdBy);
+    case 'createdAt': return dd(r.createdAt); case 'updatedAt': return dd(r.updatedAt);
+    default: { const v = r.survey ? r.survey[k] : null; return v == null ? '' : v; }
+  }
+}
+function mhFieldList(fields) { const ok = MH_FIELDS.filter(([k]) => fields.includes(k)); return ok.length ? ok : MH_FIELDS.filter(([k]) => MH_DEFAULT_FIELDS.includes(k)); }
+function mhRegister(x, mp, p, list, fields) {
+  const cols = mhFieldList(fields); const d = x.d;
+  const head = cols.map(([, l]) => ({ v: l, s: 'head' }));
+  const rows = [[{ v: `${mp.name} — manhole register`, s: 'title' }], [`${p.ref ? p.ref + ' · ' : ''}${p.name || ''}${mp.area ? ' · ' + mp.area : ''}`], [`Exported ${new Date().toLocaleString('en-GB', { timeZone: TZ })} · ${list.length} manholes · coordinates WGS84 (decimal degrees)`], [], head]
+    .concat(list.map((r) => cols.map(([k]) => { const v = mhVal(d, r, k); return typeof v === 'number' ? v : String(v); })));
+  const byType = {}; for (const r of list) { const t = mhTypeOf(d, r).name; byType[t] = byType[t] || { n: 0, done: 0 }; byType[t].n++; if (r.status === 'completed') byType[t].done++; }
+  const sum = [[{ v: 'Summary', s: 'title' }], [], [{ v: 'Type', s: 'head' }, { v: 'Manholes', s: 'head' }, { v: 'Completed', s: 'head' }]].concat(Object.entries(byType).map(([t, o]) => [t, o.n, o.done]))
+    .concat([[], [{ v: 'Total', s: 'bold' }, { v: list.length, s: 'bold' }, { v: list.filter((r) => r.status === 'completed').length, s: 'bold' }]]);
+  return ts.buildXlsx([{ name: 'Register', cols: cols.map(([k]) => (['description', 'observations', 'notes'].includes(k) ? 40 : k === 'type' ? 18 : k === 'lat' || k === 'lng' ? 13 : 12)), rows, freeze: 5 },
+    { name: 'Summary', cols: [24, 12, 12], rows: sum }], `${mp.name} manhole register`);
+}
+// A satellite picture behind the labelled map, from Google's Static Maps when a key is set (optional).
+const STATIC_KEY = process.env.GOOGLE_MAPS_SERVER_KEY || process.env.GOOGLE_MAPS_KEY || '';
+const merc = (lat, lng, z) => { const s = Math.sin((lat * Math.PI) / 180); const n = 256 * 2 ** z; return { x: ((lng + 180) / 360) * n, y: (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n }; };
+function mhFit(list, mp, W, H) {
+  const pts = list.length ? list : [mp.center];
+  const la = pts.map((r) => r.lat), ln = pts.map((r) => r.lng);
+  const c = { lat: (Math.min(...la) + Math.max(...la)) / 2, lng: (Math.min(...ln) + Math.max(...ln)) / 2 };
+  let z = 21; for (; z > 2; z--) { const a = merc(Math.max(...la), Math.min(...ln), z), b = merc(Math.min(...la), Math.max(...ln), z); if (b.x - a.x < W * 0.8 && b.y - a.y < H * 0.8) break; }
+  return { c, z };
+}
+async function mhStaticMap(list, mp) {
+  if (!STATIC_KEY || typeof fetch !== 'function') return null;
+  const { c, z } = mhFit(list, mp, 640, 640);
+  const u = `https://maps.googleapis.com/maps/api/staticmap?center=${c.lat},${c.lng}&zoom=${z}&size=640x640&scale=2&maptype=satellite&format=jpg&key=${encodeURIComponent(STATIC_KEY)}`;
+  const r = await fetch(u); if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null;
+  return { data: Buffer.from(await r.arrayBuffer()), w: 1280, h: 1280, c, z };
+}
+function mhDrawMap(doc, d, list, mp, bg, top, size) {
+  const x0 = doc.m + (doc.inner - size) / 2, y0 = top - size;
+  let proj; let zUsed;
+  if (bg) { const C = merc(bg.c.lat, bg.c.lng, bg.z); zUsed = bg.z; proj = (r) => { const p = merc(r.lat, r.lng, bg.z); return { x: x0 + size / 2 + ((p.x - C.x) / 640) * size, y: y0 + size / 2 - ((p.y - C.y) / 640) * size }; }; doc.image(bg.data, bg.w, bg.h, x0, y0, size, size); }
+  else { const { c, z } = mhFit(list, mp, size, size); zUsed = z; const C = merc(c.lat, c.lng, z); doc.rect(x0, y0, size, size, '#eef3ef');
+    for (let i = 1; i < 6; i++) { doc.line(x0 + (size * i) / 6, y0, x0 + (size * i) / 6, y0 + size, '#dbe4dd', 0.4); doc.line(x0, y0 + (size * i) / 6, x0 + size, y0 + (size * i) / 6, '#dbe4dd', 0.4); }
+    proj = (r) => { const p = merc(r.lat, r.lng, z); return { x: x0 + size / 2 + (p.x - C.x), y: y0 + size / 2 - (p.y - C.y) }; }; }
+  for (const r of list) {
+    const p = proj(r); if (p.x < x0 || p.x > x0 + size || p.y < y0 || p.y > y0 + size) continue;
+    const t = mhTypeOf(d, r); doc.circle(p.x, p.y, 4.2, t.color, '#ffffff', 1.1);
+    const lw = doc.textWidth(r.ref, 7, true) + 6; doc.rect(p.x + 5.5, p.y - 4.5, lw, 9.5, '#ffffff'); doc.text(r.ref, p.x + 8.5, p.y - 1.6, 7, { bold: true, color: '#1d2421' });
+  }
+  // north arrow and scale bar
+  doc.rect(x0 + size - 30, y0 + size - 40, 22, 32, '#ffffff'); doc.text('N', x0 + size - 22.5, y0 + size - 20, 10, { bold: true }); doc.line(x0 + size - 19, y0 + size - 35, x0 + size - 19, y0 + size - 24, '#1d2421', 1.4);
+  const mPerPt = (156543.03392 * Math.cos((((list[0] || mp.center).lat) * Math.PI) / 180)) / 2 ** zUsed * (bg ? 640 / size : 1);
+  const nice = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000].find((v) => v / mPerPt > 50) || 5000; const len = nice / mPerPt;
+  doc.rect(x0 + 8, y0 + 8, len + 16, 22, '#ffffff'); doc.rect(x0 + 16, y0 + 14, len, 3, '#1d2421'); doc.text(nice >= 1000 ? nice / 1000 + ' km' : nice + ' m', x0 + 16, y0 + 20, 7.5, { bold: true });
+  return y0;
+}
+function mhPdf(x, mp, p, list, fields, what, bg) {
+  const { Doc } = require('./lib/pdf'); const d = x.d;
+  const doc = new Doc({ footer: `Crewdesk - ${x.c.name} - ${mp.name}` });
+  doc.rect(0, doc.h - 96, doc.w, 96, '#0f4f2f');
+  doc.text(what === 'index' ? 'MANHOLE INDEX' : what === 'map' ? 'LABELLED MANHOLE MAP' : 'MANHOLE SURVEY REPORT', doc.m, doc.h - 36, 9, { bold: true, color: '#9fd3b5' });
+  doc.text(doc.fit(mp.name, doc.inner, 22, true), doc.m, doc.h - 62, 22, { bold: true, color: '#ffffff' });
+  doc.text(`${p.ref ? p.ref + ' · ' : ''}${p.name || ''}${mp.area ? ' · ' + mp.area : ''}  -  ${new Date().toLocaleDateString('en-GB', { timeZone: TZ, day: 'numeric', month: 'long', year: 'numeric' })}`, doc.m, doc.h - 82, 9, { color: '#cfe8d8' });
+  doc.y = doc.h - 110;
+  const done = list.filter((r) => r.status === 'completed').length, prog = list.filter((r) => r.status === 'in_progress').length;
+  if (what !== 'map') doc.stats([['Manholes', String(list.length)], ['Completed', String(done)], ['In progress', String(prog)], ['Not started', String(list.length - done - prog)]]);
+  if (what === 'map' || what === 'report') {
+    const size = what === 'map' ? doc.inner : Math.min(doc.inner, 380);
+    if (what === 'report') doc.heading('Labelled map');
+    doc.ensure(size + 30); const top = doc.y - 6; mhDrawMap(doc, d, list, mp, bg, top, size); doc.y = top - size - 10;
+    const types = {}; for (const r of list) { const t = mhTypeOf(d, r); types[t.name] = t.color; }
+    let lx = doc.m; doc.ensure(16); doc.y -= 10; for (const [n, col] of Object.entries(types)) { const w = doc.textWidth(n, 8) + 22; if (lx + w > doc.w - doc.m) { lx = doc.m; doc.y -= 13; } doc.circle(lx + 4, doc.y + 3, 3.5, col, '#ffffff', 0.8); doc.text(n, lx + 11, doc.y, 8); lx += w; }
+    doc.y -= 6; doc.para(bg ? 'Satellite imagery: Google. Positions in WGS84.' : 'Positions plotted from WGS84 coordinates (no background imagery).', 7.5, { color: '#667a6f' });
+    if (what === 'map') {
+      doc.heading('Key');
+      doc.table([{ label: 'Ref', w: 1 }, { label: 'Type', w: 2 }, { label: 'Status', w: 1.3 }, { label: 'Lat', w: 1.4, align: 'r' }, { label: 'Lng', w: 1.4, align: 'r' }], list.map((r) => [r.ref, mhTypeOf(d, r).name, MH_STATUS_LABEL[r.status], r.lat.toFixed(6), r.lng.toFixed(6)]), { size: 8 });
+      return doc.build();
+    }
+  }
+  const cols = mhFieldList(fields);
+  doc.heading('Manhole index');
+  const narrow = cols.filter(([k]) => !['description', 'observations', 'notes'].includes(k)).slice(0, 9);
+  doc.table(narrow.map(([k, l]) => ({ label: l, w: k === 'type' ? 2 : k === 'lat' || k === 'lng' ? 1.6 : k === 'status' ? 1.4 : 1, align: ['lat', 'lng', 'coverLevel', 'invertLevel', 'depth', 'diameter', 'pipeDiameter', 'pipesIn', 'pipesOut', 'photos'].includes(k) ? 'r' : undefined })),
+    list.map((r) => narrow.map(([k]) => { const v = mhVal(d, r, k); return typeof v === 'number' ? (k === 'lat' || k === 'lng' ? v.toFixed(6) : String(v)) : String(v); })), { size: 7.5 });
+  if (what === 'report') {
+    for (const r of list) {
+      doc.ensure(120); const t = mhTypeOf(d, r);
+      doc.heading(`${r.ref} - ${t.name}`, '#0f4f2f');
+      const kv = [['Status', MH_STATUS_LABEL[r.status]], ['Position', `${r.lat.toFixed(7)}, ${r.lng.toFixed(7)}`], ['Description', r.description || '-']]
+        .concat(MH_FIELDS.filter(([k]) => r.survey && r.survey[k] != null && r.survey[k] !== '').map(([k, l]) => [l, String(r.survey[k])]))
+        .concat([['Recorded', `${mhVal(d, r, 'createdAt')} by ${personNameOf(r.createdBy)}`], ['Edited by', [...new Set(r.editors || [])].map(personNameOf).join(', ')], ['Last updated', mhVal(d, r, 'updatedAt')]]);
+      for (const [k, v] of kv) { const ls = doc.wrap(v, doc.inner - 110, 9); doc.ensure(13 * ls.length + 2); doc.y -= 13; doc.text(k, doc.m, doc.y, 9, { bold: true, color: '#53625a' }); ls.forEach((l, i) => { if (i) doc.y -= 12; doc.text(l, doc.m + 110, doc.y, 9); }); }
+      if ((r.notes || []).length) { doc.y -= 6; doc.para('Notes', 9, { bold: true, after: 1 }); for (const n of r.notes) doc.para(`${new Date(n.at).toLocaleDateString('en-GB', { timeZone: TZ })} ${personNameOf(n.by)}: ${n.text}`, 8.5, { color: '#3b4a42', after: 1 }); }
+      const phs = (r.photos || []).slice(0, 6);
+      if (phs.length) {
+        doc.y -= 8; const w = (doc.inner - 16) / 3, h = w * 0.75; let i = 0;
+        for (const ph of phs) {
+          const f = mhPhotoCache.get(ph.thumb); if (!f) continue;
+          if (i % 3 === 0) { doc.ensure(h + 26); doc.y -= h; }
+          const xx = doc.m + (i % 3) * (w + 8); doc.image(f.data, f.w, f.h, xx, doc.y, w, h, true);
+          if (ph.caption) doc.text(doc.fit(ph.caption, w, 7.5), xx, doc.y - 10, 7.5, { color: '#53625a' });
+          if (i % 3 === 2 || i === phs.length - 1) doc.y -= 16; i++;
+        }
+      }
+    }
+  }
+  return doc.build();
+}
+// Photo thumbnails for the PDF report are fetched just before it's made (they may live in R2).
+const mhPhotoCache = new Map();
+async function mhLoadPhotos(list) {
+  mhPhotoCache.clear();
+  for (const r of list) for (const ph of (r.photos || []).slice(0, 6)) {
+    try { const f = await storage.getFile(path.basename(ph.thumb)); if (f && /jpeg/.test(f.type)) { const dim = jpegSize(f.data); if (dim) mhPhotoCache.set(ph.thumb, { data: f.data, w: dim.w, h: dim.h }); } } catch (_) {}
+  }
+}
+function jpegSize(b) { let i = 2; while (i < b.length) { if (b[i] !== 0xff) return null; const mk = b[i + 1]; const len = b.readUInt16BE(i + 2); if (mk >= 0xc0 && mk <= 0xc3) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; i += 2 + len; } return null; }
+
 // ---------------------------------------------------------------- time tracking & timesheets
 const CAT_KEYS = Object.keys(ts.CATS);
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -2334,8 +2705,10 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 for (const [ext, type] of Object.entries(DOC_TYPES)) if (!TYPES['.' + ext]) TYPES['.' + ext] = type;
 // Map data comes from OpenFreeMap (vector maps) with OpenStreetMap as a fallback; nothing else loads from other sites.
 const SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tiles.openfreemap.org https://tile.openstreetmap.org; " +
-    "font-src 'self'; connect-src 'self' https://tiles.openfreemap.org; worker-src 'self' blob:; child-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+  // Manhole maps add Google Maps (when a key is set), Esri satellite imagery and OpenStreetMap place search.
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://maps.googleapis.com https://maps.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "img-src 'self' data: blob: https://tiles.openfreemap.org https://tile.openstreetmap.org https://*.googleapis.com https://*.gstatic.com https://*.google.com https://server.arcgisonline.com https://services.arcgisonline.com; " +
+    "font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://tiles.openfreemap.org https://*.googleapis.com https://maps.gstatic.com https://server.arcgisonline.com https://services.arcgisonline.com https://nominatim.openstreetmap.org; worker-src 'self' blob:; child-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   'X-Content-Type-Options': 'nosniff',
   // Sends only this site's address (never the page path) to map servers, which their usage policy requires.
   'Referrer-Policy': 'strict-origin-when-cross-origin',
