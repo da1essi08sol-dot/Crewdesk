@@ -1,3 +1,4 @@
+const path = require('path');
 // Records tutorial videos with captions. Usage: node rec.js <name> [desktop]
 const { chromium, devices } = require('playwright'); const fs = require('fs');
 const base = 'http://localhost:3998'; const OUT = __dirname + '/.work/raw'; const TILES = __dirname + '/.work/tiles';
@@ -15,7 +16,10 @@ async function setup(name, desktop) {
   const browser = await chromium.launch();
   const size = desktop ? { width: 1280, height: 720 } : { width: 390, height: 664 };
   const ctx = await browser.newContext(Object.assign({}, desktop ? { viewport: size } : devices['iPhone 13'], { deviceScaleFactor: desktop ? 1 : 2, recordVideo: { dir: OUT + '/' + outName, size: desktop ? size : { width: 390, height: 664 } } }));
-  const page = await ctx.newPage(); page.on('pageerror', (e) => console.log('ERR', e.message));
+  const page = await ctx.newPage(); page.on('pageerror', (e) => console.log('ERR', e.message)); const t0 = Date.now();
+  // Narration: each card/caption is one spoken line; the video waits for the line before moving to the next one.
+  const vf = path.join(__dirname, 'voice', name + '.json'); const voice = fs.existsSync(vf) ? JSON.parse(fs.readFileSync(vf, 'utf8')).segs : null;
+  const starts = []; const seg = async () => { if (voice) { const i = starts.length; if (i > 0 && voice[i - 1]) { const need = starts[i - 1] + (voice[i - 1].end - voice[i - 1].start) * 1000 + 200; const left = need - (Date.now() - t0); if (left > 0) await page.waitForTimeout(left); } } starts.push(Date.now() - t0); };
   await ctx.grantPermissions(['geolocation']); await ctx.setGeolocation({ latitude: 54.77612, longitude: -1.58455, accuracy: 4 });
   // mock aerial imagery (this machine can't reach real map servers)
   const tile = (z, x, y) => { const f = TILES + `/${z}/${x}/${y}.jpg`; return fs.existsSync(f) ? fs.readFileSync(f) : fs.readFileSync(TILES + '/grass.jpg'); };
@@ -32,17 +36,17 @@ async function setup(name, desktop) {
   const T = {
     page, H, w, base, desk: desktop,
     async go(hash, ms = 900) { await page.evaluate((h) => { location.hash = h; }, hash).catch(async () => { await page.goto(base + '/' + hash); }); await w(ms); await inject(); },
-    async cap(text, ms = 2600) { await inject(); await page.evaluate((t) => { const c = document.getElementById('tut-cap'); c.classList.remove('on'); setTimeout(() => { c.textContent = t; c.classList.add('on'); }, 120); }, text); await w(ms); },
+    async cap(text, ms = 2600) { await seg(); await inject(); await page.evaluate((t) => { const c = document.getElementById('tut-cap'); c.classList.remove('on'); setTimeout(() => { c.textContent = t; c.classList.add('on'); }, 120); }, text); await w(ms); },
     async nocap() { await page.evaluate(() => document.getElementById('tut-cap') && document.getElementById('tut-cap').classList.remove('on')); },
     async tap(sel, ms = 900) { const l = page.locator(sel).first(); await l.scrollIntoViewIfNeeded().catch(() => {}); const b = await l.boundingBox();
       if (b) await page.evaluate(([x, y]) => { const d = document.createElement('div'); d.className = 'tut-tap'; d.style.left = x + 'px'; d.style.top = y + 'px'; document.body.appendChild(d); setTimeout(() => d.remove(), 800); }, [b.x + b.width / 2, b.y + b.height / 2]);
       await w(250); await l.click(); await w(ms); },
     async type(sel, text) { await page.locator(sel).first().click(); await page.keyboard.type(text, { delay: 45 }); await w(300); },
-    async card(title, sub, ms = 2600) { await inject(); await page.evaluate(([t, s]) => { let c = document.getElementById('tut-card'); if (!c) { c = document.createElement('div'); c.id = 'tut-card'; document.body.appendChild(c); }
+    async card(title, sub, ms = 2600) { await seg(); await inject(); await page.evaluate(([t, s]) => { let c = document.getElementById('tut-card'); if (!c) { c = document.createElement('div'); c.id = 'tut-card'; document.body.appendChild(c); }
       c.style.opacity = 1; c.innerHTML = `<img src="/icon-512.png" alt=""><h1></h1><p></p>`; c.querySelector('h1').textContent = t; c.querySelector('p').textContent = s; }, [title, sub]); await w(ms); },
     async uncard() { await page.evaluate(() => { const c = document.getElementById('tut-card'); if (c) { c.style.opacity = 0; setTimeout(() => c.remove(), 500); } }); await w(600); },
     async scroll(y, ms = 900) { await page.evaluate((y) => { (document.scrollingElement).scrollBy({ top: y, behavior: 'smooth' }); }, y); await w(ms); },
-    async done() { await w(400); const v = page.video(); await ctx.close(); await browser.close(); const p = await v.path(); fs.renameSync(p, OUT + '/' + outName + '.webm'); fs.rmSync(OUT + '/' + outName, { recursive: true, force: true }); console.log('saved', outName); },
+    async done() { if (voice && starts.length && voice[starts.length - 1]) { const i = starts.length - 1; const left = starts[i] + (voice[i].end - voice[i].start) * 1000 + 300 - (Date.now() - t0); if (left > 0) await w(left); } fs.writeFileSync(OUT + '/' + outName + '.starts.json', JSON.stringify(starts)); await w(400); const v = page.video(); await ctx.close(); await browser.close(); const p = await v.path(); fs.renameSync(p, OUT + '/' + outName + '.webm'); fs.rmSync(OUT + '/' + outName, { recursive: true, force: true }); console.log('saved', outName); },
   };
   await page.goto(base + '/#/home'); await w(1200); await inject();
   return T;

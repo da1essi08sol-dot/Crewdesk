@@ -22,5 +22,9 @@ for s in $LIST; do
   ffmpeg -loglevel error -y -i "$APP/public/tutorials/$s.mp4" -ss 6 -frames:v 1 -q:v 4 "$APP/public/tutorials/$s.jpg"
   ffmpeg -loglevel error -y -ss 1.3 -i "$W/raw/$s-desk.webm" -vf fps=30 -c:v libx264 -preset veryfast -crf 30 -pix_fmt yuv420p -movflags +faststart -an "$APP/public/tutorials/desk/$s.mp4"
   ffmpeg -loglevel error -y -i "$APP/public/tutorials/desk/$s.mp4" -ss 6 -frames:v 1 -vf scale=640:-2 -q:v 4 "$APP/public/tutorials/desk/$s.jpg"
+  if [ -f "$T/voice/$s.mp3" ] && [ -f "$T/voice/$s.json" ]; then
+    node "$T/mux.js" "$s" "$APP/public/tutorials/$s.mp4" "$W/raw/$s.starts.json" 1.3
+    node "$T/mux.js" "$s" "$APP/public/tutorials/desk/$s.mp4" "$W/raw/$s-desk.starts.json" 1.3
+  fi
   echo "encoded $s"
 done
