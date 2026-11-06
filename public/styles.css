@@ -1060,7 +1060,7 @@ html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .w
 .btn.xl svg { width: 20px; height: 20px; }
 .btn.disabled, .btn[aria-disabled="true"] { opacity: .4; pointer-events: none; }
 .pill.live { background: var(--red-soft); color: var(--red); }
-.pill.live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: rec 1.6s ease-in-out infinite; }
+.pill.live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .pill.st-new { background: var(--blue-soft); color: var(--blue); }
 .pill.st-seen { background: var(--slate-soft); color: var(--slate); }
 .pill.st-doing { background: var(--amber-soft); color: var(--amber); }
@@ -1125,7 +1125,7 @@ html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .w
 .daybar { position: relative; height: 22px; border-radius: 6px; background: var(--surface-2); margin-top: 8px; overflow: hidden; }
 .daybar.empty { height: 8px; }
 .daybar > i { position: absolute; top: 0; bottom: 0; border-radius: 3px; min-width: 2px; }
-.daybar > i.live { background-image: linear-gradient(90deg, transparent 60%, rgba(255,255,255,.35)) !important; background-blend-mode: overlay; animation: rec 1.6s ease-in-out infinite; }
+.daybar > i.live { background-image: linear-gradient(90deg, transparent 60%, rgba(255,255,255,.35)) !important; background-blend-mode: overlay; }
 .daybar > em { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--red); border-radius: 1px; }
 .daybar .ticks { position: absolute; inset: 0; pointer-events: none; }
 .daybar .ticks b { position: absolute; top: 4px; transform: translateX(-50%); font-size: 9.5px; font-weight: 600; color: var(--muted); opacity: .7; }
@@ -1171,7 +1171,7 @@ html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .w
 .trow .tplan svg { width: 13px; height: 13px; }
 .trow .tplan.over { color: var(--red); font-weight: 600; }
 .live-dot { color: var(--red); font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
-.live-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: rec 1.6s ease-in-out infinite; }
+.live-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .playbtn { width: 40px; height: 40px; flex: none; border-radius: 50%; border: 1px solid var(--line-2); background: var(--surface); color: var(--accent-text); display: grid; place-items: center; cursor: pointer; transition: transform .3s var(--bounce), background-color .2s; }
 .playbtn svg { width: 16px; height: 16px; fill: currentColor; margin-left: 2px; }
 .playbtn:hover { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
@@ -1306,7 +1306,7 @@ a.pfill:hover, button.pfill:hover { filter: brightness(1.06); }
 .timer, .timer { flex-direction: column !important; text-align: center !important; gap: 14px !important; padding: 22px 6px 16px !important; }
 .timer .state { font-size: 15px; font-weight: 700; color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 99px; background: var(--surface-2); }
 .timer .state.live { color: var(--red); background: var(--red-soft); }
-.timer .state.live i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; animation: rec 1.6s ease-in-out infinite; }
+.timer .state.live i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
 .is-lunch .timer .state.live { color: #1f7fb3; background: color-mix(in srgb, #4fb3e8 18%, transparent); }
 .bigbtn { --size: 184px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
 .bigbtn svg { width: 70px; height: 70px; }
