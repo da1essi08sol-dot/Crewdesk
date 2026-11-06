@@ -2194,11 +2194,12 @@ function mhFit(list, mp, W, H) {
 }
 async function mhStaticMap(list, mp) {
   if (typeof fetch !== 'function') return null;
-  const { c, z } = mhFit(list, mp, 640, 640);
+  let { c, z } = mhFit(list, mp, 640, 640);
   const jpeg = async (u) => { try { const r = await fetch(u); if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null; return { data: Buffer.from(await r.arrayBuffer()), w: 1280, h: 1280, c, z }; } catch (_) { return null; } };
   let img = null;
   if (STATIC_KEY && !overFree('gStatic')) { countUse('gStatic'); img = await jpeg(`https://maps.googleapis.com/maps/api/staticmap?center=${c.lat},${c.lng}&zoom=${z}&size=640x640&scale=2&maptype=satellite&format=jpg&key=${encodeURIComponent(STATIC_KEY)}`); if (img) img.src = 'Google'; }
   if (!img) { // free Esri imagery: the satellite tiles covering the same square, placed side by side in the PDF
+    if (z > 19) z = 19; // Esri's sharpest level; zooming further would only stretch it
     const tz = Math.min(z + 1, 19), f = 2 ** (tz - z), C = merc(c.lat, c.lng, z), span = 256 / f; // tile size in zoom-z pixels
     const x0 = Math.floor((C.x - 320) / span), x1 = Math.floor((C.x + 320) / span), y0 = Math.floor((C.y - 320) / span), y1 = Math.floor((C.y + 320) / span);
     const jobs = []; for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) jobs.push({ tx, ty });
@@ -2256,7 +2257,7 @@ function mhPdf(x, mp, p, list, fields, what, bg) {
     doc.ensure(size + 30); const top = doc.y - 6; mhDrawMap(doc, d, list, mp, bg, top, size); doc.y = top - size - 10;
     const types = {}; for (const r of list) { const t = mhTypeOf(d, r); types[t.name] = t.color; }
     let lx = doc.m; doc.ensure(16); doc.y -= 10; for (const [n, col] of Object.entries(types)) { const w = doc.textWidth(n, 8) + 22; if (lx + w > doc.w - doc.m) { lx = doc.m; doc.y -= 13; } doc.circle(lx + 4, doc.y + 3, 3.5, col, '#ffffff', 0.8); doc.text(n, lx + 11, doc.y, 8); lx += w; }
-    doc.y -= 6; doc.para(bg ? 'Satellite imagery: Google. Positions in WGS84.' : 'Positions plotted from WGS84 coordinates (no background imagery).', 7.5, { color: '#667a6f' });
+    doc.y -= 6; doc.para(bg ? `Satellite imagery: ${bg.src || 'Google'}. Positions in WGS84; grid squares match the scale bar.` : 'Positions plotted from WGS84 coordinates (no background imagery).', 7.5, { color: '#667a6f' });
     if (what === 'map') {
       doc.heading('Key');
       doc.table([{ label: 'Ref', w: 1 }, { label: 'Type', w: 2 }, { label: 'Status', w: 1.3 }, { label: 'Lat', w: 1.4, align: 'r' }, { label: 'Lng', w: 1.4, align: 'r' }], list.map((r) => [r.ref, mhTypeOf(d, r).name, MH_STATUS_LABEL[r.status], r.lat.toFixed(6), r.lng.toFixed(6)]), { size: 8 });
