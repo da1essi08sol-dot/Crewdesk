@@ -397,6 +397,31 @@ function schedule(from, to, opts = {}) {
   flushGap();
   return html || `<div class="card empty small">${ic('cal')}<div>Nothing planned${S.calMine || S.calHide.size ? ' that matches your filters' : ''}.</div></div>`;
 }
+// Phones, month view: the selected day and the rest of the month, listed under the grid.
+function monthSchedule(sel) {
+  const cur = parseD(sel); const monthStart = dstr(new Date(cur.getFullYear(), cur.getMonth(), 1)); const mEnd = dstr(new Date(cur.getFullYear(), cur.getMonth() + 1, 0));
+  const earlier = sel > monthStart ? calendarItems(monthStart, dstr(addDays(cur, -1))).length : 0;
+  return `${earlier ? `<button class="cg-earlier" data-act="cal-pick" data-d="${monthStart}">${icSize('down', 14, 'transform:rotate(180deg)')} ${plural(earlier, 'earlier item')} this month</button>` : ''}${schedule(sel, mEnd, { keep: sel })}`;
+}
+// Picking another day in the month or week already on screen: move the highlight and update the list in place —
+// no redraw of the page, so it's instant and smooth.
+function calSelect(ds) {
+  S.calDate = ds; history.replaceState(null, '', '#/calendar/' + ds); current.key = location.hash; current.args = [ds];
+  $$('.cal-cell, .wk-day').forEach((c) => { const on = c.dataset.d === ds; c.classList.toggle('sel', on); c.setAttribute(c.classList.contains('wk-day') ? 'aria-pressed' : 'aria-selected', on); });
+  const main = $('#view'); if (main) main._html = '';
+  if (S.calView === 'week' && !calWide()) {
+    $$('.cg').forEach((g) => g.classList.toggle('sel', g.dataset.day === ds));
+    const g = $(`.cg[data-day="${ds}"]`);
+    if (g) { const top = g.getBoundingClientRect().top + window.scrollY - (($('.topbar') || {}).offsetHeight || 56) - 10; window.scrollTo({ top: Math.max(0, top), behavior: motionOK() ? 'smooth' : 'auto' }); }
+    return;
+  }
+  const box = calWide() ? $('.cal-agenda') : $('[data-msched]');
+  if (!box) return renderView(false);
+  if (calWide()) { const tmp = document.createElement('div'); tmp.innerHTML = dayAgenda(ds); box.replaceWith(tmp.firstElementChild); }
+  else box.innerHTML = monthSchedule(ds);
+  const nb = calWide() ? $('.cal-agenda') : box;
+  if (nb && motionOK()) nb.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 170, easing: 'ease-out' });
+}
 function calFilters() {
   const kinds = [['event', 'Events', CAL_C.event], ['task', 'Tasks', CAL_C.task], ['project', 'Project dates', CAL_C.start]];
   return `<div class="cal-filters" role="toolbar" aria-label="Show">
@@ -466,16 +491,14 @@ VIEWS.calendar = {
       const lastRow = cells[35].getMonth() !== cur.getMonth() ? 35 : 42;
       const items = calendarItems(dstr(cells[0]), dstr(cells[lastRow - 1]));
       const max = calWide() ? 3 : 0;
-      const monthStart = dstr(first); const mEnd = dstr(new Date(cur.getFullYear(), cur.getMonth() + 1, 0));
-      const fromSel = sel >= monthStart && sel <= mEnd ? sel : monthStart;
-      const earlier = calendarItems(monthStart, dstr(addDays(parseD(fromSel), -1))).length;
+
       body = `<div class="cal-surface ${anim}" data-swipe="cal"><div class="cal-dows">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d, i) => `<span class="${i > 4 ? 'we' : ''}">${calWide() ? d : d[0]}</span>`).join('')}</div>
         <div class="cal-grid" role="grid">${cells.slice(0, lastRow).map((d) => { const ds = dstr(d); const its = items.filter((x) => x.date === ds); const wk = d.getDay() === 0 || d.getDay() === 6;
           return `<div class="cal-cell ${d.getMonth() !== cur.getMonth() ? 'other' : ''} ${ds === todayStr() ? 'today' : ''} ${ds === sel ? 'sel' : ''} ${wk ? 'we' : ''}" role="gridcell" data-act="cal-pick" data-d="${ds}" tabindex="0" aria-selected="${ds === sel}" aria-label="${esc(d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }))}${its.length ? ', ' + plural(its.length, 'item') : ''}">
             <span class="dn">${d.getDate()}</span>
             <span class="evs">${its.slice(0, max).map(calPill).join('')}${its.length > max && max ? `<span class="cal-more">${its.length - max} more</span>` : ''}</span>
             ${calMarks(its)}</div>`; }).join('')}</div></div>
-        ${calWide() ? dayAgenda(sel) : `<div class="sched ${S.calAgAnim ? 'cal-anim' : ''}">${earlier && fromSel > monthStart ? `<button class="cg-earlier" data-act="cal-pick" data-d="${monthStart}">${icSize('down', 14, 'transform:rotate(180deg)')} ${plural(earlier, 'earlier item')} this month</button>` : ''}${schedule(fromSel, mEnd, { keep: fromSel })}</div>`}`;
+        ${calWide() ? dayAgenda(sel) : `<div class="sched ${S.calAgAnim ? 'cal-anim' : ''}" data-msched>${monthSchedule(sel)}</div>`}`;
     } else if (view === 'week') {
       const st = monday(cur); const en = addDays(st, 6);
       title = st.getMonth() === en.getMonth() ? `${st.getDate()}–${en.getDate()} ${en.toLocaleDateString('en-GB', { month: 'short' })} <span class="yr">${en.getFullYear()}</span>`
@@ -512,23 +535,27 @@ VIEWS.calendar = {
     sw.addEventListener('pointercancel', () => { x0 = null; });
   },
 };
-function calGo(ds, anim) { S.calDate = ds; S.calAnim = anim || ''; history.replaceState(null, '', '#/calendar/' + ds); current.key = location.hash; current.args = [ds]; renderView(false); }
+function calGo(ds, anim) { S.calDate = ds; S.calAnim = anim || ''; S.calAgAnim = !!anim && anim.trim() !== ''; history.replaceState(null, '', '#/calendar/' + ds); current.key = location.hash; current.args = [ds]; renderView(false); }
 function calStep(n) {
   const d = parseD(S.calDate);
   if (S.calView === 'month') { const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); }
   else d.setDate(d.getDate() + (S.calView === 'week' ? 7 : S.calView === 'list' ? 28 : 1) * n);
-  S.calAgAnim = true; calGo(dstr(d), n > 0 ? 'from-right' : 'from-left');
+  calGo(dstr(d), n > 0 ? 'from-right' : 'from-left');
 }
 A['cal-view'] = (el) => { S.calView = el.dataset.v; store.set('cd_calView', S.calView); S.calAnim = ' '; S.calAgAnim = true; renderView(false); };
-A['cal-today'] = () => { const t = todayStr(); if (t === S.calDate) return; S.calAgAnim = true; calGo(t, t > S.calDate ? 'from-right' : 'from-left'); };
+A['cal-today'] = () => { const t = todayStr(); if (t === S.calDate) return; if ((S.calView === 'month' && t.slice(0, 7) === S.calDate.slice(0, 7)) || (S.calView === 'week' && !calWide() && dstr(monday(parseD(t))) === dstr(monday(parseD(S.calDate))))) return calSelect(t); calGo(t, t > S.calDate ? 'from-right' : 'from-left'); };
 A['cal-step'] = (el) => calStep(Number(el.dataset.d));
 A['cal-pick'] = (el, e) => {
   if (e && e.target.closest('.cal-pill')) return;
   const ds = el.dataset.d;
   if (ds === S.calDate && S.calView === 'month' && calWide()) { S.calView = 'day'; store.set('cd_calView', 'day'); return calGo(ds, ' '); } // second click opens the day
-  const other = S.calView === 'month' && parseD(ds).getMonth() !== parseD(S.calDate).getMonth();
+  const prev = S.calDate;
+  const sameMonth = ds.slice(0, 7) === prev.slice(0, 7);
+  const sameWeek = dstr(monday(parseD(ds))) === dstr(monday(parseD(prev)));
+  if ((S.calView === 'month' && sameMonth) || (S.calView === 'week' && sameWeek && !calWide())) return calSelect(ds);
+  const other = S.calView === 'month' && !sameMonth;
   if (S.calView === 'week' && !calWide()) S.calScrollTo = ds;
-  S.calAgAnim = true; calGo(ds, other ? (ds > S.calDate ? 'from-right' : 'from-left') : '');
+  calGo(ds, other ? (ds > prev ? 'from-right' : 'from-left') : '');
 };
 A['cal-goday'] = (el) => { S.calView = 'day'; store.set('cd_calView', 'day'); calGo(el.dataset.d, ' '); };
 A['cal-slot'] = (el, e) => { // tap an empty hour to add an event then
