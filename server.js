@@ -1231,6 +1231,19 @@ async function api(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  // --- a private demo company: you as owner, everyone else fake. One per person; opening it again just switches to it.
+  if (p === '/api/demo-company' && M === 'POST') {
+    const have = user.demoCid && db.companies[user.demoCid] && db.companies[user.demoCid].members[user.id];
+    if (!have) {
+      throttle('demo:' + user.id, 5, 3600e3);
+      const r = require('./lib/demo').build(user, () => uid(8));
+      const c = { id: uid(), name: 'Northgate Geomatics (Demo)', code: companyCode(), ownerId: user.id, createdAt: now(), demo: true,
+        settings: Object.assign({}, DEFAULT_SETTINGS, { allowCodeJoin: false, membersInvite: false }), invites: {}, members: r.members, profile: { visibility: 'private' } };
+      Object.assign(db.users, r.users); db.companies[c.id] = c; db.data[c.id] = r.data; cdata(c.id);
+      user.demoCid = c.id; allChunksDirty = true; save();
+    }
+    return json(res, 200, { company: { id: user.demoCid, name: db.companies[user.demoCid].name, role: 'owner' }, companies: companiesFor(user.id) });
+  }
   // --- companies
   if (p === '/api/companies' && M === 'POST') {
     throttle('newco:' + user.id, 10, 3600e3);

@@ -447,6 +447,7 @@ VIEWS.more = {
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
         <a href="#/tutorials">${ic('play')}<span class="grow">Tutorials</span><span class="tiny muted">${TUTORIALS.length + 1} videos</span>${ic('right')}</a>
+        <button data-act="demo-co">${ic('building')}<span class="grow">Demo</span><span class="tiny muted">Practice company</span>${ic('right')}</button>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
         ${canInvite() ? `<button data-act="invite-new">${ic('userplus')}<span class="grow">Invite people</span>${ic('right')}</button>` : ''}
@@ -599,3 +600,11 @@ VIEWS.tutorials = {
   },
 };
 
+
+// A private practice company: you're the owner, everyone else is fake (they can't sign in and are never emailed).
+A['demo-co'] = async () => {
+  const has = S.companies.some((c) => c.name === 'Northgate Geomatics (Demo)');
+  if (!has && !(await confirmBox('Open a demo company?', 'Crewdesk makes “Northgate Geomatics (Demo)” — a pretend survey company with 13 fake staff, projects, timesheets, chats and calendar. Only you can get in. Try anything there; your real company isn’t touched. Switch back from the company menu at the top, and delete it any time in its Company settings.', 'Create demo', false))) return;
+  try { const r = await api('POST', '/api/demo-company'); S.companies = r.companies; S.cid = r.company.id; resetCompanyState(); location.hash = '#/home'; await loadCompany(); toast('You’re in the demo company — switch back from the company menu'); }
+  catch (e) { toast(e.message, true); }
+};
