@@ -639,7 +639,8 @@ const RULES = {
         if ('visibility' in b) o.visibility = vis(b.visibility);
         if ('members' in b) o.members = memberIds(x.c, b.members);
       }
-      if ('archived' in b) { o.archived = !!b.archived; o.archivedAt = o.archived ? now() : 0; }
+      if ('archived' in b) { o.archived = !!b.archived; o.archivedAt = o.archived ? now() : 0; if (!o.archived) o.folder = ''; }
+      if ('folder' in b) o.folder = str(b.folder, 60);
       return o;
     },
     defaults: (x) => Object.assign({}, PROJECT_DEFAULTS, { members: [], color: PROJECT_COLORS[Object.keys(x.d.projects).length % PROJECT_COLORS.length] }),
@@ -1544,6 +1545,37 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     return json(res, 200, { ok: true });
   }
 
+  // --- the archive: folders and clearing (admins)
+  if (sub === '/archive/folder' && M === 'PATCH') {
+    if (!isAdmin(role)) deny('Only admins can rename archive folders');
+    const b = await readBody(req); const from = str(b.from, 60), to = str(b.to, 60); let n = 0;
+    for (const p of Object.values(d.projects)) if (p.archived && (p.folder || '') === from) { p.folder = to; p.updatedAt = now(); upsert(cid, 'projects', p); n++; }
+    save(); return json(res, 200, { moved: n });
+  }
+  if (sub === '/archive/auto' && M === 'POST') {
+    if (!isAdmin(role)) deny('Only admins can organise the archive');
+    const b = await readBody(req); const by = b.by === 'month' ? 'month' : 'year'; let n = 0;
+    for (const p of Object.values(d.projects)) {
+      if (!p.archived || p.folder) continue;
+      const z = ts.zoneParts(p.archivedAt || p.updatedAt || p.createdAt, TZ).date; // YYYY-MM-DD
+      p.folder = by === 'month' ? `${z.slice(0, 4)}-${z.slice(5, 7)} ${ts.MONTHS[Number(z.slice(5, 7)) - 1]}` : z.slice(0, 4);
+      p.updatedAt = now(); upsert(cid, 'projects', p); n++;
+    }
+    save(); return json(res, 200, { filed: n });
+  }
+  if (sub === '/archive/clear' && M === 'POST') {
+    if (!isAdmin(role)) deny('Only admins can clear the archive');
+    const b = await readBody(req);
+    if (b.confirm !== true) bad('Confirm to clear the archive');
+    const folder = 'folder' in b ? str(b.folder, 60) : null; let n = 0;
+    for (const p of Object.values(d.projects)) {
+      if (!p.archived || (folder !== null && (p.folder || '') !== folder)) continue;
+      delete d.projects[p.id]; dropProjectData(cid, d, p); n++;
+    }
+    save(); broadcast(cid, { t: 'reload' });
+    return json(res, 200, { cleared: n });
+  }
+
   // --- project photos
   if (sub === '/photos' && M === 'POST') {
     const b = await readBody(req, 14 * 1024 * 1024);
@@ -1611,7 +1643,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   }
 
   // --- time: entries, days, timesheets (see timeApi)
-  if (/^\/(entries|days|timesheet|timesheets|gdrive)(\/|$)|^\/projects\/[A-Za-z0-9]+\/timesheet$/.test(sub)) return timeApi(req, res, url, x, sub);
+  if (/^\/(entries|days|timesheet|timesheets|gdrive)(\/|$)|^\/projects\/[A-Za-z0-9]+\/(timesheet|pdf)$/.test(sub)) return timeApi(req, res, url, x, sub);
 
   // --- generic collections
   if ((m = /^\/(projects|tasks|clients|pings|events|finance|teams|suggestions)(?:\/([A-Za-z0-9]+))?$/.exec(sub))) {
@@ -1647,15 +1679,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
       if (M === 'DELETE') {
         if (!R.del(x, item)) deny();
         delete store[id];
-        if (coll === 'projects') {
-          // Its tasks, photos and chat go with it. Time already logged stays on people's timesheets, under the project's name.
-          for (const t of Object.values(d.tasks)) if (t.projectId === id) delete d.tasks[t.id];
-          for (const ph of Object.values(d.photos)) if (ph.projectId === id) { delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); }
-          for (const e of Object.values(d.events)) if (e.projectId === id) e.projectId = '';
-          for (const e of Object.values(d.entries)) if (e.projectId === id) { e.pname = e.pname || item.name; e.pref = e.pref || item.ref || ''; touchEntry(cid, e); }
-          dropMessageFiles(d.messages['project:' + id]); delete d.messages['project:' + id]; touchChannel(cid, 'project:' + id);
-          broadcast(cid, { t: 'reload' });
-        }
+        if (coll === 'projects') { dropProjectData(cid, d, item); broadcast(cid, { t: 'reload' }); }
         if (coll === 'tasks') for (const e of Object.values(d.entries)) if (e.taskId === id) { e.tname = e.tname || item.title; touchEntry(cid, e); }
         if (coll === 'pings') for (const fid of (item.files || []).map((f) => f.id)) { const f = d.files[fid]; if (f) { dropFile(f.url); if (f.thumb && f.thumb !== f.url) dropFile(f.thumb); delete d.files[fid]; } }
         if (coll === 'clients') for (const p of Object.values(d.projects)) if (p.clientId === id) { p.clientId = ''; upsert(cid, 'projects', p); }
@@ -1666,6 +1690,69 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   }
   void cur;
   notFound('Not found');
+}
+// A project's tasks, photos and chat go with it. Time already logged stays on people's timesheets, under the project's name.
+function dropProjectData(cid, d, item) {
+  const id = item.id;
+  for (const t of Object.values(d.tasks)) if (t.projectId === id) delete d.tasks[t.id];
+  for (const ph of Object.values(d.photos)) if (ph.projectId === id) { delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); }
+  for (const e of Object.values(d.events)) if (e.projectId === id) e.projectId = '';
+  for (const e of Object.values(d.entries)) if (e.projectId === id) { e.pname = e.pname || item.name; e.pref = e.pref || item.ref || ''; touchEntry(cid, e); }
+  dropMessageFiles(d.messages['project:' + id]); delete d.messages['project:' + id]; touchChannel(cid, 'project:' + id);
+}
+
+function projectPdf(x, p) {
+  const { Doc } = require('./lib/pdf'); const d = x.d; const cname = (d.clients[p.clientId] || {}).name || '';
+  const doc = new Doc({ footer: `Crewdesk - ${x.c.name} - ${p.name}` });
+  const nm = (id) => personNameOf(id);
+  const tasks = Object.values(d.tasks).filter((t) => t.projectId === p.id).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const entries = Object.values(d.entries).filter((e) => e.projectId === p.id && canSeeEntry(x, e)).sort((a, b) => a.start - b.start);
+  const nowT = Date.now(); const mins = (e) => Math.max(0, Math.round(((e.end || nowT) - e.start) / 60000));
+  const paid = entries.filter((e) => !ts.CATS[e.category] || ts.CATS[e.category].paid !== false);
+  const byTask = {}, byPerson = {}; let actual = 0;
+  for (const e of paid) { const m = mins(e); actual += m; byTask[e.taskId || ''] = (byTask[e.taskId || ''] || 0) + m; byPerson[e.userId] = (byPerson[e.userId] || 0) + m; }
+  const planned = p.plannedHours ? Math.round(p.plannedHours * 60) : tasks.reduce((a, t) => a + (t.planMins || 0), 0);
+  const hrs = (m) => (m / 60).toFixed(1) + ' h';
+  const dd = (t) => (t ? new Date(t).toLocaleDateString('en-GB', { timeZone: TZ, day: 'numeric', month: 'short', year: 'numeric' }) : '-');
+  const dstr = (s) => (s ? dd(new Date(s + 'T12:00:00Z').getTime()) : '-');
+  // title band
+  doc.rect(0, doc.h - 96, doc.w, 96, '#0f4f2f');
+  doc.text('PROJECT REPORT', doc.m, doc.h - 36, 9, { bold: true, color: '#9fd3b5' });
+  doc.text(doc.fit(p.name, doc.inner, 22, true), doc.m, doc.h - 62, 22, { bold: true, color: '#ffffff' });
+  doc.text(`${x.c.name}  -  generated ${dd(nowT)}`, doc.m, doc.h - 82, 9, { color: '#cfe8d8' });
+  doc.y = doc.h - 110;
+  const diff = actual - planned;
+  doc.stats([['Logged', hrs(actual)], ['Planned', planned ? hrs(planned) : '-'], ['Difference', planned ? (diff > 0 ? '+' : '') + hrs(diff) : '-'], ['Tasks done', `${tasks.filter((t) => t.done).length} / ${tasks.length}`]]);
+  doc.heading('Details');
+  const kv = [['Job number', p.ref || '-'], ['Status', p.archived ? `Archived ${dd(p.archivedAt)}${p.folder ? ' (folder: ' + p.folder + ')' : ''}` : 'Active'], ['Client', cname || '-'], ['Site', p.address || '-'],
+    ['Start', dstr(p.start)], ['Finish by', dstr(p.due)], ['Created', `${dd(p.createdAt)}${p.createdBy ? ' by ' + nm(p.createdBy) : ''}`],
+    ['Team', (p.members || []).map(nm).join(', ') || (p.visibility === 'selected' ? '-' : 'Everyone in the company')]];
+  for (const [k, v] of kv) { doc.ensure(16); doc.y -= 14; doc.text(k, doc.m, doc.y, 9.5, { bold: true, color: '#53625a' }); const ls = doc.wrap(v, doc.inner - 100, 9.5); ls.forEach((l, i) => { if (i) { doc.ensure(14); doc.y -= 13; } doc.text(l, doc.m + 100, doc.y, 9.5); }); }
+  if (p.description) { doc.heading('Description'); doc.para(p.description, 10); }
+  doc.heading('Tasks - plan vs actual');
+  const rows = tasks.map((t) => [t.title, (t.assignees || []).map(nm).join(', '), t.planMins ? hrs(t.planMins) : '-', hrs(byTask[t.id] || 0), t.done ? 'Done' : 'Open']);
+  if (byTask['']) rows.push(['(no task)', '', '-', hrs(byTask['']), '']);
+  doc.table([{ label: 'Task', w: 4 }, { label: 'Assigned to', w: 2.4 }, { label: 'Planned', w: 1.1, align: 'r' }, { label: 'Logged', w: 1.1, align: 'r' }, { label: 'Status', w: 1 }], rows.length ? rows : [['No tasks', '', '', '', '']]);
+  doc.heading('People');
+  const prow = Object.entries(byPerson).sort((a, b) => b[1] - a[1]).map(([id, m]) => [nm(id), hrs(m), String(new Set(paid.filter((e) => e.userId === id).map(entryDay)).size)]);
+  doc.table([{ label: 'Person', w: 4 }, { label: 'Hours', w: 1.5, align: 'r' }, { label: 'Days on site', w: 1.5, align: 'r' }], prow.length ? prow : [['No time logged', '', '']]);
+  if (entries.length) {
+    doc.heading('Time log');
+    const MAX = 400; const typ = (e) => (ts.CATS[e.category] || ts.CATS.field).label;
+    doc.table([{ label: 'Date', w: 1.5 }, { label: 'Person', w: 2 }, { label: 'Time', w: 1.5 }, { label: 'Hours', w: 0.9, align: 'r' }, { label: 'Task / note', w: 4 }],
+      entries.slice(0, MAX).map((e) => { const a = ts.zoneParts(e.start, TZ); const b = ts.zoneParts(e.end || e.start, TZ); const tt = (d.tasks[e.taskId] || {}).title || e.tname || '';
+        return [dstr(a.date), nm(e.userId), `${ukClock(e.start)}-${e.end ? ukClock(e.end) : 'running'}`, (mins(e) / 60).toFixed(2), [typ(e) !== 'Field' ? typ(e) : '', tt, e.note].filter(Boolean).join(' - ')]; }), { size: 8.5 });
+    if (entries.length > MAX) doc.para(`... and ${entries.length - MAX} more entries. The full list is in the project timesheet (.xlsx).`, 8.5, { color: '#667a6f' });
+  }
+  const photos = Object.values(d.photos).filter((ph) => ph.projectId === p.id).length;
+  const msgs = (d.messages['project:' + p.id] || []).filter((m) => !m.system && m.text);
+  doc.heading('Photos & chat');
+  doc.para(`${photos} photo${photos === 1 ? '' : 's'} are stored with this project in Crewdesk.`, 10);
+  if (msgs.length) {
+    doc.para(`Project chat (${msgs.length} message${msgs.length === 1 ? '' : 's'}${msgs.length > 120 ? ', latest 120 shown' : ''}):`, 10, { bold: true, after: 2 });
+    for (const m of msgs.slice(-120)) doc.para(`${dd(m.at)}  ${nm(m.userId)}: ${m.text}`, 8.5, { color: '#3b4a42', after: 1 });
+  }
+  return doc.build();
 }
 // ---------------------------------------------------------------- time tracking & timesheets
 const CAT_KEYS = Object.keys(ts.CATS);
@@ -1995,6 +2082,11 @@ async function timeApi(req, res, url, x, sub) {
       files.push({ name: `${folderName}/${f.name}`, data: f.data });
     }
     return sendDownload(res, `Timesheets_${ts.MONTHS[mo - 1]}_${y}.zip`, writeZip(files), 'application/zip');
+  }
+  // The whole project on paper: details, plan vs actual, tasks, people, time log and chat.
+  if ((m = /^\/projects\/([A-Za-z0-9]+)\/pdf$/.exec(sub)) && M === 'GET') {
+    const p = projectOf(x, m[1]); if (!p || !canSeeProject(x, p)) notFound('Project not found');
+    return sendDownload(res, ts.safeName(`${p.ref ? p.ref + ' ' : ''}${p.name} project report`) + '.pdf', projectPdf(x, p), 'application/pdf');
   }
   // A project's timesheet and timeline.
   if ((m = /^\/projects\/([A-Za-z0-9]+)\/timesheet$/.exec(sub)) && M === 'GET') {

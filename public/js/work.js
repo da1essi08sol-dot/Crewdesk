@@ -27,7 +27,7 @@ function projectCard(p) {
   return `<a class="projcard ${p.archived ? 'archived' : ''}${projFill(p)}" href="#/project/${p.id}">
     <div class="row between top"><div class="grow" style="min-width:0">${p.ref ? `<span class="ref">${esc(p.ref)}</span>` : ''}<h3>${esc(p.name)}</h3></div>${starBtn('projects', p.id)}</div>
     ${p.address || S.clients[p.clientId] ? `<div class="small muted ellipsis">${esc([S.clients[p.clientId] && S.clients[p.clientId].name, p.address].filter(Boolean).join(' · '))}</div>` : ''}
-    <div class="row wrap tight">${lockPill(p)}${p.archived ? '<span class="pill">Archived</span>' : ''}${now.length ? `<span class="pill live">${plural(now.length, 'person', 'people')} working now</span>` : ''}${p.chat ? `<span class="pill">${icSize('chat', 12)}Chat</span>` : ''}</div>
+    <div class="row wrap tight">${lockPill(p)}${p.archived ? `<span class="pill">Archived${p.archivedAt ? ' ' + esc(new Date(p.archivedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })) : ''}</span>` : ''}${now.length ? `<span class="pill live">${plural(now.length, 'person', 'people')} working now</span>` : ''}${p.chat ? `<span class="pill">${icSize('chat', 12)}Chat</span>` : ''}</div>
     ${plan ? planHtml(plan, act) : ''}
     <div class="foot"><span>${nTasks ? `${done} of ${plural(nTasks, 'task')} done` : 'No tasks yet'}${!plan && act ? ' · ' + esc(fmtDur(act)) + ' logged' : ''}</span>${avatarStack(now.length ? now : people, 5)}</div></a>`;
 }
@@ -49,6 +49,7 @@ VIEWS.projects = {
       <div id="projlist">${this.list(starred, rest, all.length)}</div>`;
   },
   list(starred, rest, total) {
+    if (S.projFilter === 'archived' && total) return archiveHtml(starred.concat(rest));
     if (!starred.length && !rest.length) return `<div class="card empty">${ic('folder')}<h3>${total ? 'No projects match' : 'No projects yet'}</h3><div class="small">${total ? 'Try another filter or search.' : 'A project is one piece of work — a survey, a site, a client job — broken into tasks.'}</div>${!total && canCreateProjects() ? `<button class="btn primary" data-act="new-project">${ic('plus')}New project</button>` : ''}</div>`;
     return `${starred.length ? `<div class="section-head"><h2 class="row tight">${icSize('star', 17, 'color:#d29b0a;fill:currentColor')}Starred</h2></div><div class="cards" style="margin-bottom:24px">${starred.map(projectCard).join('')}</div>` : ''}
       ${rest.length ? `${starred.length ? '<div class="section-head"><h2>Everything else</h2></div>' : ''}<div class="cards">${rest.map(projectCard).join('')}</div>` : ''}`;
@@ -239,6 +240,8 @@ A['project-menu'] = (el) => {
   popMenu(el, `${canEdit ? `<button class="mi" data-act="archive-project" data-id="${p.id}">${ic(p.archived ? 'restore' : 'archive')}${p.archived ? 'Restore project' : 'Archive project'}</button>` : ''}
     ${canEdit ? (p.chat ? `<button class="mi" data-act="close-chat" data-id="${p.id}">${ic('chat')}Close the project chat</button>` : `<button class="mi" data-act="open-chat" data-id="${p.id}">${ic('chat')}Open a project chat</button>`) : ''}
     ${canEdit ? `<button class="mi" data-act="project-here" data-id="${p.id}">${ic('locate')}${p.lat != null ? 'Re-pin the site here' : 'Pin the site at my location'}</button>` : ''}
+    ${canEdit && p.archived ? `<button class="mi" data-act="archive-folder" data-id="${p.id}">${ic('folder')}Move to folder…</button>` : ''}
+    <a class="mi" href="/api/c/${S.cid}/projects/${p.id}/pdf" download="${esc(projFile(p).replace(/\.xlsx$/i, '') + '.pdf')}">${ic('download')}Download project report (PDF)</a>
     <a class="mi" href="/api/c/${S.cid}/projects/${p.id}/timesheet" download="${esc(projFile(p))}">${ic('download')}Download project timesheet</a>
     <button class="mi" data-act="new-event" data-project="${p.id}">${ic('cal')}Add to calendar</button>
     ${canDel ? `<div class="sep"></div><button class="mi danger" data-act="del-project" data-id="${p.id}">${ic('trash')}Delete project</button>` : ''}`);
@@ -617,3 +620,48 @@ A['event-open'] = (el) => {
     <div class="sheet-foot"><button class="btn" data-close>Close</button></div>`);
 };
 A['event-del'] = async (el) => { const e = S.events[el.dataset.id]; closeSheets(); if (await confirmBox('Delete this event?', `“${e.title}” will be removed from everyone’s calendar.`)) { if (await deleteItem('events', e.id)) toast('Event deleted'); } };
+
+
+// ============================================================ THE ARCHIVE: folders, clearing, PDF
+const folderNames = () => [...new Set(Object.values(S.projects).filter((p) => p.archived && p.folder).map((p) => p.folder))].sort().reverse();
+function archiveHtml(ps) {
+  const admin = isAdmin(); const groups = {};
+  for (const p of ps) (groups[p.folder || ''] = groups[p.folder || ''] || []).push(p);
+  const names = Object.keys(groups).filter(Boolean).sort().reverse();
+  if (groups['']) names.push('');
+  const total = Object.values(S.projects).filter((p) => p.archived).length;
+  const head = `<div class="card archive-note"><div class="small"><b>${plural(total, 'archived project')}.</b> Archived projects keep all their tasks, time, photos and chat, and you can open or restore any of them. There is no limit on how many you can keep.</div>
+    ${admin ? `<div class="row wrap tight" style="margin-top:10px"><button class="btn sm" data-act="archive-auto" data-by="year">${ic('folder')}<span>File by year</span></button><button class="btn sm" data-act="archive-auto" data-by="month">${ic('folder')}<span>File by month</span></button><button class="btn sm danger" data-act="archive-clear">${ic('trash')}<span>Clear archive</span></button></div>` : ''}</div>`;
+  return head + names.map((n) => `<details class="arch-folder" open><summary><span class="row tight">${icSize('folder', 17)}<b>${esc(n || 'Not in a folder')}</b><span class="muted small">${groups[n].length}</span></span>
+      ${admin && n ? `<span class="row tight"><button class="btn ghost sm" type="button" data-act="folder-rename" data-folder="${esc(n)}">Rename</button><button class="btn ghost sm" type="button" data-act="archive-clear" data-folder="${esc(n)}">Clear</button></span>` : ''}</summary>
+      <div class="cards">${groups[n].map(projectCard).join('')}</div></details>`).join('');
+}
+A['archive-folder'] = async (el) => {
+  const p = S.projects[el.dataset.id]; if (!p) return;
+  const names = folderNames();
+  const v = await confirmBox('Move to folder', 'Pick a folder or type a new name, e.g. 2026 or Rail work. Leave it empty to take it out of its folder.', 'Move', false,
+    `<label class="field"><span>Folder</span><input class="input" data-confirm-value maxlength="60" list="arch-names" value="${esc(p.folder || '')}" autocomplete="off"><datalist id="arch-names">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist></label>`);
+  if (v === false) return;
+  await saveItem('projects', p.id, { folder: String(v === true ? '' : v).trim() });
+  toast(String(v).trim() ? `Moved to “${String(v).trim()}”` : 'Taken out of its folder');
+};
+A['folder-rename'] = async (el) => {
+  const from = el.dataset.folder;
+  const v = await confirmBox('Rename folder', `Every project in “${from}” moves to the new name.`, 'Rename', false, `<label class="field"><span>New name</span><input class="input" data-confirm-value maxlength="60" value="${esc(from)}"></label>`);
+  if (v === false || v === true || !String(v).trim()) return;
+  try { await capi('PATCH', '/archive/folder', { from, to: String(v).trim() }); toast('Folder renamed'); } catch (e) { toast(e.message, true); }
+};
+A['archive-auto'] = async (el) => {
+  try { const r = await capi('POST', '/archive/auto', { by: el.dataset.by }); toast(r.filed ? `Filed ${plural(r.filed, 'project')}` : 'Nothing left to file'); } catch (e) { toast(e.message, true); }
+};
+A['archive-clear'] = async (el) => {
+  if (!isAdmin()) return toast('Only admins can clear the archive', true);
+  const folder = el.dataset.folder; const scoped = folder !== undefined;
+  const n = Object.values(S.projects).filter((p) => p.archived && (!scoped || (p.folder || '') === folder)).length;
+  if (!n) return toast('Nothing to clear');
+  const ok = await confirmBox(scoped ? `Clear “${folder}”?` : 'Clear the whole archive?',
+    `${plural(n, 'archived project')} will be permanently deleted, with their tasks, photos and project chats. Time people logged stays on their timesheets. This can’t be undone.`,
+    scoped ? 'Clear folder' : 'Clear archive');
+  if (!ok) return;
+  try { const r = await capi('POST', '/archive/clear', scoped ? { confirm: true, folder } : { confirm: true }); toast(`Cleared ${plural(r.cleared, 'project')}`); } catch (e) { toast(e.message, true); }
+};
