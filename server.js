@@ -1754,6 +1754,64 @@ function projectPdf(x, p) {
   }
   return doc.build();
 }
+// Is someone's month filled in? Every weekday since they joined needs most of a day logged (or holiday/absence),
+// unless they uploaded their own timesheet. Future months are "future"; this month is "in progress".
+function sheetStatus(c, d, uid, ym) {
+  const t = now(); const today = localDay(t); const curYm = today.slice(0, 7);
+  if (ym > curYm) return { s: 'future' };
+  const mem = c.members[uid]; const first = firstLogged(c.id).get(uid);
+  if (!first) return ym === curYm ? { s: 'progress', missing: [] } : { s: 'none' }; // never logged time: nothing to chase yet
+  const joined = [mem ? localDay(mem.joinedAt || 0) : '0000-00-00', first].sort()[1]; // counted from the first day they used the timesheet
+  const [y, mo] = ym.split('-').map(Number); const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  if (`${ym}-${pad2(last)}` < joined) return { s: 'none' };
+  const need = (c.settings.dayHours || 8) * 60 * 0.75; const missing = [];
+  for (let dd = 1; dd <= last; dd++) {
+    const ds = `${ym}-${pad2(dd)}`; if (ds < joined || ds >= today) continue;
+    const dow = new Date(Date.UTC(y, mo - 1, dd)).getUTCDay(); if (dow === 0 || dow === 6) continue;
+    let mins = 0, leave = false;
+    for (const e of userDayEntries(d, c.id, uid, ds)) { if (e.category === 'holiday' || e.category === 'absent') leave = true; else if (e.category !== 'lunch') mins += ((e.end || t) - e.start) / 60000; }
+    if (!leave && mins < need) missing.push(ds);
+  }
+  if (ym === curYm) return { s: 'progress', missing };
+  if ((d.sheetUploads || {})[uid + '_' + ym]) return { s: 'complete', uploaded: true };
+  return missing.length ? { s: 'incomplete', missing } : { s: 'complete' };
+}
+// The first day each person logged anything (kept for a minute; cheap to rebuild).
+const firstCache = new Map();
+function firstLogged(cid) {
+  const hit = firstCache.get(cid); if (hit && Date.now() - hit.at < 60e3) return hit.map;
+  const map = new Map();
+  for (const k of idxFor(cid).byUserDay.keys()) { const i = k.indexOf('|'); const u = k.slice(0, i), ds = k.slice(i + 1); const cur = map.get(u); if (!cur || ds < cur) map.set(u, ds); }
+  firstCache.set(cid, { at: Date.now(), map }); return map;
+}
+function sheetStatusAll(c, d, uids) {
+  const cur = localDay(now()).slice(0, 7); let first = cur;
+  for (const id of uids) { const f = firstLogged(c.id).get(id); if (f && f.slice(0, 7) < first) first = f.slice(0, 7); }
+  const [cy, cm] = cur.split('-').map(Number); const next = cm === 12 ? `${cy + 1}-01` : `${cy}-${pad2(cm + 1)}`;
+  const out = {};
+  for (let ym = first; ym <= next; ) {
+    out[ym] = {}; for (const id of uids) { const st = sheetStatus(c, d, id, ym); if (st.s !== 'none') out[ym][id] = st; }
+    const [y, m] = ym.split('-').map(Number); ym = m === 12 ? `${y + 1}-01` : `${y}-${pad2(m + 1)}`;
+  }
+  return out;
+}
+// At the start of each month (and every Monday after) remind people whose timesheets aren't filled in, and tell the admins.
+function sheetAlerts(c, d, nowLocal) {
+  if (nowLocal.mins < 9 * 60) return;
+  const cur = nowLocal.date.slice(0, 7); const [y, m] = cur.split('-').map(Number); const prev = m === 1 ? `${y - 1}-12` : `${y}-${pad2(m - 1)}`;
+  const monday = new Date(nowLocal.date + 'T12:00:00Z').getUTCDay() === 1;
+  const monthly = c.sheetAlert !== prev; const weekly = monday && c.sheetNag !== nowLocal.date;
+  if (!monthly && !weekly) return;
+  if (monthly) c.sheetAlert = prev; if (weekly) c.sheetNag = nowLocal.date; save();
+  const months = monthly && !weekly ? [prev] : Object.keys(sheetStatusAll(c, d, Object.keys(c.members))).filter((ym) => ym < cur).slice(-3);
+  const bad = [];
+  for (const ym of months) for (const id of Object.keys(c.members)) {
+    const st = sheetStatus(c, d, id, ym); if (st.s !== 'incomplete') continue;
+    bad.push(`${personNameOf(id)} (${ts.MONTHS[Number(ym.slice(5)) - 1]})`);
+    notify(c.id, [id], `Your ${ts.MONTHS[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)} timesheet isn’t finished — ${st.missing.length} working day${st.missing.length === 1 ? '' : 's'} with no time logged. Please fill them in.`, '#/timesheet/' + ym);
+  }
+  if (bad.length) notify(c.id, Object.keys(c.members).filter((id) => isAdmin(c.members[id].role)), `${bad.length} timesheet${bad.length === 1 ? ' isn’t' : 's aren’t'} finished: ${bad.slice(0, 6).join(', ')}${bad.length > 6 ? '…' : ''}`, '#/admin/timesheets');
+}
 // ---------------------------------------------------------------- time tracking & timesheets
 const CAT_KEYS = Object.keys(ts.CATS);
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -2071,6 +2129,9 @@ async function timeApi(req, res, url, x, sub) {
     return sendDownload(res, f.name, f.data, f.type);
   }
   // Admins: everyone's timesheets for a month in one zip, a folder per person.
+  if (sub === '/timesheets/status' && M === 'GET') {
+    return json(res, 200, { months: sheetStatusAll(c, d, admin ? Object.keys(c.members) : [user.id]) });
+  }
   if ((m = /^\/timesheets\/(\d{4})-(\d{2})$/.exec(sub)) && M === 'GET') {
     if (!admin) deny('Only admins can download everyone’s timesheets');
     const y = Number(m[1]), mo = Number(m[2]);
@@ -2201,6 +2262,7 @@ function reminders() {
         notify(c.id, [e.userId], `Your timer is still running${e.pname ? ' on ' + e.pname : ''}. Finished for the day? Tap the red square to stop it.`, '#/home');
       }
     }
+    try { sheetAlerts(c, d, nowLocal); } catch (err) { console.error('timesheet alerts', err); }
   }
 }
 

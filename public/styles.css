@@ -1456,3 +1456,18 @@ label.btn { cursor: pointer; }
 .tut-num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: 14px; flex: none; }
 .tut-written summary { cursor: pointer; color: var(--muted); font-size: 14px; }
 @media (min-width: 900px) { .tut-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); align-items: start; } .tut-list .tut:first-child { grid-column: 1 / -1; } .tut-list .tut:first-child .tut-vid { max-width: 820px; } }
+
+.ts-banner { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 14px; }
+.ts-banner > svg { flex: none; margin-top: 2px; }
+.ts-banner.complete { border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); } .ts-banner.complete > svg { color: var(--ok); }
+.ts-banner.incomplete { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); background: color-mix(in srgb, var(--red) 6%, var(--surface)); } .ts-banner.incomplete > svg { color: var(--red); }
+.ts-banner.progress > svg { color: var(--accent-text); }
+.pill.ts-st { gap: 4px; display: inline-flex; align-items: center; }
+.pill.ts-st.complete { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.pill.ts-st.incomplete { background: var(--red-soft); color: var(--red); }
+.pill.ts-st.progress { background: var(--blue-soft); color: var(--blue); }
+.pill.ts-st.future { background: var(--slate-soft); color: var(--slate); }
+.filecard.bad { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); }
+.ts-year > .ts-month { margin: 8px 0 8px 14px; }
+.ts-month > summary .btn { flex: none; }
+.month-nav .pill { margin-right: 6px; }

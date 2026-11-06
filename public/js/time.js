@@ -351,6 +351,31 @@ F['finish-day'] = async (f, d, close) => {
 };
 
 // ============================================================ TIMESHEETS
+
+// ---- timesheet status: future / in progress / complete / incomplete (worked out on the server, refreshed as time changes)
+S.sheetStatus = null; S.sheetStatusAt = 0; let sheetStatusBusy = false;
+function ensureSheetStatus() {
+  if (sheetStatusBusy || (S.sheetStatus && Date.now() - S.sheetStatusAt < 20000)) return;
+  sheetStatusBusy = true;
+  capi('GET', '/timesheets/status').then((r) => { S.sheetStatus = r.months; S.sheetStatusAt = Date.now(); scheduleRender(); }).catch(() => {}).finally(() => { sheetStatusBusy = false; });
+}
+function sheetSt(uid, ym) { if (ym > thisMonth()) return { s: 'future' }; return ((S.sheetStatus || {})[ym] || {})[uid] || (ym === thisMonth() ? { s: 'progress' } : null); }
+const ST_LABEL = { future: 'Future', progress: 'In progress', complete: 'Completed', incomplete: 'Not complete' };
+const stPill = (st) => st ? `<span class="pill ts-st ${st.s}">${st.s === 'complete' ? icSize('check', 12) : st.s === 'incomplete' ? icSize('flag', 12) : ''}${ST_LABEL[st.s] || ''}</span>` : '';
+const shortDay = (ds) => parseD(ds).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+function sheetBanner(uid, ym, me) {
+  const st = sheetSt(uid, ym); if (!st) return '';
+  const who = me ? 'your' : esc(member(uid).name.split(' ')[0]) + '’s';
+  if (st.s === 'progress') return `<div class="card ts-banner progress">${icSize('clock', 20)}<div class="grow"><b>${esc(monthLabel(ym))} is in progress</b><div class="small muted">This timesheet updates live as ${me ? 'you log' : 'they log'} time each day.${st.missing && st.missing.length ? ` ${plural(st.missing.length, 'earlier working day')} still ${st.missing.length === 1 ? 'has' : 'have'} no time.` : ''}</div></div></div>`;
+  if (st.s === 'complete') return `<div class="card ts-banner complete">${icSize('check', 20)}<div class="grow"><b>${esc(monthLabel(ym))} is complete</b><div class="small muted">${st.uploaded ? 'Using the uploaded timesheet.' : 'Every working day is filled in.'} It’s filed in the timesheet archive.</div></div>
+    <button class="btn sm primary" data-act="ts-review" data-user="${uid}" data-ym="${ym}">${ic('eye')}<span>Review timesheet</span></button></div>`;
+  if (st.s === 'incomplete') return `<div class="card ts-banner incomplete">${icSize('flag', 20)}<div class="grow"><b>${esc(monthLabel(ym))} isn’t complete</b><div class="small">${plural(st.missing.length, 'working day')} with little or no time logged. Fill ${st.missing.length === 1 ? 'it' : 'them'} in (or log holiday) and ${who} timesheet files itself in the archive.</div>
+    <div class="row wrap tight" style="margin-top:8px">${st.missing.slice(0, 12).map((ds) => `<button class="btn sm" data-act="add-time" data-date="${ds}" data-user="${uid}">${ic('plus')}${esc(shortDay(ds))}</button>`).join('')}${st.missing.length > 12 ? `<span class="small muted">+${st.missing.length - 12} more</span>` : ''}</div></div></div>`;
+  return '';
+}
+A['ts-review'] = (el) => { const m = member(el.dataset.user); const up = S.sheetUploads[el.dataset.user + '_' + el.dataset.ym];
+  const name = up ? monthFile(m.name, el.dataset.ym).replace(/\.xlsx$/, '.' + up.ext) : monthFile(m.name, el.dataset.ym);
+  openDoc({ url: `/api/c/${S.cid}/timesheet/${el.dataset.user}/${el.dataset.ym}`, name, ext: up ? up.ext : 'xlsx' }); };
 VIEWS.timesheet = {
   render(ym, uid) {
     if (!/^\d{4}-\d{2}$/.test(ym || '')) ym = thisMonth();
@@ -364,16 +389,17 @@ VIEWS.timesheet = {
     const shown = all.filter((ds) => ds <= todayStr() && (ms.byDay[ds] || dayRec(uid, ds) || !isWeekend(ds))).reverse();
     const approved = Object.keys(ms.byDay).filter((ds) => (dayRec(uid, ds) || {}).approvedBy).length;
     const up = S.sheetUploads[uid + '_' + ym];
-    const base = `#/timesheet/`;
+    const base = `#/timesheet/`; ensureSheetStatus();
     return `${me ? '' : `<a class="back" href="#/admin/people">${ic('back')}Admin · People</a>`}
       <div class="page-head"><div class="row" style="min-width:0">${me ? '' : avatar(m, 'lg')}<div style="min-width:0"><h1>${me ? 'My timesheet' : esc(m.name)}</h1><div class="sub">${me ? 'Filled in from what you log. Change anything that’s wrong, or add overtime.' : 'Timesheet, notes and overtime approvals'}</div></div></div>
-        <div class="month-nav"><a class="btn icon" href="${base}${shiftMonth(ym, -1)}${me ? '' : '/' + uid}" aria-label="Previous month">${ic('left')}</a><b>${esc(monthLabel(ym))}</b><a class="btn icon ${ym >= thisMonth() ? 'disabled' : ''}" href="${base}${shiftMonth(ym, 1)}${me ? '' : '/' + uid}" aria-label="Next month" ${ym >= thisMonth() ? 'aria-disabled="true" tabindex="-1"' : ''}>${ic('right')}</a></div></div>
+        <div class="month-nav">${stPill(sheetSt(uid, ym))}<a class="btn icon" href="${base}${shiftMonth(ym, -1)}${me ? '' : '/' + uid}" aria-label="Previous month">${ic('left')}</a><b>${esc(monthLabel(ym))}</b><a class="btn icon ${ym >= thisMonth() ? 'disabled' : ''}" href="${base}${shiftMonth(ym, 1)}${me ? '' : '/' + uid}" aria-label="Next month" ${ym >= thisMonth() ? 'aria-disabled="true" tabindex="-1"' : ''}>${ic('right')}</a></div></div>
       <div class="kpis">
         <div class="kpi"><span class="v">${esc(fmtDur(ms.paid, true))}</span><span class="l">Hours logged</span></div>
         <div class="kpi"><span class="v">${ms.days}</span><span class="l">Days worked</span></div>
         <div class="kpi"><span class="v ${ms.ot > 0 ? 'pos' : ms.ot < 0 ? 'neg' : ''}">${fmtSigned(ms.ot)}</span><span class="l">Overtime (${fmtSigned(ms.otPay)} at rate)</span></div>
         <div class="kpi"><span class="v">${approved}</span><span class="l">Days approved</span></div>
       </div>
+      ${sheetBanner(uid, ym, me)}
       ${sheetUploadCard(uid, ym, me)}
       <div class="ts-actions">
         <a class="btn primary" href="/api/c/${S.cid}/timesheet/${uid}/${ym}${up ? '?generated=1' : ''}" download="${esc(monthFile(m.name, ym))}">${ic('download')}<span>${up ? 'Automatic: ' : ''}${esc(monthFile(m.name, ym))}</span></a>
@@ -514,21 +540,42 @@ function adminPeople() {
       return `<a class="item" href="#/timesheet/${ym}/${id}">${avatar(member(id), 'sm', { link: false })}<div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(member(id).name)}</b><span class="tiny muted">${last ? 'Last logged ' + timeAgo(last.end || Date.now()) : 'No time logged yet'}${pending ? ` · <b class="neg">${plural(pending, 'day')} of overtime to approve</b>` : ''}</span></div>
         <div class="num-cols"><span><b>${esc(fmtDur(m.paid, true))}</b><i>hours</i></span><span><b>${m.days}</b><i>days</i></span><span><b class="${m.ot > 0 ? 'pos' : m.ot < 0 ? 'neg' : ''}">${fmtSigned(m.ot)}</b><i>OT</i></span></div>${icSize('right', 18, 'color:var(--muted);flex:none')}</a>`; }).join('')}</div></div>`}`;
 }
-function adminFolder() {
-  const ym = S.adminMonth; const loading = S.loaded['all|' + ym] !== true; const y = ym.slice(0, 4);
-  const ids = peopleForMonth(ym); const g = S.gdrive || {};
+function adminFolder(view) {
+  ensureSheetStatus(); const all = S.sheetStatus; const cur = thisMonth(); view = view === 'archive' ? 'archive' : 'current';
+  const g = S.gdrive || {};
   const drive = !g.ready ? `<div class="card stack"><div class="row">${icSize('upload', 22, 'color:var(--muted);flex:none')}<div><h3>Copy to Google Drive automatically</h3><p class="small muted" style="margin:4px 0 0">Not set up on this server yet. The owner adds a Google “OAuth client” (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET) in Render — the README explains how. Until then, download the files here.</p></div></div></div>`
     : !g.connected ? `<div class="card stack"><div class="row">${icSize('upload', 22, 'color:var(--accent-text);flex:none')}<div class="grow"><h3>Copy to Google Drive automatically</h3><p class="small muted" style="margin:4px 0 0">Connect your Google Drive once. Every time someone’s time changes, their timesheet is updated in a “Crewdesk timesheets” folder, sorted by year and month. Crewdesk can only see the files it puts there.</p></div></div><button class="btn primary" data-act="drive-connect">${ic('link')}Connect Google Drive</button></div>`
     : `<div class="card stack"><div class="row wrap">${icSize('check', 22, 'color:var(--ok);flex:none')}<div class="grow" style="min-width:0"><h3>Google Drive connected</h3><p class="small muted" style="margin:4px 0 0">${esc(g.email || 'Google account')} · ${g.lastSync ? 'last copied ' + timeAgo(g.lastSync) : 'not copied yet'}${g.lastError ? ` · <span class="neg">${esc(g.lastError)}</span>` : ''}</p></div></div>
         <div class="row wrap tight">${g.folderUrl ? `<a class="btn sm" href="${esc(g.folderUrl)}" target="_blank" rel="noopener noreferrer">${ic('folder')}Open folder</a>` : ''}<button class="btn sm" data-act="drive-sync">${ic('refresh')}Copy this month now</button><button class="btn sm ghost" data-act="drive-off">Disconnect</button></div></div>`;
-  return `<div class="row between wrap" style="margin-bottom:12px">${adminMonthNav('timesheets')}<a class="btn primary" href="/api/c/${S.cid}/timesheets/${ym}" download="Timesheets_${MONTHS_SHORT[Number(ym.slice(5, 7)) - 1]}_${ym.slice(0, 4)}.zip">${ic('download')}<span>Download all (.zip)</span></a></div>
-    ${loading ? '<div class="skeleton" style="height:200px"></div>' : `<div class="files">${ids.map((id) => { const m = monthStats(id, ym); const name = member(id).name; const up = S.sheetUploads[id + '_' + ym];
-      const fname = up ? monthFile(name, ym).replace(/\.xlsx$/, '.' + up.ext) : monthFile(name, ym);
-      return `<div class="filecard"><span class="xl-ico ${up && up.ext === 'pdf' ? 'pdf' : ''}" aria-hidden="true">${up ? esc(up.ext.toUpperCase()) : 'XLS'}</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(fname)}</b><span class="tiny muted ellipsis" style="display:block">${esc(name)} · ${up ? `<b class="upl-tag">Their own upload</b>` : `${esc(fmtDur(m.paid, true))} · OT ${fmtSigned(m.ot)}`}</span></div>
-        <a class="btn sm icon" href="#/timesheet/${ym}/${id}" aria-label="Open ${esc(name)}’s timesheet">${ic('eye')}</a><a class="btn sm icon primary" href="/api/c/${S.cid}/timesheet/${id}/${ym}" download="${esc(fname)}" aria-label="Download ${esc(fname)}">${ic('download')}</a></div>`; }).join('')}</div>`}
-    <div class="section"><div class="section-head"><h2>Whole year ${y}</h2></div><div class="files">${ids.map((id) => `<a class="filecard" href="/api/c/${S.cid}/timesheet/${id}/${y}" download="${esc(yearFile(member(id).name, y))}"><span class="xl-ico" aria-hidden="true">XLS</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(yearFile(member(id).name, y))}</b><span class="tiny muted">${esc(member(id).name)} · summary, every entry, day notes</span></div>${ic('download')}</a>`).join('')}</div></div>
+  const file = (id, ym, st) => { const name = member(id).name; const up = S.sheetUploads[id + '_' + ym]; const fname = up ? monthFile(name, ym).replace(/\.xlsx$/, '.' + up.ext) : monthFile(name, ym);
+    return `<div class="filecard ${st && st.s === 'incomplete' ? 'bad' : ''}"><span class="xl-ico ${up && up.ext === 'pdf' ? 'pdf' : ''}" aria-hidden="true">${up ? esc(up.ext.toUpperCase()) : 'XLS'}</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(fname)}</b>
+      <span class="tiny muted ellipsis" style="display:block">${esc(name)}${st && st.missing && st.missing.length ? ` · ${plural(st.missing.length, 'day')} missing` : ''}</span><div style="margin-top:4px">${stPill(st)}</div></div>
+      <a class="btn sm icon" href="#/timesheet/${ym}/${id}" aria-label="Open ${esc(name)}’s timesheet">${ic('eye')}</a><a class="btn sm icon primary" href="/api/c/${S.cid}/timesheet/${id}/${ym}" download="${esc(fname)}" aria-label="Download ${esc(fname)}">${ic('download')}</a></div>`; };
+  const zip = (ym, label) => `<a class="btn sm" href="/api/c/${S.cid}/timesheets/${ym}" download="Timesheets_${MONTHS_SHORT[Number(ym.slice(5, 7)) - 1]}_${ym.slice(0, 4)}.zip">${ic('download')}<span>${label || 'All (.zip)'}</span></a>`;
+  const seg = `<div class="seg" style="margin-bottom:14px"><a class="${view === 'current' ? 'on' : ''}" href="#/admin/timesheets">Current</a><a class="${view === 'archive' ? 'on' : ''}" href="#/admin/timesheets/archive">Archive</a></div>`;
+  if (!all) return seg + '<div class="skeleton" style="height:220px"></div>';
+  const byName = (a, b) => member(a).name.localeCompare(member(b).name);
+  if (view === 'archive') {
+    const months = Object.keys(all).filter((ym) => ym < cur && Object.values(all[ym]).some((st) => st.s === 'complete')).sort().reverse();
+    const years = [...new Set(months.map((ym) => ym.slice(0, 4)))];
+    return seg + `<p class="small muted" style="margin:0 0 12px">Completed timesheets file themselves here at the end of each month, by year and then month. Unfinished ones stay on Current with a red alert until they’re filled in.</p>
+      ${years.length ? years.map((y, yi) => `<details class="arch-folder ts-year" ${yi === 0 ? 'open' : ''}><summary><span class="row tight">${icSize('folder', 18)}<b>${y}</b><span class="muted small">${plural(months.filter((m) => m.startsWith(y)).length, 'month')}</span></span></summary>
+        ${months.filter((m) => m.startsWith(y)).map((ym, mi) => { const ids = Object.keys(all[ym]).filter((id) => all[ym][id].s === 'complete').sort(byName); const total = Object.keys(all[ym]).length;
+          return `<details class="arch-folder ts-month" ${yi === 0 && mi === 0 ? 'open' : ''}><summary><span class="row tight">${icSize('folder', 16)}<b>${esc(monthLabel(ym))}</b><span class="muted small">${ids.length} of ${total} complete</span></span>${zip(ym)}</summary>
+            <div class="files">${ids.map((id) => file(id, ym, all[ym][id])).join('')}</div></details>`; }).join('')}</details>`).join('') : `<div class="card empty">${ic('folder')}<h3>No finished months yet</h3><div class="small">At the end of each month, everyone’s completed timesheet is filed here.</div></div>`}`;
+  }
+  const curIds = Object.keys(all[cur] || {}).sort(byName);
+  const bad = []; for (const ym of Object.keys(all).sort().reverse()) if (ym < cur) for (const id of Object.keys(all[ym]).sort(byName)) if (all[ym][id].s === 'incomplete') bad.push([ym, id]);
+  const next = Object.keys(all).find((ym) => ym > cur);
+  return seg + `${bad.length ? `<div class="section-head"><h2 class="row tight" style="color:var(--red)">${icSize('flag', 18)}Not complete <span class="count">${bad.length}</span></h2></div>
+      <p class="small muted" style="margin:-4px 0 10px">These months have working days with no time logged. The person and admins are reminded at the start of each month and every Monday. Once filled in, they move to the archive by themselves.</p>
+      <div class="files" style="margin-bottom:22px">${bad.map(([ym, id]) => file(id, ym, all[ym][id])).join('')}</div>` : `<div class="card ts-banner complete" style="margin-bottom:18px">${icSize('check', 20)}<div class="grow"><b>Every finished month is complete</b><div class="small muted">They’re all filed in the Archive tab.</div></div></div>`}
+    <div class="section-head row between wrap"><h2>${esc(monthLabel(cur))} <span class="pill ts-st progress">In progress</span></h2>${zip(cur, 'Download all (.zip)')}</div>
+    <div class="files">${curIds.map((id) => file(id, cur, all[cur][id])).join('')}</div>
+    ${next ? `<p class="small muted" style="margin-top:10px">${esc(monthLabel(next))} timesheets are <b>future</b> — they start filling in on the 1st.</p>` : ''}
+    <div class="section"><div class="section-head"><h2>Whole year ${cur.slice(0, 4)}</h2></div><div class="files">${curIds.map((id) => `<a class="filecard" href="/api/c/${S.cid}/timesheet/${id}/${cur.slice(0, 4)}" download="${esc(yearFile(member(id).name, cur.slice(0, 4)))}"><span class="xl-ico" aria-hidden="true">XLS</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(yearFile(member(id).name, cur.slice(0, 4)))}</b><span class="tiny muted">${esc(member(id).name)}</span></div>${ic('download')}</a>`).join('')}</div></div>
     <div class="section">${drive}</div>
-    <p class="tiny muted">Monthly files use your company’s “Time &amp; Overtime Sheet” template, named with each person’s initials. They’re made fresh each time you download, so they always include the latest changes — unless someone has uploaded their own timesheet for the month, in which case you get theirs.</p>`;
+    <p class="tiny muted">Monthly files use your company’s “Time &amp; Overtime Sheet” template, named with each person’s initials, and are made fresh each time you download. A month counts as complete when every working day has most of a day logged (or holiday/absence), or the person uploaded their own timesheet.</p>`;
 }
 A['drive-connect'] = async () => { try { const r = await capi('POST', '/gdrive/connect'); location.href = r.url; } catch (e) { toast(e.message, true); } };
 A['drive-sync'] = async (el) => { el.classList.add('busy'); try { const r = await capi('POST', '/gdrive/sync'); S.gdrive = r.gdrive; toast(`Copied ${plural(r.files, 'timesheet')} to Google Drive`); renderView(false); } catch (e) { toast(e.message, true); el.classList.remove('busy'); } };

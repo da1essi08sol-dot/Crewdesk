@@ -280,13 +280,14 @@ function handleEvent(ev) {
       coll[ev.item.id] = ev.item;
       if (ev.coll === 'pings' && isNew && ev.item.createdBy !== S.user.id) alertUser(`New ping from ${firstName(ev.item.createdBy)}: ${ev.item.title}`, '#/ping/' + ev.item.id, ev.item.body || '', { from: ev.item.createdBy, where: 'New ping', text: ev.item.title + (ev.item.body ? ' — ' + ev.item.body : '') });
       if (ev.coll === 'entries' && ev.item.userId === S.user.id) syncTimerChrome();
+      if (ev.coll === 'entries' || ev.coll === 'days') S.sheetStatusAt = 0;
       scheduleRender(); if (ev.coll === 'projects') updateMap(); break;
     }
     case 'remove': {
       if (!S[ev.coll]) break;
       delete S[ev.coll][ev.id];
       const r = parseHash();
-      if (ev.coll === 'entries') syncTimerChrome();
+      if (ev.coll === 'entries') { syncTimerChrome(); S.sheetStatusAt = 0; }
       if (ev.coll === 'chats' && r.name === 'chat' && r.args[0] === 'chat:' + ev.id) { toast('You’re no longer in that chat'); location.hash = '#/chat'; }
       if (ev.coll === 'projects') { delete S.unread['project:' + ev.id]; delete S.lastMsg['project:' + ev.id]; if ((r.name === 'project' && r.args[0] === ev.id) || (r.name === 'chat' && r.args[0] === 'project:' + ev.id)) { toast('That project was deleted or is no longer shared with you'); location.hash = '#/projects'; } }
       scheduleRender(); break;
@@ -297,7 +298,7 @@ function handleEvent(ev) {
       alertUser(ev.item.text, ev.item.link, '', { from: ev.item.by && S.members[ev.item.by] ? ev.item.by : null, icon: 'bell', title: ev.item.by && S.members[ev.item.by] ? member(ev.item.by).name : 'Crewdesk', text: ev.item.text }); scheduleRender(); break;
     case 'typing': onTyping(ev); break;
     case 'totals': Object.assign(S.totals.tasks, ev.tasks || {}); Object.assign(S.totals.projects, ev.projects || {}); scheduleRender(); break;
-    case 'sheetUpload': if (ev.item) S.sheetUploads[ev.key] = ev.item; else delete S.sheetUploads[ev.key]; scheduleRender(); break;
+    case 'sheetUpload': S.sheetStatusAt = 0; if (ev.item) S.sheetUploads[ev.key] = ev.item; else delete S.sheetUploads[ev.key]; scheduleRender(); break;
     case 'presence':
       if (S.members[ev.userId]) { S.members[ev.userId].online = ev.online; S.members[ev.userId].lastSeen = ev.lastSeen; }
       scheduleRender(); break;
