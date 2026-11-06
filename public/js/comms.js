@@ -517,7 +517,7 @@ async function drawMap() {
     m.touchZoomRotate.disableRotation();
     // "Use two fingers to move the map" is shown once; after that one finger moves the map.
     m.on('cooperativegestureprevented', () => { if (store.get('cd_mapHint')) return; store.set('cd_mapHint', '1'); setTimeout(() => { try { m.cooperativeGestures.disable(); } catch (_) {} }, 2500); });
-    m.on('load', () => { ok = true; updateMap(); });
+    m.on('load', () => { ok = true; updateMap(); }); m.on('click', () => closeMapCard());
     const giveUp = () => { if (ok || gaveUp || map !== m) return; gaveUp = true; try { m.remove(); } catch (_) {} map = null; drawLeaflet(el); };
     m.on('error', (e) => { if (!ok && /style|fetch|network|load/i.test(String((e && e.error && e.error.message) || ''))) giveUp(); });
     setTimeout(giveUp, 12000);
@@ -529,7 +529,7 @@ async function drawLeaflet(el) {
     if (!window.L) { loadCss('/vendor/leaflet/leaflet.css'); await (leafP = leafP || loadScript('/vendor/leaflet/leaflet.js')); }
     if (!el.isConnected) return;
     el.innerHTML = '';
-    map = L.map(el, { zoomControl: true, attributionControl: true }).setView([54.5, -3], 5); mapKind = 'leaflet'; mapFitted = false;
+    map = L.map(el, { zoomControl: true, attributionControl: true }).setView([54.5, -3], 5); mapKind = 'leaflet'; mapFitted = false; map.on('click', () => closeMapCard());
     let errors = 0;
     const layer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin', attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' }).addTo(map);
     layer.on('tileerror', () => { if (++errors === 6) el.insertAdjacentHTML('beforeend', '<div class="map-msg" style="background:color-mix(in srgb, var(--surface) 85%, transparent);z-index:500">The map couldn’t load. Check your internet connection and try again.</div>'); });
@@ -543,20 +543,53 @@ function personMarkerEl(m) {
   if (m.avatar) { const img = document.createElement('img'); img.src = m.avatar; img.alt = ''; img.width = 32; img.height = 32; d.appendChild(img); } else d.textContent = initials(m.name);
   return d;
 }
-function jobMarkerEl() { const d = document.createElement('div'); d.className = 'mk-job'; d.innerHTML = ic('folder'); return d; }
+// A project pin: a bubble in the project's colour with its job number, pointing at the site; a green count when people are there.
+function jobMarkerEl(p, n) {
+  const d = document.createElement('div'); d.className = 'mk-job'; d.dataset.pid = p.id;
+  const c = p.color || '#18693f';
+  d.innerHTML = `<div class="mk-pin" style="--c:${esc(c)};--t:${inkOn(c) || '#fff'}"><span>${p.ref ? esc(p.ref) : ic('folder')}</span>${n ? `<b class="mk-n">${n}</b>` : ''}</div><i class="mk-dot" style="--c:${esc(c)}"></i>`;
+  return d;
+}
+// Directions from where you are now, in the phone's own maps app.
+const dirLinks = (lat, lng) => ({ apple: `https://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`, google: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`, waze: `https://waze.com/ul?ll=${lat},${lng}&navigate=yes` });
+function distTo(lat, lng) { const me = lastPos || S.locations[S.user.id]; if (!me) return ''; const km = dist(me, { lat, lng }) / 1000; return km < 1 ? `${Math.round(km * 1000)} m away` : `${km < 10 ? km.toFixed(1) : Math.round(km)} km away`; }
+function closeMapCard() { const c = $('#map .map-card'); if (c) { c.classList.add('leaving'); setTimeout(() => c.remove(), 220); } $$('#map .mk-job.sel').forEach((x) => x.classList.remove('sel')); }
+function openMapCard(p, el) {
+  const box = $('#map'); if (!box) return;
+  $$('#map .mk-job.sel').forEach((x) => x.classList.remove('sel'));
+  if (el) { el.classList.remove('sel', 'bounce'); void el.offsetWidth; el.classList.add('sel', 'bounce'); }
+  const old = box.querySelector('.map-card'); if (old) old.remove();
+  const now = workingOn(p.id).map((e) => e.userId); const L2 = dirLinks(p.lat, p.lng); const c = p.color || '#18693f';
+  const primary = isIOS() ? ['Apple Maps', L2.apple] : ['Google Maps', L2.google];
+  const client = (S.clients[p.clientId] || {}).name; const far = distTo(p.lat, p.lng);
+  const card = document.createElement('div'); card.className = 'map-card'; card.style.setProperty('--c', c);
+  card.innerHTML = `<button class="map-card-x" type="button" aria-label="Close">${icSize('x', 16)}</button>
+    <div class="row" style="gap:12px;align-items:flex-start"><span class="cp-badge" style="--c:${esc(c)};--ct:${inkOn(c) || '#fff'};min-width:46px;height:46px;font-size:14px">${p.ref ? esc(p.ref) : icSize('folder', 18)}</span>
+      <div class="grow" style="min-width:0"><b class="mc-name">${esc(p.name)}</b><div class="small muted ellipsis">${esc([p.address, client].filter(Boolean).join(' · ') || 'Project site')}</div>
+      <div class="row tight wrap small" style="margin-top:4px">${far ? `<span class="pill">${icSize('pin', 12)}${esc(far)}</span>` : ''}${now.length ? `<span class="pill live-p">${avatarStack(now, 3)}${now.length} on site now</span>` : ''}</div></div></div>
+    <a class="btn primary block mc-go" href="${primary[1]}" target="_blank" rel="noopener">${icSize('route', 18)}<span>Directions from here · ${primary[0]}</span></a>
+    <div class="mc-alt"><a class="btn sm" href="${isIOS() ? L2.google : L2.apple}" target="_blank" rel="noopener">${isIOS() ? 'Google Maps' : 'Apple Maps'}</a><a class="btn sm" href="${L2.waze}" target="_blank" rel="noopener">Waze</a>
+      <a class="btn sm" href="#/project/${p.id}">${icSize('folder', 14)}Open</a><button class="btn sm" type="button" data-act="cp-pick" data-id="${p.id}">${icSize('play', 14)}Work here</button></div>`;
+  box.appendChild(card);
+  card.querySelector('.map-card-x').onclick = (e) => { e.stopPropagation(); closeMapCard(); };
+  ['click', 'mousedown', 'touchstart', 'wheel', 'dblclick'].forEach((t) => card.addEventListener(t, (e) => e.stopPropagation(), { passive: true }));
+  if (mapKind === 'gl') map.easeTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 11), offset: [0, -70], duration: 600 });
+  else map.flyTo([p.lat, p.lng], Math.max(map.getZoom(), 11), { duration: 0.6 });
+}
 function updateMap() {
   if (!map || !$('#map')) return;
   mapMarkers.forEach((mk) => mk.remove()); mapMarkers = [];
   const pts = [];
-  const add = (lat, lng, el, html, z) => {
-    if (mapKind === 'gl') { const mk = new maplibregl.Marker({ element: el, anchor: el.classList.contains('mk-job') ? 'bottom' : 'center' }).setLngLat([lng, lat]).setPopup(new maplibregl.Popup({ offset: 22, closeButton: false }).setHTML(html)).addTo(map); mapMarkers.push(mk); }
-    else { const icon = L.divIcon({ className: '', html: el.outerHTML, iconSize: el.classList.contains('mk-job') ? [30, 30] : [38, 38], iconAnchor: el.classList.contains('mk-job') ? [15, 30] : [19, 19] }); mapMarkers.push(L.marker([lat, lng], { icon, zIndexOffset: z }).addTo(map).bindPopup(html)); }
+  const add = (lat, lng, el, html, z, onPick) => {
+    const job = el.classList.contains('mk-job');
+    if (mapKind === 'gl') { const mk = new maplibregl.Marker({ element: el, anchor: job ? 'bottom' : 'center' }).setLngLat([lng, lat]); if (onPick) el.addEventListener('click', (e) => { e.stopPropagation(); onPick(el); }); else mk.setPopup(new maplibregl.Popup({ offset: 22, closeButton: false }).setHTML(html)); mk.addTo(map); mapMarkers.push(mk); }
+    else { const icon = L.divIcon({ className: '', html: el.outerHTML, iconSize: job ? [56, 50] : [38, 38], iconAnchor: job ? [28, 50] : [19, 19] }); const mk = L.marker([lat, lng], { icon, zIndexOffset: z }).addTo(map);
+      if (onPick) mk.on('click', () => onPick(mk.getElement() && mk.getElement().querySelector('.mk-job'))); else mk.bindPopup(html); mapMarkers.push(mk); }
     pts.push([lng, lat]);
   };
   for (const p of Object.values(S.projects)) {
     if (p.lat == null || p.lng == null || p.archived) continue;
-    const n = workingOn(p.id).length;
-    add(p.lat, p.lng, jobMarkerEl(), `<b>${esc(p.name)}</b><br><span style="color:#6a6963">${esc([p.ref, n ? n + ' working now' : ''].filter(Boolean).join(' · ') || 'Project site')}</span><br><a href="#/project/${p.id}">Open project</a>`, 0);
+    add(p.lat, p.lng, jobMarkerEl(p, workingOn(p.id).length), '', 0, (el) => openMapCard(p, el));
   }
   for (const [id, loc] of Object.entries(S.locations)) {
     const m = S.members[id]; if (!m) continue;

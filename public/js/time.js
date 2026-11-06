@@ -12,7 +12,7 @@ function currentProjectId() { // '' = not on a project, null = not chosen yet
 function setCurrentProject(id) { store.set(curKey(), id ? id : 'none'); }
 function lastCategory(pid) {
   const mine = userEntries(S.user.id).filter((e) => (e.projectId || '') === (pid || '') && WORK_CATS.includes(e.category)).sort((a, b) => b.start - a.start)[0];
-  return mine ? mine.category : (store.get('cd_lastcat') || (pid ? 'field' : 'office'));
+  return mine ? mine.category : (store.get('cd_lastcat') || (pid ? 'field' : 'training'));
 }
 // Projects in a helpful order: starred, then ones you've logged time on recently, then the rest.
 function projectChoices() {
@@ -72,7 +72,7 @@ function openStartSheet(opts = {}) {
   const run = myRunning();
   sheet(`${sheetHead(run ? 'Switch to something else' : 'What are you doing?')}
     <form class="stack" data-form="timer-start">
-      <label class="field"><span>Project</span><select name="projectId" data-change="start-proj"><option value="">Not on a project (office, training…)</option>${projectChoices().map((p) => `<option value="${p.id}" ${p.id === pid ? 'selected' : ''}>${esc(projLabel(p))}</option>`).join('')}</select></label>
+      <label class="field"><span>Project</span><select name="projectId" data-change="start-proj"><option value="">Not on a project (training, admin…)</option>${projectChoices().map((p) => `<option value="${p.id}" ${p.id === pid ? 'selected' : ''}>${esc(projLabel(p))}</option>`).join('')}</select></label>
       <div class="field"><span>Task</span><div data-taskfield>${taskChips(pid, sel)}</div></div>
       <div class="field"><span>Type of work</span><div class="chips wrap" role="radiogroup" aria-label="Type of work">${WORK_CATS.map((k) => `<button type="button" class="chip ${k === catSel ? 'on' : ''}" data-act="pick-chip" data-v="${k}" role="radio" aria-checked="${k === catSel}"><i class="cdot" style="background:${CATS[k].color}"></i>${CATS[k].label}</button>`).join('')}</div><input type="hidden" name="category" value="${catSel}"></div>
       <label class="field"><span>Note <span class="hint">· optional</span></span><input name="note" placeholder="e.g. Setting out drainage runs" maxlength="1000" autocomplete="off"></label>
@@ -166,7 +166,7 @@ function cpList(q, cur) {
   const ps = all.filter((p) => !ql || [p.name, p.ref, p.address, (S.clients[p.clientId] || {}).name].join(' ').toLowerCase().includes(ql));
   const recentIds = new Set(); for (const e of userEntries(S.user.id).slice().sort((a, b) => b.start - a.start)) { if (e.projectId && S.projects[e.projectId] && !S.projects[e.projectId].archived) recentIds.add(e.projectId); if (recentIds.size >= 3) break; }
   let i = 0; const tiles = (list) => list.map((p) => cpTile(p, cur, i++)).join('');
-  const none = `<button class="cp-tile none ${cur === '' ? 'on' : ''}" data-act="cp-pick" data-id="" style="--i:${ps.length}" aria-pressed="${cur === ''}"><span class="cp-badge">${icSize('home', 18)}</span><span class="cp-main"><b class="cp-name">Not on a project</b><span class="cp-sub">Office, training, admin, holiday…</span></span><span class="cp-check" aria-hidden="true">${icSize('check', 16)}</span></button>`;
+  const none = `<button class="cp-tile none ${cur === '' ? 'on' : ''}" data-act="cp-pick" data-id="" style="--i:${ps.length}" aria-pressed="${cur === ''}"><span class="cp-badge">${icSize('home', 18)}</span><span class="cp-main"><b class="cp-name">Not on a project</b><span class="cp-sub">Training, admin, holiday, toolbox talks…</span></span><span class="cp-check" aria-hidden="true">${icSize('check', 16)}</span></button>`;
   if (!ps.length) return `<div class="empty small" style="padding:22px 0">No projects match “${esc(q)}”.</div>${none}`;
   if (ql) return `<div class="cp-grid">${tiles(ps)}</div><div class="cp-grid" style="margin-top:10px">${none}</div>`;
   const recent = ps.filter((p) => recentIds.has(p.id)); const rest = ps.filter((p) => !recentIds.has(p.id));
@@ -238,7 +238,7 @@ VIEWS.home = {
       timer = `<div class="card choose-card"><h2>Which project are you on?</h2><p class="small muted" style="margin:4px 0 12px">Pick one and the big <b>+</b> appears — tap it whenever you start something.</p>
         <div class="choose-grid">${ps.map((x) => `<button class="choose-btn${projFill(x)}" data-act="cp-pick" data-id="${x.id}"><span class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(x.name)}</b><span class="tiny muted ellipsis" style="display:block">${esc(x.ref || x.address || 'Project')}</span></span></button>`).join('')}
           <button class="choose-btn" data-act="choose-project">${icSize('search', 18, 'color:var(--muted)')}<span class="grow"><b>${ps.length ? 'Another project…' : 'Choose a project…'}</b></span></button>
-          <button class="choose-btn" data-act="cp-pick" data-id=""><span class="grow"><b>Not on a project</b><span class="tiny muted" style="display:block">Office, training…</span></span></button></div></div>`;
+          <button class="choose-btn" data-act="cp-pick" data-id=""><span class="grow"><b>Not on a project</b><span class="tiny muted" style="display:block">Training, admin, holiday…</span></span></button></div></div>`;
     } else {
       timer = `<div class="timer-card ${run ? 'is-running' : ''} ${run && run.category === 'lunch' ? 'is-lunch' : ''}">${picker}
         <div class="timer">
