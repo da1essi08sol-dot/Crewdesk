@@ -190,7 +190,8 @@ function mhGoogle(el, view) {
       if (k === 'in') cp.range = Math.max(3, cp.range * 0.8); if (k === 'out') cp.range = Math.min(20000, cp.range / 0.8);
       if (k === 'left') cp.heading = (cp.heading - 10 + 360) % 360; if (k === 'right') cp.heading = (cp.heading + 10) % 360;
       if (k === 'up') cp.tilt = Math.min(90, cp.tilt + 6); if (k === 'down') cp.tilt = Math.max(0, cp.tilt - 6);
-      try { m3.flyCameraTo({ endCamera: cp, durationMillis: 140 }); } catch (_) { Object.assign(m3, { range: cp.range, heading: cp.heading, tilt: cp.tilt }); }
+      const direct = () => Object.assign(m3, { range: cp.range, heading: cp.heading, tilt: cp.tilt });
+      try { m3.flyCameraTo({ endCamera: cp, durationMillis: 140 }); const before = { r: m3.range, h: m3.heading, t: m3.tilt }; setTimeout(() => { if (m3 && m3.range === before.r && m3.heading === before.h && m3.tilt === before.t) direct(); }, 260); } catch (_) { direct(); }
     };
     let hold = 0;
     pad.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-cam]'); if (!b) return; e.preventDefault(); const k = b.dataset.cam; cam(k); clearInterval(hold); hold = setInterval(() => cam(k), 150); });
