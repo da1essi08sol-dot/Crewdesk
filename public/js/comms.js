@@ -437,7 +437,7 @@ VIEWS.team = {
     return `<div class="page-head"><div><h1>Team</h1><div class="sub">${plural(n, 'person', 'people')} in ${esc(S.company.name)}</div></div>${canInvite() ? `<button class="btn primary" data-act="invite-new">${ic('userplus')}<span>Invite people</span></button>` : ''}</div>
       <div class="stack">
         <div class="section-head" style="margin:0"><h2>Map</h2>
-          <div class="seg" role="radiogroup" aria-label="Map style">${Object.entries(MAP_STYLES).map(([k, l]) => `<button type="button" class="${mapStyle() === k ? 'on' : ''}" data-act="map-style" data-s="${k}" role="radio" aria-checked="${mapStyle() === k}">${l}</button>`).join('')}</div></div>
+          <div class="seg" role="radiogroup" aria-label="Map style">${(mapStyle(), Object.entries(MAP_STYLES)).map(([k, l]) => `<button type="button" class="${mapStyle() === k ? 'on' : ''}" data-act="map-style" data-s="${k}" role="radio" aria-checked="${mapStyle() === k}">${l}</button>`).join('')}</div></div>
         <div class="map-wrap"><div id="map" role="region" aria-label="Map of people and project sites"></div>
           <button class="map-fs" type="button" data-act="map-full" aria-label="Full screen map">${icSize('expand', 18)}</button></div>
         <label class="loc-banner">${ic('locate')}<div class="grow"><b>Share my live location</b><div class="small muted">Your company sees where you are while Crewdesk is open on your phone. Turn it off any time.</div></div>
@@ -490,7 +490,7 @@ A['map-unfull'] = () => {
   const w = $('.map-wrap.full'); if (!w) return; w.classList.add('closing');
   setTimeout(() => { w.classList.remove('full', 'closing'); document.documentElement.classList.remove('map-open'); if (w._home && w._home.isConnected) { w._home.replaceWith(w); } else w.remove(); const x = w.querySelector('.map-x'); if (x) x.remove(); const fsb = w.querySelector('.map-fs'); if (fsb) fsb.hidden = false; if (w._key) document.removeEventListener('keydown', w._key); mapResize(); }, motionOK() ? 200 : 0);
 };
-function mapResize() { if (!map) return; setTimeout(() => { try { mapKind === 'gl' ? map.resize() : map.invalidateSize(); } catch (_) {} }, 30); }
+function mapResize() { if (!map) return; setTimeout(() => { try { if (mapKind === 'google') google.maps.event.trigger(map.g, 'resize'); else mapKind === 'gl' ? map.resize() : map.invalidateSize(); } catch (_) {} }, 30); }
 C['share-loc'] = (el) => enableSharing(el.checked, el);
 A['team-join'] = async (el) => { try { const r = await capi('POST', `/teams/${el.dataset.id}/join`); S.teams[r.item.id] = r.item; scheduleRender(); } catch (e) { toast(e.message, true); } };
 A['team-leave'] = async (el) => { try { const r = await capi('POST', `/teams/${el.dataset.id}/leave`); S.teams[r.item.id] = r.item; scheduleRender(); } catch (e) { toast(e.message, true); } };
@@ -514,13 +514,17 @@ function loadScript(src) { return new Promise((res, rej) => { const s = document
 function loadCss(href) { if ($(`link[href="${href}"]`)) return; const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); }
 function webglOK() { try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; } }
 // OpenFreeMap styles: "liberty" is the most detailed (buildings, shops, house numbers, paths).
-const MAP_STYLES = { liberty: 'Detailed', bright: 'Bright', positron: 'Light', dark: 'Dark' };
-const mapStyle = () => { const s = store.get('cd_mapStyle'); return MAP_STYLES[s] ? s : 'liberty'; };
+const FREE_STYLES = { liberty: 'Detailed', bright: 'Bright', positron: 'Light', dark: 'Dark' };
+const G_STYLES = { roadmap: 'Map', hybrid: 'Satellite', terrain: 'Terrain' };
+const useGoogle = () => !!(S.mapsKey && !window.__cdGmFailed && window.loadGoogleMaps);
+let MAP_STYLES = FREE_STYLES;
+const mapStyle = () => { MAP_STYLES = useGoogle() ? G_STYLES : FREE_STYLES; const s = store.get(useGoogle() ? 'cd_gStyle' : 'cd_mapStyle'); return MAP_STYLES[s] ? s : Object.keys(MAP_STYLES)[0]; };
 const styleUrl = () => `https://tiles.openfreemap.org/styles/${mapStyle()}`;
 A['map-style'] = (el) => {
-  store.set('cd_mapStyle', el.dataset.s);
+  store.set(useGoogle() ? 'cd_gStyle' : 'cd_mapStyle', el.dataset.s);
   $$('[data-act="map-style"]').forEach((b) => { b.classList.toggle('on', b === el); b.setAttribute('aria-checked', b === el); });
   if (map && mapKind === 'gl') map.setStyle(styleUrl()); // markers are separate, so they stay put
+  if (map && mapKind === 'google') map.g.setMapTypeId(mapStyle());
 };
 const darkMode = () => document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
 async function drawMap() {
@@ -528,6 +532,7 @@ async function drawMap() {
   if (map && map.getContainer() !== el) destroyMap();
   if (map) return updateMap();
   el.innerHTML = '<div class="map-msg">Loading map…</div>';
+  if (useGoogle()) { try { await drawGoogle(el); return; } catch (_) { if (!el.isConnected) return; el.innerHTML = ''; } }
   if (!webglOK()) return drawLeaflet(el);
   try {
     if (!window.maplibregl) { loadCss('/vendor/maplibre/maplibre-gl.css'); await (glP = glP || loadScript('/vendor/maplibre/maplibre-gl-csp.js')); maplibregl.setWorkerUrl('/vendor/maplibre/maplibre-gl-csp-worker.js'); }
@@ -547,6 +552,25 @@ async function drawMap() {
     setTimeout(giveUp, 12000);
     updateMap();
   } catch (_) { drawLeaflet(el); }
+}
+// Google map (when the company has a Google Maps key): same pins and cards, Google's roads and satellite.
+async function drawGoogle(el) {
+  await loadGoogleMaps(S.mapsKey); if (!el.isConnected) return; const g = google.maps;
+  el.innerHTML = '';
+  const gm = new g.Map(el, { center: { lat: 54.5, lng: -3 }, zoom: 5, mapTypeId: mapStyle(), disableDefaultUI: true, zoomControl: true, fullscreenControl: false, gestureHandling: 'greedy', clickableIcons: false, maxZoom: 21 });
+  class Pin extends g.OverlayView {
+    constructor(lat, lng, node, job) { super(); this.ll = new g.LatLng(lat, lng); this.node = node; this.job = job; this.setMap(gm); }
+    onAdd() { const w = this.wrap = document.createElement('div'); w.style.cssText = `position:absolute;transform:translate(-50%,${this.job ? '-100%' : '-50%'})`; w.appendChild(this.node); this.getPanes().overlayMouseTarget.appendChild(w); }
+    draw() { const p = this.getProjection().fromLatLngToDivPixel(this.ll); if (p && this.wrap) { this.wrap.style.left = p.x + 'px'; this.wrap.style.top = p.y + 'px'; } }
+    onRemove() { if (this.wrap) this.wrap.remove(); }
+    remove() { this.setMap(null); }
+  }
+  const info = new g.InfoWindow();
+  gm.addListener('click', () => { closeMapCard(); info.close(); });
+  map = { g: gm, Pin, info, getContainer: () => el, remove() { g.event.clearInstanceListeners(gm); el.innerHTML = ''; } };
+  mapKind = 'google'; mapFitted = false;
+  g.event.addListenerOnce(gm, 'tilesloaded', () => setTimeout(() => { if (el.querySelector('.gm-err-container') || /development purposes only/i.test(el.innerText || '')) { window.__cdGmFailed = true; destroyMap(); drawMap(); } }, 1500));
+  updateMap();
 }
 async function drawLeaflet(el) {
   try {
@@ -597,7 +621,8 @@ function openMapCard(p, el) {
   box.appendChild(card);
   card.querySelector('.map-card-x').onclick = (e) => { e.stopPropagation(); closeMapCard(); };
   ['click', 'mousedown', 'touchstart', 'wheel', 'dblclick'].forEach((t) => card.addEventListener(t, (e) => e.stopPropagation(), { passive: true }));
-  if (mapKind === 'gl') map.easeTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 11), offset: [0, -70], duration: 600 });
+  if (mapKind === 'google') { map.g.panTo({ lat: p.lat, lng: p.lng }); if (map.g.getZoom() < 11) map.g.setZoom(11); }
+  else if (mapKind === 'gl') map.easeTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 11), offset: [0, -70], duration: 600 });
   else map.flyTo([p.lat, p.lng], Math.max(map.getZoom(), 11), { duration: 0.6 });
 }
 function updateMap() {
@@ -606,7 +631,8 @@ function updateMap() {
   const pts = [];
   const add = (lat, lng, el, html, z, onPick) => {
     const job = el.classList.contains('mk-job');
-    if (mapKind === 'gl') { const mk = new maplibregl.Marker({ element: el, anchor: job ? 'bottom' : 'center' }).setLngLat([lng, lat]); if (onPick) el.addEventListener('click', (e) => { e.stopPropagation(); onPick(el); }); else mk.setPopup(new maplibregl.Popup({ offset: 22, closeButton: false }).setHTML(html)); mk.addTo(map); mapMarkers.push(mk); }
+    if (mapKind === 'google') { const mk = new map.Pin(lat, lng, el, job); el.addEventListener('click', (e) => { e.stopPropagation(); if (onPick) onPick(el); else { map.info.setContent(html); map.info.setPosition({ lat, lng }); map.info.open({ map: map.g }); } }); mapMarkers.push(mk); }
+    else if (mapKind === 'gl') { const mk = new maplibregl.Marker({ element: el, anchor: job ? 'bottom' : 'center' }).setLngLat([lng, lat]); if (onPick) el.addEventListener('click', (e) => { e.stopPropagation(); onPick(el); }); else mk.setPopup(new maplibregl.Popup({ offset: 22, closeButton: false }).setHTML(html)); mk.addTo(map); mapMarkers.push(mk); }
     else { const icon = L.divIcon({ className: '', html: el.outerHTML, iconSize: job ? [56, 50] : [38, 38], iconAnchor: job ? [28, 50] : [19, 19] }); const mk = L.marker([lat, lng], { icon, zIndexOffset: z }).addTo(map);
       if (onPick) mk.on('click', () => onPick(mk.getElement() && mk.getElement().querySelector('.mk-job'))); else mk.bindPopup(html); mapMarkers.push(mk); }
     pts.push([lng, lat]);
@@ -621,11 +647,12 @@ function updateMap() {
   }
   if (!mapFitted && pts.length) {
     mapFitted = true;
-    if (mapKind === 'gl') { const b = pts.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0])); map.fitBounds(b, { padding: 50, maxZoom: 14, duration: 0 }); }
+    if (mapKind === 'google') { const b = new google.maps.LatLngBounds(); pts.forEach(([lng, lat]) => b.extend({ lat, lng })); map.g.fitBounds(b, 50); google.maps.event.addListenerOnce(map.g, 'idle', () => { if (map && map.g && map.g.getZoom() > 15) map.g.setZoom(15); }); }
+    else if (mapKind === 'gl') { const b = pts.reduce((bb, p) => bb.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0])); map.fitBounds(b, { padding: 50, maxZoom: 14, duration: 0 }); }
     else map.fitBounds(pts.map(([lng, lat]) => [lat, lng]), { padding: [40, 40], maxZoom: 15 });
   }
 }
-function focusMap(lat, lng) { if (!map) return; if (mapKind === 'gl') map.jumpTo({ center: [lng, lat], zoom: 15 }); else map.setView([lat, lng], 16); }
+function focusMap(lat, lng) { if (!map) return; if (mapKind === 'google') { map.g.panTo({ lat, lng }); map.g.setZoom(16); return; } if (mapKind === 'gl') map.jumpTo({ center: [lng, lat], zoom: 15 }); else map.setView([lat, lng], 16); }
 A['map-focus'] = (el) => { const l = S.locations[el.dataset.id]; if (!l) return; mapFitted = true; if (parseHash().name !== 'team') location.hash = '#/team'; setTimeout(() => { const m = $('#map'); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' }); focusMap(l.lat, l.lng); }, 600); };
 
 // ============================================================ PERSON PROFILE
