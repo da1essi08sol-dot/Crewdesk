@@ -1716,3 +1716,9 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .mh, .mh-panel, .mhm.pop, .mhm.drop-in { animation: none !important; } }
 .mh-panel[hidden], .mh-results[hidden] { display: none !important; }
 #mh-map { z-index: 0; }
+
+.msg.picked .bubble { transform: scale(.97); filter: brightness(.92); transition: transform .2s var(--spring); }
+.msg.removing { animation: msg-out .22s ease-in forwards; }
+@keyframes msg-out { to { opacity: 0; transform: scale(.9); max-height: 0; margin: 0; } }
+.msgs .bubble { -webkit-touch-callout: none; }
+.mi.danger { color: var(--red); }

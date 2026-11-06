@@ -1563,6 +1563,29 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     if (ch && d.chats[ch[1]] && d.chats[ch[1]].kind === 'dm') { /* the live 'msg' event already alerts the other person */ }
     return json(res, 200, { item: msg });
   }
+  // Delete one message (your own, or any as an admin), or clear a whole chat's history (admins).
+  if ((m = /^\/messages\/([A-Za-z0-9]+)$/.exec(sub)) && M === 'DELETE') {
+    const ch = url.searchParams.get('channel') || '';
+    if (!canSeeChannel(x, ch)) notFound('Chat not found');
+    const arr = d.messages[ch] || []; const i = arr.findIndex((q) => q.id === m[1]);
+    if (i < 0) notFound('That message was already deleted');
+    const msg = arr[i];
+    if (!(isAdmin(role) || (msg.userId === user.id && !msg.system))) deny('Only the person who sent it, or an admin, can delete this message');
+    arr.splice(i, 1); dropMessageFiles([msg]); touchChannel(cid, ch); save();
+    broadcast(cid, (y) => (canSeeChannel(y, ch) ? { t: 'msgDel', channel: ch, id: msg.id } : null));
+    return json(res, 200, { ok: true });
+  }
+  if (sub === '/messages/clear' && M === 'POST') {
+    if (!isAdmin(role)) deny('Only admins can clear a chat’s history');
+    const b = await readBody(req); const ch = str(b.channel, 80);
+    if (!canSeeChannel(x, ch)) notFound('Chat not found');
+    if (b.confirm !== true) bad('Confirm to clear this chat');
+    const n = (d.messages[ch] || []).filter((q) => !q.system).length;
+    dropMessageFiles(d.messages[ch]); d.messages[ch] = []; touchChannel(cid, ch);
+    broadcast(cid, (y) => (canSeeChannel(y, ch) ? { t: 'msgClear', channel: ch } : null));
+    postMessage(cid, ch, user.id, `${user.name} cleared the chat history`, [], true);
+    save(); return json(res, 200, { cleared: n });
+  }
   if (sub === '/typing' && M === 'POST') { // "… is typing" — sent live to others who can see the chat, never stored
     const b = await readBody(req);
     const ch = str(b.channel, 80);

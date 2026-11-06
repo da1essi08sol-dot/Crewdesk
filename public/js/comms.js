@@ -112,7 +112,7 @@ function renderMsgs(pane, ch, forceBottom = false) {
     if (startRun && !mine) html += `<div class="msg-who">${personName(m.userId)}</div>`;
     const imgs = msgImages(m);
     const fresh = !first && !seenMsgs.has(m.id) && motionOK(); seenMsgs.add(m.id);
-    html += `<div class="msg ${mine ? 'mine' : ''} ${endRun ? 'last' : ''} ${fresh ? 'new' : ''} ${m.pending ? 'pending' : ''}" style="${startRun && mine ? 'margin-top:8px' : ''}">
+    html += `<div class="msg ${mine ? 'mine' : ''} ${endRun ? 'last' : ''} ${fresh ? 'new' : ''} ${m.pending ? 'pending' : ''}" data-mid="${m.pending ? '' : m.id}" data-ch="${esc(ch)}" style="${startRun && mine ? 'margin-top:8px' : ''}">
       ${mine ? '' : avatar(who, 'sm')}
       <div class="bubble">${msgFiles(m)}${imgs.length ? `<div class="bubble-photos ${imgs.length === 1 ? 'one' : ''}">${imgs.map((u, k) => `<button type="button" data-act="chat-photo" data-ch="${esc(ch)}" data-msg="${m.id}" data-i="${k}" aria-label="Open photo ${k + 1} from ${esc(who.name)}"><img src="${esc(u)}" alt="Photo from ${esc(who.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''}${m.text ? linkify(m.text) : ''}</div>
       <span class="msg-time" title="${esc(fmtDateTime(m.at))}">${m.pending ? 'Sending…' : clock(m.at)}</span></div>`;
@@ -271,6 +271,7 @@ A['chat-info'] = (el) => {
   sheet(`${sheetHead(info.name)}
     <p class="small muted" style="margin:-6px 0 10px">${info.kind === 'general' ? 'Everyone in the company is in this chat.' : info.kind === 'project' ? 'Everyone who can see this project can read and join in.' : `Group made by ${esc(member(c.createdBy).name)}.`} ${plural(ids.length, 'person', 'people')}.</p>
     <div>${ids.map((id) => { const m = member(id); return `<div class="member-row">${avatar(m, '', { dot: true })}<div class="grow"><b class="ellipsis" style="display:block">${esc(m.name)}${id === S.user.id ? ' <span class="muted" style="font-weight:400">(you)</span>' : ''}</b><span class="tiny muted">${m.online ? 'Online now' : m.lastSeen ? 'Last seen ' + timeAgo(m.lastSeen) : esc(m.title || '')}</span></div>${id !== S.user.id ? `<button class="btn sm ghost icon" data-act="message-person" data-id="${id}" aria-label="Message ${esc(m.name)}">${ic('chat')}</button>` : ''}</div>`; }).join('')}</div>
+    ${isAdmin() ? `<button class="btn block ghost danger" style="margin-top:12px" data-act="chat-clear" data-ch="${esc(ch)}">${ic('trash')}Clear chat history</button>` : ''}
     <div class="sheet-foot">${c ? (manage ? `<button class="btn" data-act="chat-manage" data-id="${c.id}">${ic('edit')}Edit group</button>` : `<button class="btn danger" data-act="chat-leave" data-id="${c.id}">${ic('logout')}Leave group</button>`) : ''}<button class="btn primary" data-close>Done</button></div>`);
 };
 // New chat: a direct message with one person, or a named group.
@@ -757,3 +758,41 @@ F.client = async (f, d, close) => {
 // Typing a team name inside its header mustn't open or close the dropdown.
 document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('summary .team-name')) e.preventDefault(); }, true);
 ['keydown', 'keyup'].forEach((t) => document.addEventListener(t, (e) => { if (e.target.closest && e.target.closest('summary .team-name')) { if (e.key === 'Enter' && t === 'keydown') { e.preventDefault(); e.target.blur(); } else if (e.key === ' ' || e.key === 'Enter') e.stopPropagation(); } }, true));
+
+// ---- deleting messages and clearing a chat
+function msgMenu(bubble, x, y) {
+  const row = bubble.closest('.msg'); const id = row && row.dataset.mid; const ch = row && row.dataset.ch; if (!id || !ch) return;
+  const m = (S.msgs[ch] || []).find((q) => q.id === id); if (!m) return;
+  const canDel = isAdmin() || m.userId === S.user.id;
+  if (!canDel && !m.text) return;
+  row.classList.add('picked');
+  const anchor = document.createElement('span'); anchor.style.cssText = `position:fixed;left:${x}px;top:${y}px;width:1px;height:1px`; document.body.appendChild(anchor);
+  const menu = popMenu(anchor, `${m.text ? `<button class="mi" data-act="msg-copy" data-ch="${esc(ch)}" data-id="${id}">${ic('copy')}Copy text</button>` : ''}
+    ${canDel ? `<button class="mi danger" data-act="msg-del" data-ch="${esc(ch)}" data-id="${id}">${ic('trash')}Delete message${m.userId !== S.user.id ? ' (admin)' : ''}</button>` : ''}`);
+  const done = () => { row.classList.remove('picked'); anchor.remove(); };
+  if (menu) { const mo = new MutationObserver(() => { if (!menu.isConnected || menu.classList.contains('leaving')) { done(); mo.disconnect(); } }); mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] }); } else done();
+}
+document.addEventListener('contextmenu', (e) => { const b = e.target.closest && e.target.closest('.msgs .msg .bubble'); if (!b) return; e.preventDefault(); msgMenu(b, e.clientX, e.clientY); });
+let lpT = 0, lpXY = null;
+document.addEventListener('touchstart', (e) => { const b = e.target.closest && e.target.closest('.msgs .msg .bubble'); if (!b) return; const t = e.touches[0]; lpXY = [t.clientX, t.clientY]; clearTimeout(lpT); lpT = setTimeout(() => { if (navigator.vibrate) try { navigator.vibrate(10); } catch (_) {} msgMenu(b, lpXY[0], lpXY[1]); lpXY = null; }, 480); }, { passive: true });
+['touchend', 'touchcancel'].forEach((t) => document.addEventListener(t, () => clearTimeout(lpT), { passive: true }));
+document.addEventListener('touchmove', (e) => { if (!lpXY) return; const t = e.touches[0]; if (Math.abs(t.clientX - lpXY[0]) + Math.abs(t.clientY - lpXY[1]) > 10) clearTimeout(lpT); }, { passive: true });
+A['msg-copy'] = (el) => { const m = (S.msgs[el.dataset.ch] || []).find((q) => q.id === el.dataset.id); if (!m) return; try { navigator.clipboard.writeText(m.text); toast('Copied'); } catch (_) {} };
+A['msg-del'] = async (el) => {
+  const ch = el.dataset.ch, id = el.dataset.id; const m = (S.msgs[ch] || []).find((q) => q.id === id); if (!m) return;
+  const other = m.userId !== S.user.id;
+  if (!(await confirmBox('Delete this message?', other ? `${member(m.userId).name}’s message is removed for everyone. Any photos or files in it are deleted too.` : 'It’s removed for everyone in the chat.', 'Delete'))) return;
+  try { await capi('DELETE', `/messages/${id}?channel=${encodeURIComponent(ch)}`); dropMsgLocal(ch, id); toast('Message deleted'); } catch (e) { toast(e.message, true); }
+};
+A['chat-clear'] = async (el) => {
+  const ch = el.dataset.ch; const info = channelInfo(ch) || { name: 'this chat' };
+  closeSheets();
+  if (!(await confirmBox(`Clear “${info.name}”?`, 'Every message, photo and file in this chat is permanently deleted for everyone. A note says you cleared it. This can’t be undone.', 'Clear history'))) return;
+  try { const r = await capi('POST', '/messages/clear', { channel: ch, confirm: true }); toast(`Cleared ${plural(r.cleared, 'message')}`); } catch (e) { toast(e.message, true); }
+};
+function dropMsgLocal(ch, id) {
+  const pane = [...$$('.chat-pane')].find((p) => p.dataset.ch === ch); const row = pane && pane.querySelector(`.msg[data-mid="${CSS.escape(id)}"]`);
+  const fin = () => { if (S.msgs[ch]) S.msgs[ch] = S.msgs[ch].filter((q) => q.id !== id); const arr = S.msgs[ch] || []; const last = arr[arr.length - 1];
+    S.lastMsg[ch] = last ? { at: last.at, text: msgPreview(last), userId: last.userId, system: last.system } : null; refreshPanes(ch); scheduleRender(); };
+  if (row && motionOK()) { row.classList.add('removing'); setTimeout(fin, 220); } else fin();
+}

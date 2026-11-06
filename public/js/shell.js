@@ -295,6 +295,8 @@ function handleEvent(ev) {
       scheduleRender(); break;
     }
     case 'msg': onMessage(ev.item); break;
+    case 'msgDel': dropMsgLocal(ev.channel, ev.id); break;
+    case 'msgClear': if (S.msgs[ev.channel]) S.msgs[ev.channel] = []; S.msgsMore[ev.channel] = false; refreshPanes(ev.channel); scheduleRender(); break;
     case 'inbox':
       S.inbox.push(ev.item); if (S.inbox.length > 200) S.inbox.shift();
       alertUser(ev.item.text, ev.item.link, '', { from: ev.item.by && S.members[ev.item.by] ? ev.item.by : null, icon: 'bell', title: ev.item.by && S.members[ev.item.by] ? member(ev.item.by).name : 'Crewdesk', text: ev.item.text }); scheduleRender(); break;
