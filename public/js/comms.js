@@ -1,4 +1,4 @@
-/* Chat (company, job, direct and group chats), pings and notifications, team and map, profiles, clients. */
+/* Chat (company, project, direct and group chats), pings and notifications, team and map, profiles, clients. */
 'use strict';
 
 // ============================================================ CHAT
@@ -9,7 +9,7 @@ function chatName(c) {
 }
 function channelInfo(ch) {
   if (ch === 'general') return { name: S.company.name, sub: `Everyone · ${plural(Object.keys(S.members).length, 'member')}`, icon: 'hash', kind: 'general' };
-  if (ch.startsWith('job:')) { const j = S.jobs[ch.slice(4)]; return j ? { name: j.title, sub: `${j.ref} · ${STATUS[j.status]}`, icon: 'jobs', job: j, kind: 'job' } : null; }
+  if (ch.startsWith('project:')) { const p = S.projects[ch.slice(8)]; return p ? { name: p.name, sub: p.ref ? `${p.ref} · project chat` : 'Project chat', icon: 'folder', project: p, kind: 'project' } : null; }
   if (ch.startsWith('chat:')) {
     const c = S.chats[ch.slice(5)]; if (!c) return null;
     if (c.kind === 'dm') { const other = c.members.find((id) => id !== S.user.id); const m = member(other); return { name: m.name, sub: m.online ? 'Online' : 'Last seen ' + timeAgo(m.lastSeen), icon: 'user', chat: c, other, kind: 'dm' }; }
@@ -21,7 +21,7 @@ function channelList(active) {
   const row = (ch, info) => {
     const lm = S.lastMsg[ch]; const un = S.unread[ch] || 0;
     const preview = lm ? (lm.system ? lm.text : `${lm.userId === S.user.id ? 'You' : firstName(lm.userId)}: ${lm.text}`) : info.sub;
-    const icon = info.kind === 'dm' ? avatar(member(info.other), 'sm', { link: false, dot: true }) : `<span class="chan-ico" ${info.job ? `style="color:${STATUS_COLOR[info.job.status]}"` : ''}>${ic(info.icon)}</span>`;
+    const icon = info.kind === 'dm' ? avatar(member(info.other), 'sm', { link: false, dot: true }) : `<span class="chan-ico" ${info.project ? `style="color:${esc(info.project.color || 'var(--accent)')}"` : ''}>${ic(info.icon)}</span>`;
     return `<a class="chan ${active === ch ? 'on' : ''}" href="#/chat/${ch}" ${active === ch ? 'aria-current="page"' : ''}>${icon}
       <div class="grow"><div class="row between"><b class="ellipsis">${esc(info.name)}</b>${lm ? `<span class="tiny muted" style="flex:none">${timeAgo(lm.at)}</span>` : ''}</div>
         <div class="row between"><span class="small muted ellipsis ${typingText(ch) ? 'typing' : ''}" data-preview="${esc(ch)}" data-text="${esc(preview)}">${esc(typingText(ch) || preview)}</span>${un ? `<span class="count">${un}</span>` : ''}</div></div></a>`;
@@ -30,22 +30,23 @@ function channelList(active) {
   const chats = Object.values(S.chats);
   const dms = chats.filter((c) => c.kind === 'dm').sort((a, b) => (recent('chat:' + b.id) || b.createdAt) - (recent('chat:' + a.id) || a.createdAt));
   const groups = chats.filter((c) => c.kind !== 'dm').sort((a, b) => (recent('chat:' + b.id) || b.createdAt) - (recent('chat:' + a.id) || a.createdAt));
-  const jobs = Object.values(S.jobs).filter((j) => j.status !== 'done' || S.lastMsg['job:' + j.id]).sort((a, b) => (recent('job:' + b.id) || b.createdAt) - (recent('job:' + a.id) || a.createdAt));
+  const projs = Object.values(S.projects).filter((p) => p.chat && (!p.archived || S.lastMsg['project:' + p.id])).sort((a, b) => (recent('project:' + b.id) || b.createdAt) - (recent('project:' + a.id) || a.createdAt));
   return `<div class="row between" style="padding:12px 16px"><b>Chats</b><button class="btn sm primary" data-act="new-chat">${ic('plus')}New chat</button></div>
     ${row('general', channelInfo('general'))}
     ${dms.length ? `<div class="chan-group label">Direct messages</div>${dms.map((c) => row('chat:' + c.id, channelInfo('chat:' + c.id))).join('')}` : ''}
     ${groups.length ? `<div class="chan-group label">Groups</div>${groups.map((c) => row('chat:' + c.id, channelInfo('chat:' + c.id))).join('')}` : ''}
-    ${jobs.length ? `<div class="chan-group label">Job chats</div>${jobs.map((j) => row('job:' + j.id, channelInfo('job:' + j.id))).join('')}` : ''}`;
+    ${projs.length ? `<div class="chan-group label">Project chats</div>${projs.map((p) => row('project:' + p.id, channelInfo('project:' + p.id))).join('')}` : ''}
+    <div class="tiny muted" style="padding:10px 16px 14px">Projects don’t have a chat until someone opens one from the project page.</div>`;
 }
 // Who can read a chat, for the header and the "who's here" sheet.
 function chatMembers(ch) {
   const all = Object.keys(S.members);
   if (ch === 'general') return all;
   if (ch.startsWith('chat:')) { const c = S.chats[ch.slice(5)]; return c ? c.members.filter((id) => S.members[id] || id === S.user.id) : []; }
-  if (ch.startsWith('job:')) {
-    const j = S.jobs[ch.slice(4)]; if (!j) return [];
-    if (j.visibility !== 'selected') return all;
-    return all.filter((id) => ['owner', 'admin'].includes((S.members[id] || {}).role) || id === j.createdBy || (j.assignees || []).includes(id) || (j.members || []).includes(id));
+  if (ch.startsWith('project:')) {
+    const p = S.projects[ch.slice(8)]; if (!p) return [];
+    if (p.visibility !== 'selected') return all;
+    return all.filter((id) => ['owner', 'admin'].includes((S.members[id] || {}).role) || id === p.createdBy || (p.members || []).includes(id));
   }
   return [];
 }
@@ -58,7 +59,7 @@ function membersLine(ch) {
     const names = others.slice(0, 3).map((id) => firstName(id));
     return ['You'].concat(names).join(', ') + (others.length > 3 ? ` and ${others.length - 3} more` : '') + (online ? ` · ${online} online` : '');
   }
-  return `${plural(ids.length, 'person', 'people')}${online ? ` · ${online} online` : ''}${info.job ? ' · ' + info.job.ref : ''}`;
+  return `${plural(ids.length, 'person', 'people')}${online ? ` · ${online} online` : ''}${info.project && info.project.ref ? ' · ' + info.project.ref : ''}`;
 }
 function chatPane(ch, embedded = false) {
   const t = channelInfo(ch) || { name: 'Chat', sub: '', icon: 'chat' };
@@ -68,12 +69,12 @@ function chatPane(ch, embedded = false) {
     ${embedded ? '' : `<div class="chat-top"><a class="btn ghost sm icon" href="#/chat" aria-label="All chats" style="${wide() ? 'display:none' : ''}">${ic('back')}</a>
       <button class="chat-head-btn" data-act="chat-info" data-ch="${esc(ch)}" aria-label="${esc(t.name)} — see who’s in this chat">${icon}<span class="grow"><b class="ellipsis" style="display:block">${esc(t.name)}</b><span class="who-line" data-chat-sub>${esc(membersLine(ch))}</span></span>
         ${t.kind !== 'dm' ? `<span class="row tight" style="flex:none">${avatarStack(ids.filter((id) => id !== S.user.id).slice(0, 12), wide() ? 4 : 3).replace(/ data-person="[^"]*"/g, '')}</span>` : ''}</button>
-      ${t.job ? `<a class="btn sm" href="#/job/${t.job.id}">Open job</a>` : ''}</div>`}
+      ${t.project ? `<a class="btn sm" href="#/project/${t.project.id}">Open project</a>` : ''}</div>`}
     <div class="msgs" data-msgs role="log" aria-live="polite" aria-label="Messages"><div class="empty small">Loading…</div></div>
     <div class="attach-preview hidden" data-attach></div>
     <form class="composer" data-form="send" data-ch="${esc(ch)}">
       <button type="button" class="btn ghost icon" data-act="attach" data-ch="${esc(ch)}" aria-label="Add photos">${ic('camera')}</button>
-      <textarea name="text" rows="1" placeholder="Message ${esc(t.kind === 'dm' ? t.name.split(' ')[0] : t.kind === 'general' ? 'everyone' : t.kind === 'job' ? 'the job crew' : t.name)}…" data-input="autosize" enterkeyhint="send" aria-label="Message"></textarea>
+      <textarea name="text" rows="1" placeholder="Message ${esc(t.kind === 'dm' ? t.name.split(' ')[0] : t.kind === 'general' ? 'everyone' : t.kind === 'project' ? 'the project team' : t.name)}…" data-input="autosize" enterkeyhint="send" aria-label="Message"></textarea>
       <button class="btn primary send-btn" aria-label="Send" data-empty>${ic('send')}</button>
     </form>
   </div>`;
@@ -265,7 +266,7 @@ A['chat-info'] = (el) => {
   const ids = chatMembers(ch).slice().sort((a, b) => (b === S.user.id) - (a === S.user.id) || (member(b).online - member(a).online) || member(a).name.localeCompare(member(b).name));
   const c = info.chat; const manage = c && (c.createdBy === S.user.id || isAdmin());
   sheet(`${sheetHead(info.name)}
-    <p class="small muted" style="margin:-6px 0 10px">${info.kind === 'general' ? 'Everyone in the company is in this chat.' : info.kind === 'job' ? 'Everyone who can see this job can read and join in.' : `Group made by ${esc(member(c.createdBy).name)}.`} ${plural(ids.length, 'person', 'people')}.</p>
+    <p class="small muted" style="margin:-6px 0 10px">${info.kind === 'general' ? 'Everyone in the company is in this chat.' : info.kind === 'project' ? 'Everyone who can see this project can read and join in.' : `Group made by ${esc(member(c.createdBy).name)}.`} ${plural(ids.length, 'person', 'people')}.</p>
     <div>${ids.map((id) => { const m = member(id); return `<div class="member-row">${avatar(m, '', { dot: true })}<div class="grow"><b class="ellipsis" style="display:block">${esc(m.name)}${id === S.user.id ? ' <span class="muted" style="font-weight:400">(you)</span>' : ''}</b><span class="tiny muted">${m.online ? 'Online now' : m.lastSeen ? 'Last seen ' + timeAgo(m.lastSeen) : esc(m.title || '')}</span></div>${id !== S.user.id ? `<button class="btn sm ghost icon" data-act="message-person" data-id="${id}" aria-label="Message ${esc(m.name)}">${ic('chat')}</button>` : ''}</div>`; }).join('')}</div>
     <div class="sheet-foot">${c ? (manage ? `<button class="btn" data-act="chat-manage" data-id="${c.id}">${ic('edit')}Edit group</button>` : `<button class="btn danger" data-act="chat-leave" data-id="${c.id}">${ic('logout')}Leave group</button>`) : ''}<button class="btn primary" data-close>Done</button></div>`);
 };
@@ -360,7 +361,7 @@ VIEWS.pings = {
       const items = S.inbox.slice().reverse();
       return head + `<div class="card flush">${items.length ? `<div class="list">${items.map((n) => `<a class="item" href="${esc(n.link || '#/home')}" data-act="inbox-open" data-id="${n.id}">${n.read ? '<span style="width:9px;flex:none"></span>' : '<span class="dot-unread" title="Unread"></span>'}
         <span class="grow"><span style="display:block;${n.read ? '' : 'font-weight:600'}">${esc(n.text)}</span><span class="tiny muted">${esc(fmtDateTime(n.at))}</span></span>${icSize('right', 16, 'color:var(--muted)')}</a>`).join('')}</div>`
-        : `<div class="empty">${ic('bell')}<h3>No notifications</h3><div class="small">When someone assigns you to a job, gives you a task or adds you to an event, it shows up here.</div></div>`}</div>
+        : `<div class="empty">${ic('bell')}<h3>No notifications</h3><div class="small">When someone gives you a task, adds you to a project or an event, or replies to a suggestion, it shows up here.</div></div>`}</div>
         <p class="small muted" style="margin-top:12px">Turn pop-up alerts on or off in <a href="#/profile">your settings</a>.</p>`;
     }
     const list = Object.values(S.pings).sort((a, b) => (b.pinned - a.pinned) || (b.createdAt - a.createdAt));
@@ -439,7 +440,7 @@ VIEWS.team = {
         <label class="loc-banner">${ic('locate')}<div class="grow"><b>Share my live location</b><div class="small muted">Your company sees where you are while Crewdesk is open on your phone. Turn it off any time.</div></div>
           <span class="switch"><input type="checkbox" ${sharing ? 'checked' : ''} data-change="share-loc" aria-label="Share my live location"><i></i></span></label>
         ${!window.isSecureContext ? `<div class="warn">Location needs a secure <b>https://</b> link.</div>` : ''}
-        <div id="map" role="region" aria-label="Map of people and job sites"></div>
+        <div id="map" role="region" aria-label="Map of people and project sites"></div>
         <span class="small muted">Zoom right in to see buildings, house numbers and footpaths.</span>
       </div>`;
   },
@@ -467,7 +468,7 @@ C['share-loc'] = (el) => enableSharing(el.checked, el);
 A['team-join'] = async (el) => { try { const r = await capi('POST', `/teams/${el.dataset.id}/join`); S.teams[r.item.id] = r.item; scheduleRender(); } catch (e) { toast(e.message, true); } };
 A['team-leave'] = async (el) => { try { const r = await capi('POST', `/teams/${el.dataset.id}/leave`); S.teams[r.item.id] = r.item; scheduleRender(); } catch (e) { toast(e.message, true); } };
 A['team-edit'] = (el) => teamSheet(el.dataset.id);
-A['team-del'] = async (el) => { const t = S.teams[el.dataset.id]; closeSheets(); if (await confirmBox('Delete this team?', `“${t.name}” will be removed. Jobs stay, just without a team.`)) deleteItem('teams', t.id); };
+A['team-del'] = async (el) => { const t = S.teams[el.dataset.id]; closeSheets(); if (await confirmBox('Delete this team?', `“${t.name}” will be removed. Its people stay in the company.`)) deleteItem('teams', t.id); };
 function teamSheet(id) {
   const t = id ? S.teams[id] : { name: '', color: PALETTE[Object.keys(S.teams).length % PALETTE.length], members: [] };
   sheet(`${sheetHead(id ? 'Edit team' : 'New team')}<form class="stack" data-form="team" data-id="${id || ''}">
@@ -539,7 +540,7 @@ function personMarkerEl(m) {
   if (m.avatar) { const img = document.createElement('img'); img.src = m.avatar; img.alt = ''; img.width = 32; img.height = 32; d.appendChild(img); } else d.textContent = initials(m.name);
   return d;
 }
-function jobMarkerEl() { const d = document.createElement('div'); d.className = 'mk-job'; d.innerHTML = ic('jobs'); return d; }
+function jobMarkerEl() { const d = document.createElement('div'); d.className = 'mk-job'; d.innerHTML = ic('folder'); return d; }
 function updateMap() {
   if (!map || !$('#map')) return;
   mapMarkers.forEach((mk) => mk.remove()); mapMarkers = [];
@@ -549,9 +550,10 @@ function updateMap() {
     else { const icon = L.divIcon({ className: '', html: el.outerHTML, iconSize: el.classList.contains('mk-job') ? [30, 30] : [38, 38], iconAnchor: el.classList.contains('mk-job') ? [15, 30] : [19, 19] }); mapMarkers.push(L.marker([lat, lng], { icon, zIndexOffset: z }).addTo(map).bindPopup(html)); }
     pts.push([lng, lat]);
   };
-  for (const j of Object.values(S.jobs)) {
-    if (j.lat == null || j.lng == null || j.status === 'done') continue;
-    add(j.lat, j.lng, jobMarkerEl(), `<b>${esc(j.title)}</b><br><span style="color:#6a6963">${esc(j.ref)} · ${STATUS[j.status]}</span><br><a href="#/job/${j.id}">Open job</a>`, 0);
+  for (const p of Object.values(S.projects)) {
+    if (p.lat == null || p.lng == null || p.archived) continue;
+    const n = workingOn(p.id).length;
+    add(p.lat, p.lng, jobMarkerEl(), `<b>${esc(p.name)}</b><br><span style="color:#6a6963">${esc([p.ref, n ? n + ' working now' : ''].filter(Boolean).join(' · ') || 'Project site')}</span><br><a href="#/project/${p.id}">Open project</a>`, 0);
   }
   for (const [id, loc] of Object.entries(S.locations)) {
     const m = S.members[id]; if (!m) continue;
@@ -594,9 +596,10 @@ VIEWS.person = {
     const m = S.members[id];
     if (!m) return outsiderProfile(id);
     const me = id === S.user.id; const loc = S.locations[id];
-    const projects = Object.values(S.projects).filter((p) => !p.archived && (p.createdBy === id || (p.members || []).includes(id) || projectJobs(p.id).some((j) => (j.assignees || []).includes(id))));
-    const jobs = Object.values(S.jobs).filter((j) => j.status !== 'done' && (j.assignees || []).includes(id)).sort(byDeadline);
-    const activity = Object.values(S.jobs).flatMap((j) => (j.history || []).filter((h) => h.by === id).map((h) => Object.assign({ job: j }, h)))
+    const projects = Object.values(S.projects).filter((p) => !p.archived && (p.createdBy === id || (p.members || []).includes(id) || projectTasks(p.id).some((t) => (t.assignees || []).includes(id)) || userEntries(id).some((e) => e.projectId === p.id)));
+    const tasks = Object.values(S.tasks).filter((t) => !t.done && (t.assignees || []).includes(id) && S.projects[t.projectId] && !S.projects[t.projectId].archived);
+    const run = runningOf(id);
+    const activity = userEntries(id).filter((e) => e.projectId && S.projects[e.projectId]).map((e) => ({ at: e.start, text: `${cat(e.category).label}${e.tname ? ': ' + e.tname : ''} (${fmtDur(entryMins(e), true)})`, project: S.projects[e.projectId] }))
       .concat(Object.values(S.pings).filter((p) => p.createdBy === id).map((p) => ({ at: p.createdAt, text: `Posted the ping “${p.title}”`, ping: p })))
       .sort((a, b) => b.at - a.at).slice(0, 10);
     const canManage = isAdmin() && m.role !== 'owner' && !me;
@@ -615,8 +618,9 @@ VIEWS.person = {
       </div>
       <div class="grid two">
         <div class="stack loose">
-          <div><div class="section-head"><h2>Working on</h2></div>${jobs.length ? `<div class="cards">${jobs.map(jobCard).join('')}</div>` : '<div class="card empty small">Not assigned to any open jobs you can see.</div>'}</div>
-          <div><div class="section-head"><h2>Recent activity</h2></div><div class="card">${activity.length ? `<ul class="hist">${activity.map((a) => `<li><span class="grow">${esc(a.text)}${a.job ? ` · <a href="#/job/${a.job.id}">${esc(a.job.title)}</a>` : a.ping ? ` · <a href="#/ping/${a.ping.id}">Open</a>` : ''}</span><time title="${esc(fmtDateTime(a.at))}">${timeAgo(a.at)}</time></li>`).join('')}</ul>` : '<div class="small muted">Nothing recent you can see.</div>'}</div></div>
+          <div><div class="section-head"><h2>Right now</h2>${isAdmin() ? `<a class="small" href="#/timesheet/${thisMonth()}/${id}">Timesheet</a>` : ''}</div><div class="card">${run ? `<div class="row"><i class="cdot lg" style="background:${cat(run.category).color}"></i><div class="grow"><b>${esc(run.category === 'lunch' ? 'On lunch' : run.tname || cat(run.category).label)}</b><div class="small muted">${esc([S.projects[run.projectId] && S.projects[run.projectId].name, 'since ' + clock(run.start)].filter(Boolean).join(' · '))}</div></div><span class="mono" data-since="${run.start}">${fmtElapsed(Date.now() - run.start)}</span></div>` : '<div class="small muted">Not logging any time right now.</div>'}</div></div>
+          <div><div class="section-head"><h2>Tasks</h2></div>${tasks.length ? `<div class="card flush">${tasks.slice(0, 8).map(taskRow).join('')}</div>` : '<div class="card empty small">No open tasks assigned.</div>'}</div>
+          <div><div class="section-head"><h2>Recent activity</h2></div><div class="card">${activity.length ? `<ul class="hist">${activity.map((a) => `<li><span class="grow">${esc(a.text)}${a.project ? ` · <a href="#/project/${a.project.id}">${esc(a.project.name)}</a>` : a.ping ? ` · <a href="#/ping/${a.ping.id}">Open</a>` : ''}</span><time title="${esc(fmtDateTime(a.at))}">${timeAgo(a.at)}</time></li>`).join('')}</ul>` : '<div class="small muted">Nothing recent you can see.</div>'}</div></div>
         </div>
         <div class="stack">
           <div class="card"><h3 style="margin-bottom:8px">Projects</h3>${projects.length ? `<div class="stack tight">${projects.map((p) => `<a href="#/project/${p.id}" class="row" style="text-decoration:none;color:inherit"><span class="team-swatch" style="background:${esc(p.color || '#18693f')}"></span><span class="ellipsis">${esc(p.name)}</span></a>`).join('')}</div>` : '<div class="small muted">None.</div>'}</div>
@@ -632,7 +636,7 @@ VIEWS.person = {
 };
 A['set-role'] = async (el) => { try { await capi('PATCH', `/members/${el.dataset.id}`, { role: el.dataset.role }); toast('Role updated'); } catch (e) { toast(e.message, true); } };
 A['make-owner'] = async (el) => { if (!(await confirmBox('Hand over ownership?', `${member(el.dataset.id).name} will become the owner. You’ll become an admin.`, 'Make owner', false))) return; try { await capi('PATCH', `/members/${el.dataset.id}`, { role: 'owner' }); toast('Ownership transferred'); } catch (e) { toast(e.message, true); } };
-A['remove-member'] = async (el) => { const m = member(el.dataset.id); if (!(await confirmBox('Remove from the company?', `${m.name} will lose access to all projects, jobs and chats.`, 'Remove'))) return; try { await capi('DELETE', `/members/${m.id}`); delete S.members[m.id]; location.hash = '#/team'; toast(`${m.name} removed`); } catch (e) { toast(e.message, true); } };
+A['remove-member'] = async (el) => { const m = member(el.dataset.id); if (!(await confirmBox('Remove from the company?', `${m.name} will lose access to all projects and chats. Their time stays on the company’s timesheets.`, 'Remove'))) return; try { await capi('DELETE', `/members/${m.id}`); delete S.members[m.id]; location.hash = '#/team'; toast(`${m.name} removed`); } catch (e) { toast(e.message, true); } };
 
 // ============================================================ CLIENTS
 VIEWS.clients = {
@@ -645,8 +649,8 @@ VIEWS.clients = {
     const q = S.clientSearch.trim().toLowerCase();
     let cs = Object.values(S.clients).sort((a, b) => a.name.localeCompare(b.name));
     if (q) cs = cs.filter((c) => [c.name, c.company, c.phone, c.email, c.address].join(' ').toLowerCase().includes(q));
-    if (!cs.length) return `<div class="card empty">${ic('contacts')}<h3>${Object.keys(S.clients).length ? 'No matches' : 'No clients yet'}</h3><div class="small">Add a client to link them to projects and jobs.</div></div>`;
-    return `<div class="card flush"><div class="list">${cs.map((c) => { const n = Object.values(S.jobs).filter((j) => j.clientId === c.id && j.status !== 'done').length; return `
+    if (!cs.length) return `<div class="card empty">${ic('contacts')}<h3>${Object.keys(S.clients).length ? 'No matches' : 'No clients yet'}</h3><div class="small">Add a client to link them to projects.</div></div>`;
+    return `<div class="card flush"><div class="list">${cs.map((c) => { const n = Object.values(S.projects).filter((p) => p.clientId === c.id && !p.archived).length; return `
       <a class="item" href="#/client/${c.id}"><span class="avatar" style="--c:${colorFor(c.id)};border-radius:9px">${esc(initials(c.name))}</span>
       <div class="grow"><b class="ellipsis" style="display:block">${esc(c.name)}</b><span class="small muted ellipsis" style="display:block">${esc([c.company, c.phone].filter(Boolean).join(' · ') || c.email || '—')}</span></div>
       ${n ? `<span class="pill st-active">${n} open</span>` : ''}</a>`; }).join('')}</div></div>`;
@@ -657,7 +661,6 @@ VIEWS.client = {
   render(id) {
     const c = S.clients[id];
     if (!c) return `<a class="back" href="#/clients">${ic('back')}Clients</a><div class="card empty"><h3>Client not found</h3></div>`;
-    const jobs = Object.values(S.jobs).filter((j) => j.clientId === id).sort(byDeadline);
     const projs = Object.values(S.projects).filter((p) => p.clientId === id);
     return `<a class="back" href="#/clients">${ic('back')}Clients</a>
       <div class="page-head"><div class="row"><span class="avatar lg" style="--c:${colorFor(c.id)};border-radius:12px">${esc(initials(c.name))}</span><div><h1>${esc(c.name)}</h1>${c.company ? `<div class="muted">${esc(c.company)}</div>` : ''}</div></div>
@@ -667,9 +670,8 @@ VIEWS.client = {
         <div class="card"><dl class="kv"><dt>Phone</dt><dd>${esc(c.phone) || '<span class="muted">—</span>'}</dd><dt>Email</dt><dd>${esc(c.email) || '<span class="muted">—</span>'}</dd>
           <dt>Address</dt><dd>${esc(c.address) || '<span class="muted">—</span>'}</dd><dt>Notes</dt><dd class="pre">${c.notes ? linkify(c.notes) : '<span class="muted">—</span>'}</dd></dl></div>
         <div class="stack">
-          ${projs.length ? `<div><div class="section-head"><h2>Projects</h2></div><div class="stack tight">${projs.map(projectCard).join('')}</div></div>` : ''}
-          <div><div class="section-head"><h2>Jobs</h2>${canCreateJobs() ? `<button class="btn sm" data-act="new-job" data-client="${c.id}">${ic('plus')}New job</button>` : ''}</div>
-          ${jobs.length ? `<div class="stack tight">${jobs.map(jobCard).join('')}</div>` : '<div class="card empty small">No jobs for this client yet.</div>'}</div></div>
+          <div><div class="section-head"><h2>Projects</h2>${canCreateProjects() ? `<button class="btn sm" data-act="new-project">${ic('plus')}New project</button>` : ''}</div>
+          ${projs.length ? `<div class="stack tight">${projs.map(projectCard).join('')}</div>` : '<div class="card empty small">No projects for this client yet.</div>'}</div></div>
       </div>`;
   },
 };
@@ -688,7 +690,7 @@ function clientSheet(id, onSaved) {
   </form>`, (sh) => { sh.querySelector('form')._onSaved = onSaved; });
 }
 A['client-edit'] = (el) => clientSheet(el.dataset.id);
-A['client-del'] = async (el) => { const c = S.clients[el.dataset.id]; if (await confirmBox('Delete this client?', `${c.name} will be removed. Their jobs and projects stay.`)) { if (await deleteItem('clients', c.id)) location.hash = '#/clients'; } };
+A['client-del'] = async (el) => { const c = S.clients[el.dataset.id]; if (await confirmBox('Delete this client?', `${c.name} will be removed. Their projects stay.`)) { if (await deleteItem('clients', c.id)) location.hash = '#/clients'; } };
 F.client = async (f, d, close) => {
   const item = await saveItem('clients', f.dataset.id || null, d);
   close(); if (f._onSaved) f._onSaved(item); else if (!f.dataset.id) location.hash = '#/client/' + item.id;

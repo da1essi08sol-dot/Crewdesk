@@ -1,7 +1,7 @@
 {
   "name": "Crewdesk",
   "short_name": "Crewdesk",
-  "description": "Jobs, tasks, photos and team chat for your crew",
+  "description": "Log your work as you go — timesheets, projects and team chat for your crew",
   "id": "/",
   "start_url": "/",
   "scope": "/",

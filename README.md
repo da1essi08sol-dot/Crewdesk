@@ -1,19 +1,21 @@
 # Crewdesk
 
-Projects, jobs, a shared calendar, pings and team chat for small companies — on phones and computers.
+Log your work as you go and get your timesheets made for you — plus projects, a shared calendar, pings and team chat for small companies, on phones and computers.
 
 **What it does**
+- **One big + button.** Pick the project you’re on, tap **+** to start logging what you’re doing (task, type of work, a note), and tap the red square to stop. Lunch and “switch task” are one tap. Home shows today’s log, how your day is going against the schedule, and whether the task you’re on is running over its planned time.
+- **Finish for today** stops the timer and asks (optionally) what went well, what went wrong and how it could be better.
+- **Timesheets made for you**, in the company’s own *Time & Overtime Sheet* template (`lib/timesheet-template.xlsx`): one file per person per month, named with their initials (e.g. `AS_Nov_2026_Timesheet.xlsx`), plus a yearly workbook. Anything over a standard day is overtime; people can fix times and add overtime themselves, on phone or computer.
+- **Projects made of tasks** (no separate “jobs”): job number, site, dates, planned hours per task, plan against actual, a day-by-day timeline of who did what, photos, and a downloadable project timesheet. Several people can work on a project at once.
+- **Admin dashboard**: who’s working on what right now, everyone’s days, notes and overtime (with approval — your initials go in “OT Approved By”), a timesheets folder with “download all” as a zip, optional automatic copy to Google Drive, and the suggestions inbox.
+- **Suggestions**: anyone can report a bug, suggest an idea or ask HR a question; admins reply.
 - Accounts with email confirmation, strong-password rules (12+ characters, checked against known breaches), forgotten-password emails, and lock-outs after repeated wrong passwords
-- Companies that people join with an **invite link** (the company is filled in for them) or a code + join password
-- **Projects** that group jobs; star the ones you use most (stars are personal) and archive finished ones
-- **Jobs** with client, site, dates, priority, status, tasks with checklists, photos, money, history, and a choice of who can see them (everyone, or selected people)
-- **Chat**: a company chat, a chat per job, direct messages and group chats
-- **Pings**: company-wide updates anyone can post, with photos and documents attached and a red dot until each person has read them. Plus a personal notifications list
-- A shared **calendar** (month, week and day) with events, job start dates and deadlines, and reminders
-- **Profiles** you can open by tapping anyone’s picture or name, with a picture cropper
-- **Spreadsheets** for admins: editable income and expense records, charts, a clearly-labelled projection, and CSV/Excel export
-- A team map with optional live GPS, search everything (Ctrl/⌘ K), light and dark mode, installs on phones like an app
+- Companies that people join with an **invite link** or a code + join password
+- **Chat**: a company chat, direct messages, group chats, and a project chat only if someone opens one
+- **Pings**, a shared **calendar**, **profiles**, admin **spreadsheets** for income and expenses, a team map with optional live GPS, search (Ctrl/⌘ K), light and dark mode, installs on phones like an app
 - Privacy policy, terms, “download my data” and “delete my account” built in (UK GDPR)
+
+**Upgrading from the jobs version.** On first start, each job inside a project becomes a task of that project (its old tasks and checklists go into the task’s notes); each job on its own becomes a project, with its tasks. Photos, events, money records, stars and job chats move with them. The old records are kept untouched in the database under `legacy`, and the daily backups still have them.
 
 ---
 
@@ -30,10 +32,13 @@ Projects, jobs, a shared calendar, pings and team chat for small companies — o
 | `OPERATOR_NAME`, `OPERATOR_EMAIL`, `OPERATOR_ADDRESS` | Optional: your business details for the Privacy and Terms pages. |
 | `SUPPORT_EMAIL` | Optional: support address shown at the bottom of the Privacy Policy (default da1essi08sol@gmail.com). |
 | `KEEP_AWAKE` | Set to `off` to let the free plan sleep. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional: lets an admin connect Google Drive so timesheets are copied there automatically (see below). |
 
 **Email.** Render’s free plan blocks normal email (SMTP) ports, so Crewdesk sends through Brevo’s web API (free: 300 emails a day). Until `BREVO_API_KEY` and `EMAIL_FROM` are set, confirmation and reset links are written to Render’s **Logs** instead, so you can still test. Resend also works (`RESEND_API_KEY`), but needs your own domain.
 
 **Keep-awake.** Render’s free plan sleeps after 15 minutes without visitors. Crewdesk visits its own address every 10 minutes so it stays awake. That uses about 744 of the 750 free hours each workspace gets per month, so keep it as your only free service, or set `KEEP_AWAKE=off`.
+
+**Google Drive (optional).** In Google Cloud Console: create a project → *APIs & Services* → enable the **Google Drive API** → *OAuth consent screen* (External, add your email as a test user, or publish it) → *Credentials* → **Create OAuth client ID** → *Web application*, with authorised redirect URI `https://<your-site>.onrender.com/api/gdrive/callback`. Put the client ID and secret in Render as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. Then an admin opens **Admin dashboard → Timesheets → Connect Google Drive**. Crewdesk only gets access to the files it creates (a “… — Crewdesk timesheets” folder, by year and month).
 
 **Backups.** A copy of the whole database is saved once a day in the `crewdesk_backups` table; the last 14 are kept. Neon’s free plan also keeps its own history.
 
@@ -50,10 +55,11 @@ Data is saved in the `data` folder (backups in `data/backups`). Without email se
 
 | | Owner | Admin | Member |
 |---|---|---|---|
-| Create projects, jobs, events, pings | ✓ | ✓ | ✓ (each can be switched off) |
-| See every project and job, including private ones | ✓ | ✓ | Only ones shared with them |
-| Delete jobs and projects | ✓ | ✓ | Only their own |
-| Spreadsheets, prices and costs | ✓ | ✓ | Money only if you turn it on |
+| Create projects, tasks, events, pings | ✓ | ✓ | ✓ (projects and pings can be switched off) |
+| See every project, including private ones | ✓ | ✓ | Only ones shared with them |
+| See everyone’s time, day notes and suggestions; approve overtime; download all timesheets | ✓ | ✓ | Only their own |
+| Delete projects | ✓ | ✓ | Only their own |
+| Spreadsheets (income and expenses) | ✓ | ✓ | |
 | Invite people, change join code and password, remove people | ✓ | ✓ | Invites if you turn it on |
 | Delete the company, hand over ownership | ✓ | | |
 

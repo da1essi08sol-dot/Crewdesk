@@ -14,7 +14,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.
 document.addEventListener('click', (e) => {
   if (e.target.closest('.skip-link')) { e.preventDefault(); const v = $('#view'); if (v) v.focus(); return; }
   const el = e.target.closest('[data-act]');
-  if (!el) return;
+  if (!el || el.disabled) return;
   const fn = A[el.dataset.act]; if (!fn) return;
   const keepLink = el.tagName === 'A' && (el.dataset.close !== undefined || el.dataset.act === 'inbox-open');
   if (!keepLink && (el.tagName === 'A' || el.closest('a'))) e.preventDefault(); // e.g. a star button inside a job card link
@@ -48,10 +48,10 @@ document.addEventListener('submit', async (e) => {
   } finally { if (btn && btn.isConnected) { btn.disabled = false; btn.classList.remove('busy'); } }
 });
 
-// Drag photos onto a job's photo area or a chat (computers); paste photos into a chat.
+// Drag photos onto a project's photo area or a chat (computers); paste photos into a chat.
 document.addEventListener('dragover', (e) => {
   if (!S.company || !e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
-  if (e.target.closest('[data-drop], .chat-pane') || parseHash().name === 'job') { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
+  if (e.target.closest('[data-drop], .chat-pane')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
 });
 document.addEventListener('drop', (e) => {
   if (!S.company || !e.dataTransfer || !e.dataTransfer.files.length) return;
@@ -60,8 +60,8 @@ document.addEventListener('drop', (e) => {
   if (pane) { e.preventDefault(); if (files.length) addChatPhotos(pane.dataset.ch, files); return; }
   const r = parseHash();
   const zone = e.target.closest('[data-drop]');
-  const jobId = zone ? zone.dataset.drop : r.name === 'job' ? r.args[0] : null;
-  if (jobId && S.jobs[jobId]) { e.preventDefault(); if (files.length) queueJobPhotos(jobId, files); else toast('Only photos can be added here', true); }
+  const jobId = zone ? zone.dataset.drop : r.name === 'project' ? r.args[0] : null;
+  if (jobId && S.projects[jobId]) { e.preventDefault(); if (files.length) queueJobPhotos(jobId, files); else toast('Only photos can be added here', true); }
 });
 document.addEventListener('paste', (e) => {
   const ta = e.target.closest && e.target.closest('.composer textarea'); if (!ta || !e.clipboardData) return;

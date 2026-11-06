@@ -11,6 +11,10 @@ const crypto = require('crypto');
 const os = require('os');
 const passwords = require('./lib/passwords');
 const mail = require('./lib/email');
+const ts = require('./lib/timesheet');
+const gdrive = require('./lib/gdrive');
+const { writeZip } = require('./lib/zip');
+const TZ = 'Europe/London';
 
 const PORT = Number(process.env.PORT) || 3000;
 const HTTPS_PORT = Number(process.env.HTTPS_PORT) || 3443;
@@ -147,7 +151,8 @@ function secLog(type, info = {}) {
 }
 
 // ---------------------------------------------------------------- data shape & migration
-const COLLS = ['teams', 'jobs', 'tasks', 'clients', 'pings', 'photos', 'projects', 'events', 'finance', 'chats', 'files'];
+// Two levels of work: projects (the bigger thing) made up of tasks (the smaller things). Time is logged as entries.
+const COLLS = ['teams', 'tasks', 'clients', 'pings', 'photos', 'projects', 'events', 'finance', 'chats', 'files', 'entries', 'days', 'suggestions'];
 function cdata(cid) {
   const d = db.data[cid] = db.data[cid] || {};
   for (const k of COLLS) d[k] = d[k] || {};
@@ -155,7 +160,58 @@ function cdata(cid) {
   d.inbox = d.inbox || {};
   return d;
 }
-const DEFAULT_SETTINGS = { membersSeeMoney: false, membersCreateJobs: true, membersCreateProjects: true, membersInvite: false, membersPing: true, allowCodeJoin: true, currency: '£' };
+const DEFAULT_SETTINGS = { membersSeeMoney: false, membersCreateProjects: true, membersInvite: false, membersPing: true, allowCodeJoin: true, currency: '£',
+  dayStart: '08:00', dayEnd: '16:30', dayHours: 8 };
+const PROJECT_COLORS = ['#18693f', '#1f57a4', '#7b3fa8', '#b0284f', '#0b7285', '#a35200', '#2f8a3a', '#4c5fc0', '#57564f', '#6b7f00'];
+const PROJECT_DEFAULTS = { ref: '', description: '', clientId: '', color: '#18693f', start: '', due: '', address: '', lat: null, lng: null, visibility: 'all', members: [], archived: false, archivedAt: 0, chat: false, plannedHours: 0 };
+// v3: jobs are gone. A job that was inside a project becomes a task of that project; a job on its own becomes a project,
+// with its tasks (and their checklists) as the project's tasks. The old records are kept in d.legacy, untouched.
+function migrateJobs(c, d) {
+  const oldJobs = d.jobs || {}; const oldTasks = d.tasks || {};
+  d.legacy = { jobs: oldJobs, tasks: oldTasks, movedAt: now() };
+  const tasks = {}; const toProject = {}; let n = Object.keys(d.projects).length;
+  const tasksOf = (jid) => Object.values(oldTasks).filter((t) => t.jobId === jid).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const checklist = (t) => ((t.checklist || []).length ? '\n' + t.checklist.map((x) => `${x.done ? '✓' : '•'} ${x.text}`).join('\n') : '');
+  const task = (o) => { const t = Object.assign({ id: uid(), title: '', notes: '', assignees: [], date: '', planMins: 0, done: false, doneAt: 0, order: now(), createdAt: now(), updatedAt: now() }, o); tasks[t.id] = t; return t; };
+  for (const j of Object.values(oldJobs)) {
+    const p = j.projectId && d.projects[j.projectId];
+    if (p) {
+      toProject[j.id] = p.id;
+      const sub = tasksOf(j.id).map((t) => `${t.done ? '✓' : '•'} ${t.title}${checklist(t).replace(/\n/g, '\n   ')}`).join('\n');
+      task({ projectId: p.id, title: j.title, notes: str([j.description || '', sub].filter(Boolean).join('\n\n'), 3000), assignees: j.assignees || [], date: j.start || j.deadline || '',
+        done: j.status === 'done', doneAt: j.status === 'done' ? (j.completedAt || j.updatedAt || now()) : 0, order: j.createdAt || now(), createdBy: j.createdBy, createdAt: j.createdAt || now(), fromJob: j.id });
+      if (!p.address && j.address) { p.address = j.address; p.lat = j.lat != null ? j.lat : null; p.lng = j.lng != null ? j.lng : null; }
+    } else {
+      const pid = uid();
+      d.projects[pid] = Object.assign({}, PROJECT_DEFAULTS, { id: pid, name: j.title || 'Untitled', ref: j.ref || '', description: j.description || '', clientId: j.clientId || '', color: PROJECT_COLORS[n++ % PROJECT_COLORS.length],
+        start: j.start || '', due: j.deadline || '', address: j.address || '', lat: j.lat != null ? j.lat : null, lng: j.lng != null ? j.lng : null, visibility: j.visibility === 'selected' ? 'selected' : 'all',
+        members: [...new Set([...(j.viewers || []), ...(j.assignees || [])])], archived: j.status === 'done', archivedAt: j.status === 'done' ? (j.completedAt || now()) : 0,
+        createdBy: j.createdBy, createdAt: j.createdAt || now(), updatedAt: now(), fromJob: j.id });
+      toProject[j.id] = pid;
+      for (const t of tasksOf(j.id)) task({ projectId: pid, title: t.title, notes: str((t.notes || '') + checklist(t), 3000), assignees: t.assignees || j.assignees || [], date: t.deadline || '',
+        done: !!t.done, doneAt: t.done ? (t.updatedAt || now()) : 0, order: t.order || now(), createdBy: t.createdBy, createdAt: t.createdAt || now() });
+    }
+  }
+  d.tasks = tasks; delete d.jobs;
+  for (const ph of Object.values(d.photos)) if (!ph.projectId) ph.projectId = toProject[ph.jobId] || '';
+  for (const e of Object.values(d.events)) { if (e.jobId && !e.projectId) e.projectId = toProject[e.jobId] || ''; delete e.jobId; }
+  for (const f of Object.values(d.finance)) { if (f.jobId && !f.projectId) f.projectId = toProject[f.jobId] || ''; delete f.jobId; }
+  for (const [ch, list] of Object.entries(d.messages)) {
+    const m = /^job:(.+)$/.exec(ch); if (!m) continue;
+    const pid = toProject[m[1]];
+    if (pid && list.some((x) => !x.system)) {
+      const to = 'project:' + pid;
+      d.messages[to] = (d.messages[to] || []).concat(list.map((x) => Object.assign({}, x, { channel: to }))).sort((a, b) => a.at - b.at);
+      d.projects[pid].chat = true;
+    }
+    delete d.messages[ch];
+  }
+  for (const u of Object.values(db.users)) {
+    if (u.reads && u.reads[c.id]) for (const k of Object.keys(u.reads[c.id])) if (k.startsWith('job:')) delete u.reads[c.id][k];
+    const f = u.favs && u.favs[c.id];
+    if (f) { f.projects = [...new Set((f.projects || []).concat((f.jobs || []).map((id) => toProject[id]).filter(Boolean)))]; delete f.jobs; }
+  }
+}
 function migrate() {
   for (const k of ['users', 'sessions', 'companies', 'data', 'locations', 'tokens', 'guard', 'fileIndex']) db[k] = db[k] || {};
   db.secLog = db.secLog || [];
@@ -178,12 +234,19 @@ function migrate() {
     u.prefs = Object.assign({ popups: true, desktop: false, sound: false }, u.prefs || {});
     u.privacy = Object.assign({ showPhone: true, showEmail: true, showCompanies: true, profilePublic: false }, u.privacy || {});
     u.favs = u.favs || {}; u.reads = u.reads || {};
+    if (Array.isArray(u.prefs.tabs) && u.prefs.tabs.includes('jobs')) u.prefs.tabs = [...new Set(u.prefs.tabs.map((k) => (k === 'jobs' ? 'timesheet' : k)))];
+  }
+  if (db.meta.schema < 3) {
+    for (const c of Object.values(db.companies)) migrateJobs(c, cdata(c.id));
+    db.meta.schema = 3;
+    console.log('  Moved jobs into projects and tasks (the old records are kept in the backup)');
   }
   for (const c of Object.values(db.companies)) {
     c.settings = Object.assign({}, DEFAULT_SETTINGS, c.settings || {});
+    delete c.settings.membersCreateJobs;
     c.invites = c.invites || {};
     const d = cdata(c.id);
-    for (const j of Object.values(d.jobs)) { j.visibility = j.visibility || 'all'; j.viewers = j.viewers || []; j.projectId = j.projectId || ''; j.history = j.history || []; }
+    for (const p of Object.values(d.projects)) for (const [k, v] of Object.entries(PROJECT_DEFAULTS)) if (p[k] === undefined) p[k] = Array.isArray(v) ? [] : v;
   }
   buildFileIndex();
   save();
@@ -199,7 +262,7 @@ function buildFileIndex() {
   }
   for (const [cid, d] of Object.entries(db.data)) {
     if (!db.companies[cid]) continue;
-    for (const p of Object.values(d.photos || {})) for (const u of [p.url, p.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'photo', cid, job: p.jobId }; }
+    for (const p of Object.values(d.photos || {})) for (const u of [p.url, p.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'photo', cid, project: p.projectId }; }
     for (const [ch, list] of Object.entries(d.messages || {})) for (const m of list) for (const u of msgImages(m)) { const n = name(u); if (n) idx[n] = { kind: 'msg', cid, ch }; }
     for (const f of Object.values(d.files || {})) for (const u of [f.url, f.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'file', cid, fileId: f.id }; }
   }
@@ -267,15 +330,15 @@ function canSeeProject(x, p) {
   if (!p) return true;
   return isAdmin(x.role) || p.visibility !== 'selected' || p.createdBy === x.uid || (p.members || []).includes(x.uid);
 }
-function canSeeJob(x, j) {
-  if (!j) return false;
-  if (isAdmin(x.role)) return true;
-  if (j.projectId && x.d.projects[j.projectId] && !canSeeProject(x, x.d.projects[j.projectId])) return false;
-  if (j.visibility !== 'selected') return true;
-  return j.createdBy === x.uid || (j.viewers || []).includes(x.uid) || (j.assignees || []).includes(x.uid);
+const projectOf = (x, id) => (id && x.d.projects[id]) || null;
+function canSeeTask(x, t) { const p = t && projectOf(x, t.projectId); return !!(p && canSeeProject(x, p)); }
+// Time entries: your own; anyone's on a project you can see (so a crew sees who's on it); admins see everything.
+function canSeeEntry(x, e) {
+  if (isAdmin(x.role) || e.userId === x.uid) return true;
+  const p = projectOf(x, e.projectId);
+  return !!(p && canSeeProject(x, p));
 }
 function canSeeEvent(x, e) {
-  if (e.jobId && !canSeeJob(x, x.d.jobs[e.jobId])) return false;
   if (e.projectId && !canSeeProject(x, x.d.projects[e.projectId])) return false;
   if (e.visibility === 'selected' && !isAdmin(x.role)) return e.createdBy === x.uid || (e.participants || []).includes(x.uid);
   return true;
@@ -283,14 +346,9 @@ function canSeeEvent(x, e) {
 function canSeeChannel(x, ch) {
   if (ch === 'general') return true;
   let m;
-  if ((m = /^job:(.+)$/.exec(ch || ''))) return canSeeJob(x, x.d.jobs[m[1]]);
+  if ((m = /^project:(.+)$/.exec(ch || ''))) { const p = projectOf(x, m[1]); return !!(p && p.chat && canSeeProject(x, p)); } // only once someone opens the project's chat
   if ((m = /^chat:(.+)$/.exec(ch || ''))) { const c = x.d.chats[m[1]]; return !!(c && c.members.includes(x.uid)); } // private: even admins can’t read others’ chats
   return false;
-}
-function shapeJob(j, x) {
-  const o = Object.assign({}, j);
-  if (!canSeeMoney(x.c, x.role)) { delete o.price; delete o.costs; }
-  return o;
 }
 function shapePing(p, x) {
   const o = Object.assign({}, p); delete o.readBy;
@@ -301,21 +359,29 @@ function shapePing(p, x) {
 // What one person may see of one item (null = hidden from them).
 function viewFor(coll, item, x) {
   switch (coll) {
-    case 'jobs': return canSeeJob(x, item) ? shapeJob(item, x) : null;
-    case 'tasks': case 'photos': return canSeeJob(x, x.d.jobs[item.jobId]) ? item : null;
+    case 'tasks': case 'photos': return canSeeTask(x, item) ? item : null;
     case 'projects': return canSeeProject(x, item) ? item : null;
     case 'events': return canSeeEvent(x, item) ? item : null;
     case 'finance': return isAdmin(x.role) ? item : null;
     case 'pings': return shapePing(item, x);
     case 'chats': return item.members.includes(x.uid) ? item : null;
+    case 'entries': return canSeeEntry(x, item) ? item : null;
+    case 'days': case 'suggestions': return isAdmin(x.role) || item.userId === x.uid || item.createdBy === x.uid ? item : null; // end-of-day notes and suggestions: just you and the admins
     case 'files': return null;
     default: return item;
   }
 }
+const RECENT = 62 * 864e5; // the app loads about two months of time entries; older ones are fetched when needed
 function stateFor(x) {
   const out = {};
-  for (const coll of ['teams', 'jobs', 'tasks', 'clients', 'pings', 'photos', 'projects', 'events', 'finance', 'chats']) {
-    const o = {}; for (const [k, v] of Object.entries(x.d[coll])) { const s = viewFor(coll, v, x); if (s) o[k] = s; }
+  for (const coll of ['teams', 'tasks', 'clients', 'pings', 'photos', 'projects', 'events', 'finance', 'chats', 'suggestions', 'entries', 'days']) {
+    const since = now() - RECENT; const sinceDay = new Date(since).toISOString().slice(0, 10);
+    const o = {};
+    for (const [k, v] of Object.entries(x.d[coll])) {
+      if (coll === 'entries' && v.end && v.start < since) continue;
+      if (coll === 'days' && v.date < sinceDay) continue;
+      const s = viewFor(coll, v, x); if (s) o[k] = s;
+    }
     out[coll] = o;
   }
   return out;
@@ -408,7 +474,7 @@ function canReadFile(user, e) {
   if (e.kind === 'banner' || e.kind === 'logo') { const c = db.companies[e.cid]; return !!(c && (c.members[user.id] || (c.profile && c.profile.visibility === 'public'))); }
   const c = db.companies[e.cid]; if (!c) return false;
   const x = ctxFor(c, user.id); if (!x) return false;
-  if (e.kind === 'photo') return canSeeJob(x, x.d.jobs[e.job]);
+  if (e.kind === 'photo') { const p = projectOf(x, e.project); return !!(p && canSeeProject(x, p)); }
   if (e.kind === 'msg') return canSeeChannel(x, e.ch);
   if (e.kind === 'file') {
     const f = x.d.files[e.fileId]; if (!f) return false;
@@ -432,17 +498,6 @@ function postMessage(cid, channel, userId, text, images, system = false) {
   broadcast(cid, (x) => (canSeeChannel(x, channel) ? { t: 'msg', item: msg } : null));
   return msg;
 }
-const photoNotes = new Map();
-function notePhotoAdded(cid, jobId, user) {
-  const key = cid + '|' + jobId + '|' + user.id;
-  const e = photoNotes.get(key) || { n: 0, t: null };
-  e.n++; clearTimeout(e.t);
-  e.t = setTimeout(() => {
-    photoNotes.delete(key);
-    if (cdata(cid).jobs[jobId]) postMessage(cid, 'job:' + jobId, user.id, `${user.name.split(' ')[0]} added ${e.n === 1 ? 'a photo' : e.n + ' photos'}`, [], true);
-  }, 5000);
-  photoNotes.set(key, e);
-}
 function unreadFor(x) {
   const out = {}; const last = {};
   const reads = (x.user.reads && x.user.reads[x.c.id]) || {};
@@ -462,9 +517,8 @@ function markRead(user, cid, channel, at) {
 }
 
 // ---------------------------------------------------------------- collection rules
-const STATUSES = ['planned', 'active', 'hold', 'done'];
-const STATUS_LABEL = { planned: 'Planned', active: 'In progress', hold: 'On hold', done: 'Done' };
 const vis = (v) => (v === 'selected' ? 'selected' : 'all');
+const coord = (v, max) => (v === null || v === '' || v === undefined || !Number.isFinite(Number(v)) || Math.abs(v) > max ? null : Math.round(Number(v) * 1e5) / 1e5);
 const color = (v, d = '#18693f') => (/^#[0-9a-f]{6}$/i.test(v || '') ? v : d);
 
 const RULES = {
@@ -475,11 +529,17 @@ const RULES = {
     clean(b, x, existing) {
       const o = {};
       if ('name' in b) o.name = str(b.name, 120) || bad('Give the project a name');
+      if ('ref' in b) o.ref = str(b.ref, 30);
       if ('description' in b) o.description = str(b.description, 5000);
       if ('clientId' in b) o.clientId = x.d.clients[b.clientId] ? b.clientId : '';
       if ('color' in b) o.color = color(b.color);
       if ('start' in b) o.start = date(b.start);
       if ('due' in b) o.due = date(b.due);
+      if ('address' in b) o.address = str(b.address, 300);
+      if ('lat' in b) o.lat = coord(b.lat, 90);
+      if ('lng' in b) o.lng = coord(b.lng, 180);
+      if ('plannedHours' in b) o.plannedHours = Math.max(0, Math.min(100000, num(b.plannedHours)));
+      if ('chat' in b) o.chat = !!b.chat;
       if ('visibility' in b || 'members' in b) {
         if (existing && !(isAdmin(x.role) || existing.createdBy === x.uid)) deny('Only the person who made this project, or an admin, can change who sees it');
         if ('visibility' in b) o.visibility = vis(b.visibility);
@@ -488,64 +548,42 @@ const RULES = {
       if ('archived' in b) { o.archived = !!b.archived; o.archivedAt = o.archived ? now() : 0; }
       return o;
     },
-    defaults: () => ({ name: '', description: '', clientId: '', color: '#18693f', start: '', due: '', visibility: 'all', members: [], archived: false, archivedAt: 0 }),
-  },
-  jobs: {
-    create: (x) => isAdmin(x.role) || x.c.settings.membersCreateJobs !== false,
-    edit: (x, j) => canSeeJob(x, j),
-    del: (x, j) => isAdmin(x.role) || j.createdBy === x.uid,
-    clean(b, x, existing) {
-      const o = {};
-      if ('title' in b) o.title = str(b.title, 140) || bad('Give the job a title');
-      if ('description' in b) o.description = str(b.description, 5000);
-      if ('status' in b) o.status = STATUSES.includes(b.status) ? b.status : 'planned';
-      if ('reopenAs' in b) o.reopenAs = STATUSES.includes(b.reopenAs) && b.reopenAs !== 'done' ? b.reopenAs : 'active'; // what unticking a finished job goes back to
-      if ('priority' in b) o.priority = ['low', 'normal', 'high', 'urgent'].includes(b.priority) ? b.priority : 'normal';
-      if ('clientId' in b) o.clientId = x.d.clients[b.clientId] ? b.clientId : '';
-      if ('teamId' in b) o.teamId = x.d.teams[b.teamId] ? b.teamId : '';
-      if ('projectId' in b) {
-        const p = x.d.projects[b.projectId];
-        if (b.projectId && (!p || !canSeeProject(x, p))) bad('That project no longer exists');
-        o.projectId = p ? p.id : '';
-      }
-      if ('address' in b) o.address = str(b.address, 300);
-      if ('lat' in b) o.lat = b.lat === null || b.lat === '' || !Number.isFinite(Number(b.lat)) || Math.abs(b.lat) > 90 ? null : Math.round(Number(b.lat) * 1e5) / 1e5;
-      if ('lng' in b) o.lng = b.lng === null || b.lng === '' || !Number.isFinite(Number(b.lng)) || Math.abs(b.lng) > 180 ? null : Math.round(Number(b.lng) * 1e5) / 1e5;
-      if ('start' in b) o.start = date(b.start);
-      if ('deadline' in b) o.deadline = date(b.deadline);
-      if ('assignees' in b) o.assignees = memberIds(x.c, b.assignees);
-      if ('visibility' in b || 'viewers' in b) {
-        if (existing && !(isAdmin(x.role) || existing.createdBy === x.uid)) deny('Only the person who made this job, or an admin, can change who sees it');
-        if ('visibility' in b) o.visibility = vis(b.visibility);
-        if ('viewers' in b) o.viewers = memberIds(x.c, b.viewers);
-      }
-      if (canSeeMoney(x.c, x.role)) {
-        if ('price' in b) o.price = Math.max(0, num(b.price));
-        if ('costs' in b) o.costs = list(b.costs, (c) => ({ id: str(c.id, 30) || uid(), label: str(c.label, 120), amount: num(c.amount) }), 100);
-      }
-      return o;
-    },
-    defaults: (x) => ({ title: '', description: '', status: 'planned', priority: 'normal', clientId: '', teamId: '', projectId: '', address: '', lat: null, lng: null,
-      start: '', deadline: '', assignees: [], visibility: 'all', viewers: [], price: 0, costs: [], history: [],
-      ref: 'J-' + String((x.c.jobSeq = (x.c.jobSeq || 0) + 1)).padStart(4, '0') }),
+    defaults: (x) => Object.assign({}, PROJECT_DEFAULTS, { members: [], color: PROJECT_COLORS[Object.keys(x.d.projects).length % PROJECT_COLORS.length] }),
   },
   tasks: {
     create: () => true,
-    edit: (x, t) => canSeeJob(x, x.d.jobs[t.jobId]),
-    del: (x, t) => canSeeJob(x, x.d.jobs[t.jobId]) && (isAdmin(x.role) || t.createdBy === x.uid || (x.d.jobs[t.jobId] || {}).createdBy === x.uid),
+    edit: (x, t) => canSeeTask(x, t),
+    del: (x, t) => canSeeTask(x, t) && (isAdmin(x.role) || t.createdBy === x.uid || (projectOf(x, t.projectId) || {}).createdBy === x.uid),
     clean(b, x) {
       const o = {};
-      if ('jobId' in b) { const j = x.d.jobs[b.jobId]; if (!j || !canSeeJob(x, j)) bad('That job no longer exists'); o.jobId = j.id; }
+      if ('projectId' in b) { const p = projectOf(x, b.projectId); if (!p || !canSeeProject(x, p)) bad('Pick a project for this task'); o.projectId = p.id; }
       if ('title' in b) o.title = str(b.title, 200) || bad('Give the task a title');
       if ('notes' in b) o.notes = str(b.notes, 3000);
       if ('assignees' in b) o.assignees = memberIds(x.c, b.assignees);
-      if ('deadline' in b) o.deadline = date(b.deadline);
-      if ('done' in b) o.done = !!b.done;
+      if ('date' in b) o.date = date(b.date);
+      if ('planMins' in b) o.planMins = Math.max(0, Math.min(60 * 24 * 60, Math.round(Number(b.planMins) || 0)));
+      if ('done' in b) { o.done = !!b.done; o.doneAt = o.done ? now() : 0; }
       if ('order' in b) o.order = num(b.order);
-      if ('checklist' in b) o.checklist = list(b.checklist, (c) => ({ id: str(c.id, 30) || uid(), text: str(c.text, 200), done: !!c.done }), 100);
       return o;
     },
-    defaults: () => ({ jobId: '', title: '', notes: '', assignees: [], deadline: '', done: false, order: now(), checklist: [] }),
+    defaults: () => ({ projectId: '', title: '', notes: '', assignees: [], date: '', planMins: 0, done: false, doneAt: 0, order: now() }),
+  },
+  suggestions: {
+    create: () => true,
+    edit: (x, s) => isAdmin(x.role) || s.createdBy === x.uid,
+    del: (x, s) => isAdmin(x.role) || s.createdBy === x.uid,
+    clean(b, x, existing) {
+      const o = {};
+      if ('kind' in b) o.kind = ['idea', 'bug', 'question'].includes(b.kind) ? b.kind : 'idea';
+      if ('text' in b) { if (existing && existing.createdBy !== x.uid) deny('Only the person who sent it can change what it says'); o.text = str(b.text, 4000) || bad('Write something first'); }
+      if ('status' in b || 'reply' in b) {
+        if (!isAdmin(x.role)) deny('Only admins can answer suggestions');
+        if ('status' in b) o.status = ['new', 'seen', 'doing', 'done'].includes(b.status) ? b.status : 'seen';
+        if ('reply' in b) { o.reply = str(b.reply, 4000); o.repliedBy = x.uid; o.repliedAt = now(); }
+      }
+      return o;
+    },
+    defaults: (x) => ({ kind: 'idea', text: '', status: 'new', reply: '', repliedBy: '', repliedAt: 0, userId: x.uid }),
   },
   clients: {
     create: () => true, edit: () => true, del: (x) => isAdmin(x.role),
@@ -588,12 +626,11 @@ const RULES = {
       if ('location' in b) o.location = str(b.location, 200);
       if ('participants' in b) o.participants = memberIds(x.c, b.participants);
       if ('visibility' in b) o.visibility = vis(b.visibility);
-      if ('jobId' in b) { const j = x.d.jobs[b.jobId]; if (b.jobId && (!j || !canSeeJob(x, j))) bad('That job no longer exists'); o.jobId = j ? j.id : ''; }
       if ('projectId' in b) { const p = x.d.projects[b.projectId]; if (b.projectId && (!p || !canSeeProject(x, p))) bad('That project no longer exists'); o.projectId = p ? p.id : ''; }
       if ('color' in b) o.color = color(b.color, '');
       return o;
     },
-    defaults: () => ({ title: '', date: '', endDate: '', allDay: true, start: '', end: '', startsAt: 0, description: '', location: '', participants: [], visibility: 'all', jobId: '', projectId: '', color: '', remindedAt: 0 }),
+    defaults: () => ({ title: '', date: '', endDate: '', allDay: true, start: '', end: '', startsAt: 0, description: '', location: '', participants: [], visibility: 'all', projectId: '', color: '', remindedAt: 0 }),
   },
   finance: {
     create: (x) => isAdmin(x.role), edit: (x) => isAdmin(x.role), del: (x) => isAdmin(x.role),
@@ -604,11 +641,11 @@ const RULES = {
       if ('category' in b) o.category = str(b.category, 60);
       if ('description' in b) o.description = str(b.description, 300);
       if ('amount' in b) { o.amount = Math.abs(num(b.amount)); if (o.amount > 1e10) bad('That amount is too large'); }
-      if ('jobId' in b) o.jobId = x.d.jobs[b.jobId] ? b.jobId : '';
+      if ('projectId' in b) o.projectId = x.d.projects[b.projectId] ? b.projectId : '';
       if ('clientId' in b) o.clientId = x.d.clients[b.clientId] ? b.clientId : '';
       return o;
     },
-    defaults: () => ({ date: new Date().toISOString().slice(0, 10), type: 'income', category: '', description: '', amount: 0, jobId: '', clientId: '', source: '' }),
+    defaults: () => ({ date: new Date().toISOString().slice(0, 10), type: 'income', category: '', description: '', amount: 0, projectId: '', clientId: '', source: '' }),
   },
   teams: {
     create: (x) => isAdmin(x.role), edit: (x) => isAdmin(x.role), del: (x) => isAdmin(x.role),
@@ -622,57 +659,37 @@ const RULES = {
     defaults: () => ({ name: '', color: '#18693f', members: [] }),
   },
 };
-const REQUIRED = { projects: ['name', 'Give the project a name'], jobs: ['title', 'Give the job a title'], tasks: ['title', 'A task needs a title'], clients: ['name', 'Give the client a name'],
-  pings: ['title', 'Give the ping a title'], events: ['title', 'Give the event a title'], teams: ['name', 'Give the team a name'], finance: ['date', 'Enter a date'] };
+const REQUIRED = { projects: ['name', 'Give the project a name'], tasks: ['title', 'A task needs a title'], clients: ['name', 'Give the client a name'],
+  pings: ['title', 'Give the ping a title'], events: ['title', 'Give the event a title'], teams: ['name', 'Give the team a name'], finance: ['date', 'Enter a date'],
+  suggestions: ['text', 'Write something first'] };
 
-const ACCESS_FIELDS = { jobs: ['visibility', 'viewers', 'assignees', 'projectId', 'createdBy'], projects: ['visibility', 'members'], events: ['visibility', 'participants', 'jobId', 'projectId'] };
+const ACCESS_FIELDS = { projects: ['visibility', 'members', 'chat'], tasks: ['projectId'], events: ['visibility', 'participants', 'projectId'] };
 function accessChanged(coll, before, after) {
   return before && (ACCESS_FIELDS[coll] || []).some((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
 }
 
-function jobHistory(job, user, text) {
-  job.history = job.history || [];
-  job.history.push({ at: now(), by: user.id, text: str(text, 200) });
-  if (job.history.length > 100) job.history.splice(0, job.history.length - 100);
-}
 function afterChange(cid, coll, before, after, user) {
   const c = db.companies[cid]; const d = cdata(cid);
   const who = user.name.split(' ')[0];
-  if (coll === 'jobs') {
-    const added = (after.assignees || []).filter((id) => !(before && before.assignees || []).includes(id) && id !== user.id);
-    notify(cid, added, `${who} added you to job ${after.ref}: ${after.title}`, '#/job/' + after.id);
-    if (!before) { jobHistory(after, user, 'Created the job'); postMessage(cid, 'job:' + after.id, user.id, `${who} created this job`, [], true); }
-    else {
-      if (before.status !== after.status) {
-        jobHistory(after, user, `Moved to ${STATUS_LABEL[after.status]}`);
-        postMessage(cid, 'job:' + after.id, user.id, `${who} moved this job to ${STATUS_LABEL[after.status]}`, [], true);
-        if (after.status === 'done') after.completedAt = now();
-      }
-      if (before.title !== after.title) jobHistory(after, user, `Renamed to “${after.title}”`);
-      if (before.deadline !== after.deadline) jobHistory(after, user, after.deadline ? `Set the deadline to ${after.deadline}` : 'Removed the deadline');
-      if (before.start !== after.start) jobHistory(after, user, after.start ? `Set the start date to ${after.start}` : 'Removed the start date');
-      if (before.priority !== after.priority) jobHistory(after, user, `Changed priority to ${after.priority}`);
-      const names = (ids) => ids.map((id) => (db.users[id] || {}).name || 'someone').join(', ');
-      const add = (after.assignees || []).filter((id) => !(before.assignees || []).includes(id));
-      const rem = (before.assignees || []).filter((id) => !(after.assignees || []).includes(id));
-      if (add.length) jobHistory(after, user, `Assigned ${names(add)}`);
-      if (rem.length) jobHistory(after, user, `Unassigned ${names(rem)}`);
-      if (before.visibility !== after.visibility || JSON.stringify(before.viewers) !== JSON.stringify(after.viewers))
-        jobHistory(after, user, after.visibility === 'selected' ? 'Limited who can see this job' : 'Made the job visible to everyone');
-      if (before.projectId !== after.projectId) jobHistory(after, user, after.projectId ? `Moved to project “${(d.projects[after.projectId] || {}).name || ''}”` : 'Removed from its project');
-      if (JSON.stringify(before.price) !== JSON.stringify(after.price) || JSON.stringify(before.costs) !== JSON.stringify(after.costs)) jobHistory(after, user, 'Updated the money');
-    }
-  }
   if (coll === 'tasks') {
     const added = (after.assignees || []).filter((id) => !(before && before.assignees || []).includes(id) && id !== user.id);
-    const job = d.jobs[after.jobId];
-    notify(cid, added, `${who} gave you a task: ${after.title}`, '#/job/' + after.jobId + '/tasks');
-    if (job && before && !before.done && after.done) { postMessage(cid, 'job:' + job.id, user.id, `${who} completed “${after.title}”`, [], true); jobHistory(job, user, `Completed task “${after.title}”`); }
-    if (job && !before) jobHistory(job, user, `Added task “${after.title}”`);
+    const p = d.projects[after.projectId];
+    notify(cid, added, `${who} gave you a task${p ? ' on ' + p.name : ''}: ${after.title}`, '#/project/' + after.projectId);
+    if (p && p.chat && before && !before.done && after.done) postMessage(cid, 'project:' + p.id, user.id, `${who} completed “${after.title}”`, [], true);
+    if (p) { p.updatedAt = now(); upsert(cid, 'projects', p); }
   }
-  if (coll === 'projects' && after.visibility === 'selected') {
+  if (coll === 'projects') {
     const added = (after.members || []).filter((id) => !(before && before.members || []).includes(id) && id !== user.id);
     notify(cid, added, `${who} added you to project ${after.name}`, '#/project/' + after.id);
+    if (after.chat && !(before && before.chat)) postMessage(cid, 'project:' + after.id, user.id, `${who} opened a chat for ${after.name}`, [], true);
+    // Keep the project's name on its time entries, so timesheets still read well if it's renamed or deleted later.
+    if (before && (before.name !== after.name || before.ref !== after.ref)) for (const e of Object.values(d.entries)) if (e.projectId === after.id) { e.pname = after.name; e.pref = after.ref; }
+  }
+  if (coll === 'suggestions') {
+    if (!before) {
+      const admins = Object.keys(c.members).filter((id) => isAdmin(c.members[id].role) && id !== user.id);
+      notify(cid, admins, `${who} sent ${after.kind === 'bug' ? 'a bug report' : after.kind === 'question' ? 'a question' : 'a suggestion'}: ${after.text.slice(0, 80)}`, '#/admin/suggestions');
+    } else if (after.reply && after.reply !== before.reply && after.createdBy !== user.id) notify(cid, [after.createdBy], `${who} replied to your ${after.kind === 'bug' ? 'bug report' : after.kind === 'question' ? 'question' : 'suggestion'}`, '#/suggest');
   }
   if (coll === 'events') {
     const added = (after.participants || []).filter((id) => !(before && before.participants || []).includes(id) && id !== user.id);
@@ -975,6 +992,18 @@ async function api(req, res, url) {
   const cur = authUser(req); const user = cur.user;
   throttle('u:' + user.id + ':' + M, M === 'GET' ? 2000 : 400, 60e3, 'You’re doing that too fast — slow down a little');
 
+  // Back from Google after an admin connected Google Drive.
+  if (p === '/api/gdrive/callback' && M === 'GET') {
+    const back = (what) => { res.writeHead(302, Object.assign({}, SECURITY_HEADERS, { Location: '/#/admin/timesheets/' + what, 'Cache-Control': 'no-store' })); res.end(); };
+    const t = useToken('gdrive', url.searchParams.get('state') || '');
+    if (!t || t.userId !== user.id) return back('expired');
+    const c = db.companies[t.cid];
+    if (!c || !c.members[user.id] || !isAdmin(c.members[user.id].role)) return back('denied');
+    if (url.searchParams.get('error') || !url.searchParams.get('code')) return back('cancelled');
+    try { await gdrive.connect(c, url.searchParams.get('code'), APP_URL + '/api/gdrive/callback', user.id); save(); runDriveSync(c.id, true).catch(() => {}); return back('connected'); }
+    catch (e) { console.error('Google Drive connect failed:', e.message); return back('failed'); }
+  }
+
   if (p === '/api/logout' && M === 'POST') { delete db.sessions[cur.key]; setSessionCookie(req, res, '', 0); save(); return json(res, 200, { ok: true }); }
   if (p === '/api/logout-others' && M === 'POST') { endSessions(user.id, cur.key); return json(res, 200, { ok: true }); }
   if (p === '/api/me' && M === 'GET') return json(res, 200, { user: meUser(user), companies: companiesFor(user.id), requests: myRequests(user.id), sessions: Object.values(db.sessions).filter((s) => s.userId === user.id).length });
@@ -1032,7 +1061,7 @@ async function api(req, res, url) {
     }
     if (b.prefs && typeof b.prefs === 'object') for (const k of ['popups', 'desktop', 'sound']) if (k in b.prefs) user.prefs[k] = !!b.prefs[k];
     if (b.prefs && Array.isArray(b.prefs.tabs)) { // the phone's bottom tab bar, as the person arranged it
-      const ok = ['home', 'projects', 'jobs', 'calendar', 'chat', 'pings', 'team', 'clients', 'sheets'];
+      const ok = ['home', 'projects', 'timesheet', 'calendar', 'chat', 'pings', 'team', 'clients', 'suggest', 'admin', 'sheets'];
       const tabs = [...new Set(b.prefs.tabs.map(String))].filter((k) => ok.includes(k)).slice(0, 4);
       if (!tabs.length) bad('Keep at least one tab');
       user.prefs.tabs = tabs;
@@ -1066,6 +1095,10 @@ async function api(req, res, url) {
         pings: Object.values(d.pings).filter((x) => x.createdBy === user.id).map((x) => ({ title: x.title, body: x.body, at: new Date(x.createdAt).toISOString() })),
         events: Object.values(d.events).filter((x) => x.createdBy === user.id).map((x) => ({ title: x.title, date: x.date, description: x.description })),
         photos: Object.values(d.photos).filter((ph) => ph.createdBy === user.id).map((ph) => ({ url: ph.url, caption: ph.caption, at: new Date(ph.createdAt).toISOString() })),
+        timeEntries: Object.values(d.entries).filter((e) => e.userId === user.id).sort((a, b) => a.start - b.start).map((e) => ({ start: new Date(e.start).toISOString(), end: e.end ? new Date(e.end).toISOString() : null,
+          type: (ts.CATS[e.category] || {}).label || e.category, project: (d.projects[e.projectId] || {}).name || e.pname || '', task: (d.tasks[e.taskId] || {}).title || e.tname || '', note: e.note })),
+        dayNotes: Object.values(d.days).filter((x) => x.userId === user.id).map((x) => ({ date: x.date, wentWell: x.well, wentWrong: x.wrong, improve: x.improve })),
+        suggestions: Object.values(d.suggestions).filter((x) => x.createdBy === user.id).map((x) => ({ kind: x.kind, text: x.text, reply: x.reply, at: new Date(x.createdAt).toISOString() })),
         notifications: (d.inbox[user.id] || []).map((n) => ({ text: n.text, at: new Date(n.at).toISOString() })) });
     }
     res.writeHead(200, Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="crewdesk-my-data.json"', 'Cache-Control': 'no-store' }, SECURITY_HEADERS));
@@ -1110,7 +1143,7 @@ async function api(req, res, url) {
     const jp = String(b.password || '');
     if (jp.length < 6) bad('The join password must be at least 6 characters');
     const h = await passwords.hash(jp);
-    const c = { id: uid(), name, code: companyCode(), joinSalt: h.salt, joinHash: h.hash, joinKdf: h.kdf, ownerId: user.id, createdAt: now(), jobSeq: 0,
+    const c = { id: uid(), name, code: companyCode(), joinSalt: h.salt, joinHash: h.hash, joinKdf: h.kdf, ownerId: user.id, createdAt: now(),
       settings: Object.assign({}, DEFAULT_SETTINGS), invites: {}, members: { [user.id]: { role: 'owner', joinedAt: now() } } };
     db.companies[c.id] = c; cdata(c.id);
     postMessage(c.id, 'general', user.id, `${user.name} created ${c.name}. Welcome to the company chat!`, [], true);
@@ -1142,7 +1175,9 @@ function removeMemberData(c, id) {
   const d = cdata(c.id);
   for (const t of Object.values(d.teams)) t.members = (t.members || []).filter((x) => x !== id);
   for (const p of Object.values(d.projects)) p.members = (p.members || []).filter((x) => x !== id);
-  for (const j of Object.values(d.jobs)) { j.viewers = (j.viewers || []).filter((x) => x !== id); j.assignees = (j.assignees || []).filter((x) => x !== id); }
+  for (const t of Object.values(d.tasks)) t.assignees = (t.assignees || []).filter((x) => x !== id);
+  // Their time entries and day notes stay: they're the company's payroll records.
+  for (const e of Object.values(d.entries)) if (e.userId === id && !e.end) e.end = now();
   for (const ch of Object.values(d.chats)) ch.members = ch.members.filter((x) => x !== id);
   delete d.inbox[id];
   const u = db.users[id]; if (u) { delete u.favs[c.id]; delete u.reads[c.id]; }
@@ -1161,7 +1196,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     const invites = isAdmin(role) || c.settings.membersInvite
       ? Object.values(c.invites).filter((i) => isAdmin(role) || i.createdBy === user.id).sort((a, b) => b.createdAt - a.createdAt).slice(0, 50).map((i) => publicInvite(i, c)) : [];
     return json(res, 200, Object.assign({ company: publicCompany(c, role), role, me: meUser(user), members: memberList(c, user.id), locations: locs,
-      favs: user.favs[cid] || { jobs: [], projects: [] }, inbox: (d.inbox[user.id] || []).slice(-100), invites }, stateFor(x), unreadFor(x)));
+      favs: user.favs[cid] || { projects: [] }, inbox: (d.inbox[user.id] || []).slice(-100), invites, gdrive: isAdmin(role) ? gdrive.status(c) : null }, stateFor(x), unreadFor(x)));
   }
   if (sub === '' && M === 'PATCH') {
     if (!isAdmin(role)) deny();
@@ -1187,8 +1222,11 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
       if ('visibility' in b.profile) c.profile.visibility = b.profile.visibility === 'public' ? 'public' : 'private';
     }
     if (b.settings && typeof b.settings === 'object') {
-      for (const k of ['membersSeeMoney', 'membersCreateJobs', 'membersCreateProjects', 'membersInvite', 'membersPing', 'allowCodeJoin']) if (k in b.settings) c.settings[k] = !!b.settings[k];
+      for (const k of ['membersSeeMoney', 'membersCreateProjects', 'membersInvite', 'membersPing', 'allowCodeJoin']) if (k in b.settings) c.settings[k] = !!b.settings[k];
       if ('currency' in b.settings) c.settings.currency = str(b.settings.currency, 3) || '£';
+      if ('dayStart' in b.settings) c.settings.dayStart = hhmm(b.settings.dayStart) || bad('Enter the usual start time, like 08:00');
+      if ('dayEnd' in b.settings) c.settings.dayEnd = hhmm(b.settings.dayEnd) || bad('Enter the usual finish time, like 16:30');
+      if ('dayHours' in b.settings) { const h = num(b.settings.dayHours); if (!(h > 0 && h <= 24)) bad('A standard day must be between 0 and 24 hours'); c.settings.dayHours = h; }
     }
     if (b.password) {
       if (String(b.password).length < 6) bad('The join password must be at least 6 characters');
@@ -1288,10 +1326,10 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   // --- favourites (personal, never shared)
   if (sub === '/favs' && M === 'POST') {
     const b = await readBody(req);
-    const kind = b.kind === 'projects' ? 'projects' : 'jobs';
+    const kind = 'projects';
     const item = d[kind][b.id];
     if (!item || !viewFor(kind, item, x)) notFound();
-    const f = user.favs[cid] = user.favs[cid] || { jobs: [], projects: [] };
+    const f = user.favs[cid] = user.favs[cid] || { projects: [] };
     f[kind] = (f[kind] || []).filter((id) => id !== item.id && d[kind][id]);
     if (b.on) f[kind].unshift(item.id);
     save();
@@ -1405,24 +1443,23 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     return json(res, 200, { ok: true });
   }
 
-  // --- job photos
+  // --- project photos
   if (sub === '/photos' && M === 'POST') {
     const b = await readBody(req, 14 * 1024 * 1024);
-    const job = d.jobs[b.jobId];
-    if (!job || !canSeeJob(x, job)) bad('That job no longer exists');
-    const ref = { kind: 'photo', cid, job: job.id };
+    const p = projectOf(x, b.projectId);
+    if (!p || !canSeeProject(x, p)) bad('That project no longer exists');
+    const ref = { kind: 'photo', cid, project: p.id };
     const urlFull = await saveImage(b.image, 7 * 1024 * 1024, ref);
     const thumb = b.thumb ? await saveImage(b.thumb, 700 * 1024, ref) : urlFull;
-    const item = { id: uid(), jobId: job.id, url: urlFull, thumb, caption: str(b.caption, 300), w: Math.round(Number(b.w) || 0), h: Math.round(Number(b.h) || 0),
+    const item = { id: uid(), projectId: p.id, url: urlFull, thumb, caption: str(b.caption, 300), w: Math.round(Number(b.w) || 0), h: Math.round(Number(b.h) || 0),
       takenAt: Number(b.takenAt) || 0, createdBy: user.id, createdAt: now() };
     d.photos[item.id] = item; save();
     upsert(cid, 'photos', item);
-    notePhotoAdded(cid, job.id, user);
     return json(res, 200, { item });
   }
   if ((m = /^\/photos\/([A-Za-z0-9]+)$/.exec(sub))) {
     const ph = d.photos[m[1]];
-    if (!ph || !canSeeJob(x, d.jobs[ph.jobId])) notFound('That photo was already deleted');
+    if (!ph || !canSeeTask(x, ph)) notFound('That photo was already deleted');
     if (!(isAdmin(role) || ph.createdBy === user.id)) deny('Only the person who added it, or an admin, can change this photo');
     if (M === 'PATCH') { const b = await readBody(req); if ('caption' in b) ph.caption = str(b.caption, 300); save(); upsert(cid, 'photos', ph); return json(res, 200, { item: ph }); }
     if (M === 'DELETE') { delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); save(); removeItem(cid, 'photos', ph.id); return json(res, 200, { ok: true }); }
@@ -1472,28 +1509,11 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     return json(res, 200, { ok: true });
   }
 
-  // --- finance helper: turn completed jobs into income and cost records
-  if (sub === '/finance/import-jobs' && M === 'POST') {
-    if (!isAdmin(role)) deny();
-    let added = 0;
-    for (const j of Object.values(d.jobs)) {
-      if (j.status !== 'done') continue;
-      const day = new Date(j.completedAt || j.updatedAt || j.createdAt).toISOString().slice(0, 10);
-      const has = (type) => Object.values(d.finance).some((f) => f.jobId === j.id && f.source === 'job-' + type);
-      const mk = (type, amount, category, desc) => {
-        const it = Object.assign(RULES.finance.defaults(), { id: uid(), date: day, type, amount, category, description: desc, jobId: j.id, clientId: j.clientId || '', source: 'job-' + type, createdBy: user.id, createdAt: now(), updatedAt: now() });
-        d.finance[it.id] = it; upsert(cid, 'finance', it); added++;
-      };
-      if (Number(j.price) > 0 && !has('income')) mk('income', num(j.price), 'Jobs', `${j.ref} ${j.title}`);
-      const costs = (j.costs || []).reduce((a, k) => a + (Number(k.amount) || 0), 0);
-      if (costs > 0 && !has('expense')) mk('expense', num(costs), 'Job costs', `${j.ref} ${j.title}`);
-    }
-    save();
-    return json(res, 200, { added });
-  }
+  // --- time: entries, days, timesheets (see timeApi)
+  if (/^\/(entries|days|timesheet|timesheets|gdrive)(\/|$)|^\/projects\/[A-Za-z0-9]+\/timesheet$/.test(sub)) return timeApi(req, res, url, x, sub);
 
   // --- generic collections
-  if ((m = /^\/(projects|jobs|tasks|clients|pings|events|finance|teams)(?:\/([A-Za-z0-9]+))?$/.exec(sub))) {
+  if ((m = /^\/(projects|tasks|clients|pings|events|finance|teams|suggestions)(?:\/([A-Za-z0-9]+))?$/.exec(sub))) {
     const coll = m[1]; const id = m[2]; const R = RULES[coll]; const store = d[coll];
     if (!id && M === 'POST') {
       if (!R.create(x)) deny();
@@ -1501,12 +1521,12 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
       const b = await readBody(req, 256 * 1024);
       const item = Object.assign(R.defaults(x), R.clean(b, x, null), { id: uid(), createdBy: user.id, createdAt: now(), updatedAt: now() });
       const [field, msg] = REQUIRED[coll]; if (!item[field]) bad(msg);
-      if (coll === 'tasks' && !item.jobId) bad('A task needs a job');
+      if (coll === 'tasks' && !item.projectId) bad('A task needs a project');
       if (coll === 'pings') { item.readBy = { [user.id]: now() }; item.files = attachFiles(x, b.files, item.id, []); }
+      if (coll === 'suggestions') throttle('suggest:' + user.id, 30, 3600e3, 'You’ve sent a lot — try again a little later');
       store[item.id] = item;
       afterChange(cid, coll, null, item, user);
       save(); upsert(cid, coll, item);
-      if (coll === 'jobs' && item.projectId) touchProject(x, item.projectId);
       return json(res, 200, { item: viewFor(coll, item, x) });
     }
     if (id) {
@@ -1526,20 +1546,18 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
       if (M === 'DELETE') {
         if (!R.del(x, item)) deny();
         delete store[id];
-        if (coll === 'jobs') {
-          for (const t of Object.values(d.tasks)) if (t.jobId === id) { delete d.tasks[t.id]; removeItem(cid, 'tasks', t.id); }
-          for (const ph of Object.values(d.photos)) if (ph.jobId === id) { delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); removeItem(cid, 'photos', ph.id); }
-          for (const e of Object.values(d.events)) if (e.jobId === id) { e.jobId = ''; upsert(cid, 'events', e); }
-          dropMessageFiles(d.messages['job:' + id]); delete d.messages['job:' + id];
-        }
         if (coll === 'projects') {
-          for (const j of Object.values(d.jobs)) if (j.projectId === id) j.projectId = '';
+          // Its tasks, photos and chat go with it. Time already logged stays on people's timesheets, under the project's name.
+          for (const t of Object.values(d.tasks)) if (t.projectId === id) delete d.tasks[t.id];
+          for (const ph of Object.values(d.photos)) if (ph.projectId === id) { delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); }
           for (const e of Object.values(d.events)) if (e.projectId === id) e.projectId = '';
+          for (const e of Object.values(d.entries)) if (e.projectId === id) { e.pname = e.pname || item.name; e.pref = e.pref || item.ref || ''; }
+          dropMessageFiles(d.messages['project:' + id]); delete d.messages['project:' + id];
           broadcast(cid, { t: 'reload' });
         }
+        if (coll === 'tasks') for (const e of Object.values(d.entries)) if (e.taskId === id) e.tname = e.tname || item.title;
         if (coll === 'pings') for (const fid of (item.files || []).map((f) => f.id)) { const f = d.files[fid]; if (f) { dropFile(f.url); if (f.thumb && f.thumb !== f.url) dropFile(f.thumb); delete d.files[fid]; } }
-        if (coll === 'clients') for (const j of Object.values(d.jobs)) if (j.clientId === id) { j.clientId = ''; upsert(cid, 'jobs', j); }
-        if (coll === 'teams') for (const j of Object.values(d.jobs)) if (j.teamId === id) { j.teamId = ''; upsert(cid, 'jobs', j); }
+        if (coll === 'clients') for (const p of Object.values(d.projects)) if (p.clientId === id) { p.clientId = ''; upsert(cid, 'projects', p); }
         save(); removeItem(cid, coll, id);
         return json(res, 200, { ok: true });
       }
@@ -1548,6 +1566,279 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   void cur;
   notFound('Not found');
 }
+// ---------------------------------------------------------------- time tracking & timesheets
+const CAT_KEYS = Object.keys(ts.CATS);
+const pad2 = (n) => String(n).padStart(2, '0');
+const localDay = (t) => ts.zoneParts(t, TZ).date;
+const ukClock = (t) => new Date(t).toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
+const ukDay = (t) => new Date(t).toLocaleDateString('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' });
+const minute = (t) => Math.floor(t / 60000) * 60000;
+const personNameOf = (id) => (db.users[id] || {}).name || 'Former member';
+function runningFor(d, userId) { return Object.values(d.entries).find((e) => e.userId === userId && !e.end) || null; }
+function checkOverlap(d, e, ignoreId) {
+  const end = e.end || now();
+  const clash = Object.values(d.entries).find((o) => o.id !== e.id && o.id !== ignoreId && o.userId === e.userId && o.start < end && (o.end || now()) > e.start);
+  if (clash) bad(`That overlaps with ${(ts.CATS[clash.category] || ts.CATS.field).label.toLowerCase()} time on ${ukDay(clash.start)}, ${ukClock(clash.start)}–${clash.end ? ukClock(clash.end) : 'now'}. Change the times so they don’t overlap.`);
+}
+// Fill in an entry from a request body (only the fields given), checking everything.
+function cleanEntry(b, x, e, exact = false) { // exact: times from the live timer keep their seconds; typed times are whole minutes
+  const rnd = exact ? (t) => Math.floor(t / 1000) * 1000 : minute;
+  if ('projectId' in b) {
+    if (!b.projectId) e.projectId = '';
+    else { const p = projectOf(x, String(b.projectId)); if (!p || !canSeeProject(x, p)) bad('That project no longer exists'); e.projectId = p.id; }
+    if (!('taskId' in b) && e.taskId && (x.d.tasks[e.taskId] || {}).projectId !== e.projectId) e.taskId = '';
+  }
+  if ('taskId' in b) {
+    if (!b.taskId) e.taskId = '';
+    else { const t = x.d.tasks[String(b.taskId)]; if (!t || t.projectId !== e.projectId) bad('That task isn’t part of this project'); e.taskId = t.id; }
+  }
+  if ('category' in b) e.category = CAT_KEYS.includes(b.category) ? b.category : 'field';
+  if ('note' in b) e.note = str(b.note, 1000);
+  if ('start' in b) { const s = Number(b.start); if (!Number.isFinite(s) || s < Date.UTC(2020, 0, 1)) bad('Enter a start time'); e.start = rnd(s); }
+  if ('end' in b) { if (!b.end) e.end = 0; else { const t = Number(b.end); if (!Number.isFinite(t)) bad('Enter a finish time'); e.end = rnd(t); } }
+  if (e.start > now() + 5 * 60e3) bad('The start time is in the future');
+  if (e.end) {
+    if (e.end <= e.start) bad('The finish time must be after the start time');
+    if (e.end > now() + 5 * 60e3) bad('The finish time is in the future');
+    if (e.end - e.start > 24 * 3600e3) bad('One entry can be at most 24 hours — split it into two');
+  }
+  const p = projectOf(x, e.projectId); const t = e.taskId && x.d.tasks[e.taskId];
+  e.pname = p ? p.name : ''; e.pref = p ? (p.ref || '') : ''; e.tname = t ? t.title : '';
+  return e;
+}
+function dayRec(d, userId, ds, create) {
+  const id = userId + '_' + ds;
+  if (!d.days[id] && create) d.days[id] = { id, userId, date: ds, well: '', wrong: '', improve: '', finishedAt: 0, approvedBy: '', approvedById: '', approvedAt: 0, createdAt: now(), updatedAt: now() };
+  return d.days[id] || null;
+}
+// Changing approved time takes the approval off again (unless an admin made the change).
+function unapprove(x, userId, ds) {
+  const r = dayRec(x.d, userId, ds, false);
+  if (r && r.approvedBy && !isAdmin(x.role)) { Object.assign(r, { approvedBy: '', approvedById: '', approvedAt: 0, updatedAt: now() }); upsert(x.c.id, 'days', r); }
+}
+function projectNames(d, entries) {
+  const out = {};
+  for (const p of Object.values(d.projects)) out[p.id] = { ref: p.ref || '', name: p.name };
+  for (const e of entries) if (e.projectId && !out[e.projectId]) out[e.projectId] = { ref: e.pref || '', name: e.pname || 'Deleted project' };
+  return out;
+}
+function monthFileFor(c, userId, y, mo) {
+  const d = cdata(c.id); const ym = `${y}-${pad2(mo)}`;
+  const entries = Object.values(d.entries).filter((e) => e.userId === userId && localDay(e.start).slice(0, 7) === ym);
+  const approvals = {}; for (const r of Object.values(d.days)) if (r.userId === userId && r.approvedBy && r.date.startsWith(ym)) approvals[r.date] = r.approvedBy;
+  const approverList = Object.keys(c.members).filter((id) => isAdmin(c.members[id].role)).map((id) => ts.initials(personNameOf(id)));
+  return ts.monthWorkbook({ person: { name: personNameOf(userId) }, year: y, month: mo, entries, projects: projectNames(d, entries), approvals, dayHours: c.settings.dayHours || 8, tz: TZ, approverList });
+}
+function yearFileFor(c, userId, y) {
+  const d = cdata(c.id);
+  const entries = Object.values(d.entries).filter((e) => e.userId === userId && localDay(e.start).startsWith(y + '-'));
+  const notes = {}; for (const r of Object.values(d.days)) if (r.userId === userId && r.date.startsWith(y + '-')) notes[r.date] = r;
+  return ts.yearWorkbook({ person: { name: personNameOf(userId) }, year: y, entries, projects: projectNames(d, entries), tasks: d.tasks, notes, dayHours: c.settings.dayHours || 8, tz: TZ });
+}
+// Everyone who has time logged in a month (members and people who've since left).
+function peopleInMonth(c, ym) {
+  const d = cdata(c.id); const ids = new Set();
+  for (const e of Object.values(d.entries)) if (localDay(e.start).slice(0, 7) === ym) ids.add(e.userId);
+  return [...ids].sort((a, b) => personNameOf(a).localeCompare(personNameOf(b)));
+}
+function sendDownload(res, name, data, type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+  res.writeHead(200, Object.assign({}, SECURITY_HEADERS, { 'Content-Type': type, 'Content-Length': data.length, 'Cache-Control': 'no-store',
+    'Content-Disposition': `attachment; filename="${name.replace(/[^\w.\- ]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}` }));
+  res.end(data);
+}
+// Google Drive: after someone's time changes, refresh their timesheet there a minute later (batched).
+const driveQueue = new Map(); // cid -> { users: Set, timer }
+function syncSoon(c, userId, months) {
+  if (!c.gdrive || !c.gdrive.refreshToken || !gdrive.configured()) return;
+  const q = driveQueue.get(c.id) || { users: new Map(), timer: null };
+  const set = q.users.get(userId) || new Set();
+  for (const ym of months || [localDay(now()).slice(0, 7)]) set.add(ym);
+  q.users.set(userId, set);
+  clearTimeout(q.timer); q.timer = setTimeout(() => runDriveSync(c.id).catch(() => {}), 60e3);
+  driveQueue.set(c.id, q);
+}
+async function runDriveSync(cid, all = false) {
+  const c = db.companies[cid]; if (!c || !c.gdrive || !c.gdrive.refreshToken) return { files: 0 };
+  const q = driveQueue.get(cid); driveQueue.delete(cid);
+  const files = [];
+  const add = (uidv, ym) => { const [y, mo] = ym.split('-').map(Number); const f = monthFileFor(c, uidv, y, mo); files.push({ year: y, monthLabel: `${pad2(mo)} ${new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' })}`, name: f.name, data: f.data }); };
+  if (all) { const ym = localDay(now()).slice(0, 7); for (const id of peopleInMonth(c, ym)) add(id, ym); }
+  else if (q) for (const [id, months] of q.users) for (const ym of months) add(id, ym);
+  try { await gdrive.upload(c, `${c.name} — Crewdesk timesheets`, files); }
+  catch (e) { c.gdrive.lastError = e.message; console.error('Google Drive sync failed:', e.message); }
+  save(); broadcastAdmins(c, { t: 'reload' });
+  return { files: files.length, error: c.gdrive.lastError };
+}
+
+async function timeApi(req, res, url, x, sub) {
+  const M = req.method; const { c, d, user, role } = x; const cid = c.id; let m;
+  const admin = isAdmin(role); const who = user.name.split(' ')[0];
+  const forUser = (id) => {
+    const target = id || user.id;
+    if (target !== user.id && !admin) deny('Only admins can see other people’s time');
+    if (!c.members[target] && !Object.values(d.entries).some((e) => e.userId === target)) notFound('That person isn’t in this company');
+    return target;
+  };
+
+  // Start the timer (the big + button). Anything already running stops at the same moment.
+  if (sub === '/entries/start' && M === 'POST') {
+    throttle('timer:' + user.id, 200, 3600e3, 'You’ve started a lot of timers — slow down a little');
+    const b = await readBody(req);
+    const at = b.start ? minute(Number(b.start)) : Math.floor(now() / 1000) * 1000;
+    const run = runningFor(d, user.id);
+    if (run && at <= run.start) bad(`Your current timer started at ${ukClock(run.start)} — pick a later start time`);
+    let task = null;
+    const e = { id: uid(), userId: user.id, projectId: '', taskId: '', category: 'field', note: '', start: at, end: 0, source: 'timer', edited: !!b.start, createdAt: now(), updatedAt: now() };
+    cleanEntry({ projectId: b.projectId || '', category: b.category, note: b.note }, x, e);
+    if (b.newTask) {
+      if (!e.projectId) bad('Pick a project for the new task');
+      task = Object.assign(RULES.tasks.defaults(x), RULES.tasks.clean({ projectId: e.projectId, title: b.newTask, assignees: [user.id] }, x), { id: uid(), createdBy: user.id, createdAt: now(), updatedAt: now() });
+      d.tasks[task.id] = task; afterChange(cid, 'tasks', null, task, user); upsert(cid, 'tasks', task);
+      cleanEntry({ taskId: task.id }, x, e);
+    } else if (b.taskId) cleanEntry({ taskId: b.taskId }, x, e);
+    checkOverlap(d, e, run && run.id);
+    if (run) { run.end = at; run.updatedAt = now(); upsert(cid, 'entries', run); }
+    d.entries[e.id] = e; save(); upsert(cid, 'entries', e);
+    return json(res, 200, { item: e, stopped: run || null, task });
+  }
+  // Stop it (the red square). You can say what you did, change the finish time, and tick the task off.
+  if ((m = /^\/entries\/([A-Za-z0-9]+)\/stop$/.exec(sub)) && M === 'POST') {
+    const e = d.entries[m[1]];
+    if (!e || (e.userId !== user.id && !admin)) notFound('That timer was already stopped or deleted');
+    const b = await readBody(req);
+    if (e.end) return json(res, 200, { item: e }); // pressed twice
+    const copy = Object.assign({}, e);
+    const patch = { end: b.end ? Number(b.end) : Math.max(now(), e.start + 1000) };
+    for (const k of ['note', 'category', 'taskId']) if (k in b) patch[k] = b[k];
+    cleanEntry(patch, x, copy, !b.end);
+    checkOverlap(d, copy);
+    Object.assign(e, copy, { updatedAt: now(), edited: e.edited || !!b.end });
+    if (b.taskDone && e.taskId && d.tasks[e.taskId] && !d.tasks[e.taskId].done) {
+      const t = d.tasks[e.taskId]; const before = Object.assign({}, t);
+      t.done = true; t.doneAt = now(); t.updatedAt = now(); afterChange(cid, 'tasks', before, t, user); upsert(cid, 'tasks', t);
+    }
+    save(); upsert(cid, 'entries', e); syncSoon(c, e.userId);
+    return json(res, 200, { item: e });
+  }
+  // Add time by hand: something you forgot to log, or overtime.
+  if (sub === '/entries' && M === 'POST') {
+    const b = await readBody(req);
+    const target = b.userId ? forUser(String(b.userId)) : user.id;
+    if (!b.start || !b.end) bad('Enter a start and finish time');
+    const e = { id: uid(), userId: target, projectId: '', taskId: '', category: 'field', note: '', start: 0, end: 0, source: 'manual', edited: true, createdBy: user.id, createdAt: now(), updatedAt: now() };
+    cleanEntry({ projectId: b.projectId || '', taskId: b.taskId || '', category: b.category, note: b.note, start: b.start, end: b.end }, x, e);
+    checkOverlap(d, e);
+    d.entries[e.id] = e; unapprove(x, target, localDay(e.start)); save(); upsert(cid, 'entries', e); syncSoon(c, target, [localDay(e.start).slice(0, 7)]);
+    if (target !== user.id) notify(cid, [target], `${who} added time to your timesheet for ${ukDay(e.start)}`, '#/timesheet/' + localDay(e.start).slice(0, 7));
+    return json(res, 200, { item: e });
+  }
+  // Change or delete an entry (yours, or anyone's if you're an admin).
+  if ((m = /^\/entries\/([A-Za-z0-9]+)$/.exec(sub)) && (M === 'PATCH' || M === 'DELETE')) {
+    const e = d.entries[m[1]];
+    if (!e || !(e.userId === user.id || admin)) notFound('That entry was already deleted');
+    const day0 = localDay(e.start);
+    if (M === 'DELETE') {
+      delete d.entries[e.id]; unapprove(x, e.userId, day0); save(); removeItem(cid, 'entries', e.id); syncSoon(c, e.userId, [day0.slice(0, 7)]);
+      return json(res, 200, { ok: true });
+    }
+    const b = await readBody(req);
+    const copy = Object.assign({}, e); const patch = {};
+    for (const k of ['projectId', 'taskId', 'category', 'note', 'start', 'end']) if (k in b) patch[k] = b[k];
+    cleanEntry(patch, x, copy);
+    if (e.end && !copy.end) bad('Enter a finish time');
+    checkOverlap(d, copy);
+    const changed = ['start', 'end', 'category', 'projectId'].some((k) => copy[k] !== e[k]);
+    Object.assign(e, copy, { updatedAt: now(), updatedBy: user.id, edited: e.edited || changed });
+    if (changed) { unapprove(x, e.userId, day0); unapprove(x, e.userId, localDay(e.start)); }
+    save(); upsert(cid, 'entries', e); syncSoon(c, e.userId, [...new Set([day0.slice(0, 7), localDay(e.start).slice(0, 7)])]);
+    if (e.userId !== user.id && changed) notify(cid, [e.userId], `${who} changed your time on ${ukDay(e.start)}`, '#/timesheet/' + localDay(e.start).slice(0, 7));
+    return json(res, 200, { item: e });
+  }
+  // Older time (timesheet pages, the admin dashboard, a project's timeline).
+  if (sub === '/entries' && M === 'GET') {
+    const from = date(url.searchParams.get('from')) || '2000-01-01'; const to = date(url.searchParams.get('to')) || '2999-12-31';
+    const pid = url.searchParams.get('project'); const u = url.searchParams.get('user');
+    let items;
+    if (pid) { const p = projectOf(x, pid); if (!p || !canSeeProject(x, p)) notFound('Project not found'); items = Object.values(d.entries).filter((e) => e.projectId === pid); }
+    else if (u === 'all') { if (!admin) deny(); items = Object.values(d.entries); }
+    else { const target = forUser(u); items = Object.values(d.entries).filter((e) => e.userId === target); }
+    items = items.filter((e) => { const ds = localDay(e.start); return ds >= from && ds <= to && canSeeEntry(x, e); });
+    const days = Object.values(d.days).filter((r) => r.date >= from && r.date <= to && (admin || r.userId === user.id) && (pid || u === 'all' || r.userId === (u || user.id)));
+    return json(res, 200, { items: items.slice(0, 50000), days });
+  }
+  // End of the day: optional notes on what went well, what went wrong and what to improve. Stops the timer.
+  if ((m = /^\/days\/(\d{4}-\d{2}-\d{2})$/.exec(sub)) && M === 'PUT') {
+    const b = await readBody(req);
+    const r = dayRec(d, user.id, m[1], true);
+    for (const k of ['well', 'wrong', 'improve']) if (k in b) r[k] = str(b[k], 2000);
+    let stopped = null;
+    if (b.finished) {
+      r.finishedAt = now();
+      const run = runningFor(d, user.id);
+      if (run) { run.end = Math.max(run.start + 1000, Math.floor(now() / 1000) * 1000); run.updatedAt = now(); upsert(cid, 'entries', run); stopped = run; }
+    } else if (b.finished === false) r.finishedAt = 0;
+    r.updatedAt = now(); save(); upsert(cid, 'days', r); syncSoon(c, user.id, [m[1].slice(0, 7)]);
+    return json(res, 200, { item: r, stopped });
+  }
+  // Admins approve a day's overtime; their initials go in "OT Approved By" on the timesheet.
+  if ((m = /^\/days\/(\d{4}-\d{2}-\d{2})\/approve$/.exec(sub)) && M === 'POST') {
+    if (!admin) deny('Only admins can approve overtime');
+    const b = await readBody(req);
+    const target = forUser(str(b.userId, 40));
+    const r = dayRec(d, target, m[1], true);
+    if (b.approve) Object.assign(r, { approvedBy: ts.initials(user.name), approvedById: user.id, approvedAt: now() });
+    else Object.assign(r, { approvedBy: '', approvedById: '', approvedAt: 0 });
+    r.updatedAt = now(); save(); upsert(cid, 'days', r); syncSoon(c, target, [m[1].slice(0, 7)]);
+    if (b.approve && target !== user.id) notify(cid, [target], `${who} approved your time for ${ukDay(Date.parse(m[1] + 'T12:00:00Z'))}`, '#/timesheet/' + m[1].slice(0, 7));
+    return json(res, 200, { item: r });
+  }
+  // Timesheet files: a month in the company's template, or a whole year.
+  if ((m = /^\/timesheet\/([A-Za-z0-9]+)\/(\d{4})(?:-(\d{2}))?$/.exec(sub)) && M === 'GET') {
+    const target = forUser(m[1]);
+    const f = m[3] ? monthFileFor(c, target, Number(m[2]), Number(m[3])) : yearFileFor(c, target, Number(m[2]));
+    return sendDownload(res, f.name, f.data);
+  }
+  // Admins: everyone's timesheets for a month in one zip, a folder per person.
+  if ((m = /^\/timesheets\/(\d{4})-(\d{2})$/.exec(sub)) && M === 'GET') {
+    if (!admin) deny('Only admins can download everyone’s timesheets');
+    const y = Number(m[1]), mo = Number(m[2]);
+    const ids = new Set(peopleInMonth(c, `${m[1]}-${m[2]}`).concat(Object.keys(c.members)));
+    const files = []; const used = new Set();
+    for (const id of ids) {
+      const f = monthFileFor(c, id, y, mo);
+      let folderName = ts.safeName(personNameOf(id)); while (used.has(folderName)) folderName += ' (2)'; used.add(folderName);
+      files.push({ name: `${folderName}/${f.name}`, data: f.data });
+    }
+    return sendDownload(res, `Timesheets_${ts.MONTHS[mo - 1]}_${y}.zip`, writeZip(files), 'application/zip');
+  }
+  // A project's timesheet and timeline.
+  if ((m = /^\/projects\/([A-Za-z0-9]+)\/timesheet$/.exec(sub)) && M === 'GET') {
+    const p = projectOf(x, m[1]); if (!p || !canSeeProject(x, p)) notFound('Project not found');
+    const people = {}; for (const id of Object.keys(db.users)) people[id] = { name: db.users[id].name };
+    const f = ts.projectWorkbook({ project: p, client: (d.clients[p.clientId] || {}).name || '', tz: TZ, people,
+      tasks: Object.values(d.tasks).filter((t) => t.projectId === p.id).sort((a, b) => (a.order || 0) - (b.order || 0)),
+      entries: Object.values(d.entries).filter((e) => e.projectId === p.id && canSeeEntry(x, e)) });
+    return sendDownload(res, f.name, f.data);
+  }
+  // Google Drive (admins).
+  if (sub.startsWith('/gdrive')) {
+    if (!admin) deny('Only admins can set up Google Drive');
+    if (sub === '/gdrive/connect' && M === 'POST') {
+      if (!gdrive.configured()) bad('Google Drive isn’t set up on this server yet. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see README).');
+      const state = makeToken('gdrive', user.id, 15 * 60e3, { cid });
+      return json(res, 200, { url: gdrive.authUrl(APP_URL + '/api/gdrive/callback', state) });
+    }
+    if (sub === '/gdrive/sync' && M === 'POST') {
+      throttle('gsync:' + cid, 10, 3600e3, 'Synced a lot recently — try again later');
+      const r = await runDriveSync(cid, true);
+      if (r.error) bad('Google Drive: ' + r.error);
+      return json(res, 200, Object.assign(r, { gdrive: gdrive.status(c) }));
+    }
+    if (sub === '/gdrive' && M === 'DELETE') { delete c.gdrive; save(); return json(res, 200, { gdrive: gdrive.status(c) }); }
+  }
+  notFound('Not found');
+}
+
 function publicFile(f) { return { id: f.id, kind: f.kind, name: f.name, type: f.type, ext: f.ext || '', size: f.size, url: f.url, thumb: f.thumb || '', w: f.w || 0, h: f.h || 0 }; }
 // Link uploaded files to a ping. Only the uploader's own unattached files (or ones already on this ping) can be used.
 function attachFiles(x, ids, pingId, current) {
@@ -1566,7 +1857,6 @@ function attachFiles(x, ids, pingId, current) {
   for (const old of current || []) if (!keep.some((k) => k.id === old.id)) { const f = x.d.files[old.id]; if (f) { dropFile(f.url); if (f.thumb && f.thumb !== f.url) dropFile(f.thumb); delete x.d.files[old.id]; } }
   return keep;
 }
-function touchProject(x, pid) { const p = x.d.projects[pid]; if (p) { p.updatedAt = now(); upsert(x.c.id, 'projects', p); } }
 
 function stream(req, res) {
   const cur = authUser(req); const user = cur.user;
@@ -1618,6 +1908,20 @@ function reminders() {
       if (t > late) continue;
       const who = (e.participants && e.participants.length ? e.participants : Object.keys(c.members)).filter((id) => { const x = ctxFor(c, id); return x && canSeeEvent(x, e); });
       notify(c.id, who, e.allDay ? `Today: ${e.title}` : `In 1 hour (${e.start}): ${e.title}`, '#/calendar/' + e.date);
+    }
+    // Timers left running: a nudge an hour after the usual finish time; stopped automatically after 16 hours.
+    const nowLocal = ts.zoneParts(t, TZ);
+    const [eh, em] = String(c.settings.dayEnd || '16:30').split(':').map(Number);
+    for (const e of Object.values(d.entries)) {
+      if (e.end) continue;
+      if (t - e.start > 16 * 3600e3) {
+        e.end = e.start + 16 * 3600e3; e.edited = true; e.note = (e.note ? e.note + ' ' : '') + '(Stopped automatically after 16 hours — check the finish time.)';
+        save(); upsert(c.id, 'entries', e);
+        notify(c.id, [e.userId], 'Your timer was left running, so it was stopped after 16 hours. Please check the finish time on your timesheet.', '#/timesheet');
+      } else if (!e.nudgedAt && nowLocal.date === localDay(e.start) && nowLocal.mins >= eh * 60 + em + 60) {
+        e.nudgedAt = t; save();
+        notify(c.id, [e.userId], `Your timer is still running${e.pname ? ' on ' + e.pname : ''}. Finished for the day? Tap the red square to stop it.`, '#/home');
+      }
     }
   }
 }

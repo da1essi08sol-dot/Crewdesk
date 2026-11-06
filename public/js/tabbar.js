@@ -65,7 +65,7 @@ function onTabEdClick(e) {
   const b = e.target.closest('[data-te]'); if (!b || !tabEd) return;
   const a = b.dataset.te, k = b.dataset.k;
   if (a === 'done') return closeTabEditor(true);
-  if (a === 'reset') { tabEd.tabs = DEFAULT_TABS.filter(tabAllowed); paintTabEd(); return; }
+  if (a === 'reset') { tabEd.tabs = defaultTabs().filter(tabAllowed); paintTabEd(); return; }
   if (a === 'remove') {
     if (tabEd.tabs.length <= 1) { toast('Keep at least one button on the bar', true); teShake(b.closest('.te-item')); return; }
     tabEd.tabs = tabEd.tabs.filter((x) => x !== k); paintTabEd();

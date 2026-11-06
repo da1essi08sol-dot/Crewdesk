@@ -64,8 +64,8 @@ async function processPhoto(file, { max = 1600, thumb = 480, square = false } = 
 }
 const readAsDataURL = (file) => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => reject(new Error('Could not read that file')); r.readAsDataURL(file); });
 
-// ---- job photo uploads (queue, 2 at a time, with live tiles)
-const uploads = {}; // jobId -> [{ key, preview, progress, failed, file }]
+// ---- project photo uploads (queue, 2 at a time, with live tiles). `jobId` here is the project's id.
+const uploads = {}; // projectId -> [{ key, preview, progress, failed, file }]
 let uploadActive = 0; const uploadQueue = [];
 function queueJobPhotos(jobId, files) {
   if (!files.length) return;
@@ -87,7 +87,7 @@ async function uploadOne(u) {
   try {
     u.failed = ''; u.progress = 0.02; paintUpload(u);
     const p = await processPhoto(u.file);
-    const r = await sendWithProgress('POST', `/api/c/${S.cid}/photos`, { jobId: u.jobId, image: p.data, thumb: p.thumb, w: p.w, h: p.h, takenAt: p.takenAt },
+    const r = await sendWithProgress('POST', `/api/c/${S.cid}/photos`, { projectId: u.jobId, image: p.data, thumb: p.thumb, w: p.w, h: p.h, takenAt: p.takenAt },
       (f) => { u.progress = 0.05 + f * 0.93; paintUpload(u); });
     S.photos[r.item.id] = r.item;
     const arr = uploads[u.jobId] || [];
@@ -111,10 +111,10 @@ function refreshPhotoViews(jobId) {
   const strip = document.getElementById('photo-strip');
   if (strip && strip.dataset.job === jobId) strip.innerHTML = photoStripInner(jobId);
 }
-function jobPhotos(jobId) { return Object.values(S.photos).filter((p) => p.jobId === jobId).sort((a, b) => b.createdAt - a.createdAt); }
+function jobPhotos(pid) { return Object.values(S.photos).filter((p) => p.projectId === pid).sort((a, b) => b.createdAt - a.createdAt); }
 function photoAlt(p, i) {
-  const j = S.jobs[p.jobId];
-  return p.caption ? p.caption : `Photo ${i + 1}${j ? ' of ' + j.title : ''}, added by ${member(p.createdBy).name}`;
+  const j = S.projects[p.projectId];
+  return p.caption ? p.caption : `Photo ${i + 1}${j ? ' of ' + j.name : ''}, added by ${member(p.createdBy).name}`;
 }
 function photoTile(p, i) {
   return `<button class="photo-tile" data-act="photo-open" data-id="${p.id}" aria-label="Open photo: ${esc(photoAlt(p, i))}">
@@ -129,15 +129,15 @@ function photoGalleryInner(jobId) {
   return `<div class="photo-grid">
       <button class="add-photo-tile" data-act="photos-add" data-job="${jobId}">${ic('camera')}<span>Add photos</span></button>
       ${ups.map(uploadTile).join('')}${ps.map(photoTile).join('')}</div>
-    ${!ps.length && !ups.length ? `<p class="small muted" style="text-align:center;margin:14px 0 0">No photos yet. Take before, during and after shots — everyone who can see this job can see them.</p>` : ''}`;
+    ${!ps.length && !ups.length ? `<p class="small muted" style="text-align:center;margin:14px 0 0">No photos yet. Take before, during and after shots — everyone who can see this project can see them.</p>` : ''}`;
 }
 function photoStripInner(jobId) {
   const ps = jobPhotos(jobId).slice(0, 8); const ups = uploads[jobId] || [];
   return `<div class="photo-strip"><button class="add-photo-tile" data-act="photos-add" data-job="${jobId}" aria-label="Add photos">${ic('camera')}<span>Add</span></button>
     ${ups.map(uploadTile).join('')}${ps.map(photoTile).join('')}</div>`;
 }
-A['photos-add'] = async (el) => { const files = await choosePhotos({ multiple: true, title: 'Add job photos' }); queueJobPhotos(el.dataset.job, files); };
-A['photo-open'] = (el) => { const p = S.photos[el.dataset.id]; if (!p) return; const items = viewerItemsForJob(p.jobId); openViewer(items, items.findIndex((x) => x.id === p.id)); };
+A['photos-add'] = async (el) => { const files = await choosePhotos({ multiple: true, title: 'Add project photos' }); queueJobPhotos(el.dataset.job, files); };
+A['photo-open'] = (el) => { const p = S.photos[el.dataset.id]; if (!p) return; const items = viewerItemsForJob(p.projectId); openViewer(items, items.findIndex((x) => x.id === p.id)); };
 A['upload-retry'] = (el) => {
   for (const arr of Object.values(uploads)) { const u = arr.find((x) => x.key === el.dataset.upload); if (u && u.failed) { u.failed = ''; u.progress = 0; uploadQueue.push(u); paintUpload(u); pumpUploads(); } }
 };
@@ -327,7 +327,7 @@ function closeViewer(fromPop = false, instant = false, dy = 0) {
   anim.finished.then(done, done); setTimeout(done, 600);
 }
 function viewerItemsForJob(jobId) {
-  return jobPhotos(jobId).map((p, i) => ({ id: p.id, jobId, url: p.url, caption: p.caption, by: p.createdBy, at: p.createdAt, alt: photoAlt(p, i) }));
+  return jobPhotos(jobId).map((p, i) => ({ id: p.id, jobId: p.projectId, url: p.url, caption: p.caption, by: p.createdBy, at: p.createdAt, alt: photoAlt(p, i) }));
 }
 
 // ---- chat photo attachments

@@ -64,6 +64,17 @@ const P = {
   phoneapp: '<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>',
   activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
   restore: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+  play: '<path fill="currentColor" d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5Z"/>',
+  stop: '<rect fill="currentColor" x="5" y="5" width="14" height="14" rx="2.5"/>',
+  coffee: '<path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9Z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M8 3v3M12 3v3"/>',
+  timesheet: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/><circle cx="17.5" cy="17.5" r="3.5" fill="var(--surface)"/><path d="M17.5 16v1.6l1 .8"/>',
+  admin: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
+  bulb: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3Z"/>',
+  bug: '<rect x="7" y="7" width="10" height="13" rx="5"/><path d="M12 7v13M9 4l1.5 2M15 4l-1.5 2M3 12h4M17 12h4M4 7l3 2M20 7l-3 2M4 18l3-2M20 18l-3-2"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/>',
+  flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
 };
 const ic = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n] || ''}</svg>`;
 const icSize = (n, px, style = '') => ic(n).replace('<svg', `<svg width="${px}" height="${px}"${style ? ` style="${style}"` : ''}`);
@@ -71,9 +82,6 @@ const icSize = (n, px, style = '') => ic(n).replace('<svg', `<svg width="${px}" 
 const LOGO = `<svg viewBox="128 96 256 320" aria-hidden="true"><path class="lm-pin" d="M256 404C214 348 140 290 140 220a116 116 0 0 1 232 0c0 70-74 128-116 184Z"/><path class="lm-tick" d="M203 222l37 37 70-72" fill="none" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const brand = () => `<span class="brandmark">${LOGO}</span>`;
 
-const STATUS = { planned: 'Planned', active: 'In progress', hold: 'On hold', done: 'Done' };
-const STATUS_COLOR = { planned: 'var(--blue)', active: 'var(--ok)', hold: 'var(--amber)', done: 'var(--slate)' };
-const PRIORITY = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
 const ROLE = { owner: 'Owner', admin: 'Admin', member: 'Member' };
 const PALETTE = ['#18693f', '#1f57a4', '#7b3fa8', '#b0284f', '#0b7285', '#a35200', '#2f8a3a', '#4c5fc0', '#57564f', '#6b7f00'];
 
@@ -156,9 +164,9 @@ const store = {
 };
 const S = {
   cid: store.get('cd_cid'), user: null, companies: [], role: null, company: null, info: null,
-  members: {}, teams: {}, jobs: {}, tasks: {}, clients: {}, pings: {}, photos: {}, projects: {}, events: {}, finance: {}, chats: {},
-  invites: [], favs: { jobs: [], projects: [] }, inbox: [], locations: {}, unread: {}, lastMsg: {}, msgs: {}, msgsMore: {},
-  jobFilter: store.get('cd_jobFilter') || 'open', jobSearch: '', projFilter: 'active', projSearch: '', clientSearch: '', openTask: null,
+  members: {}, teams: {}, tasks: {}, clients: {}, pings: {}, photos: {}, projects: {}, events: {}, finance: {}, chats: {}, entries: {}, days: {}, suggestions: {},
+  invites: [], favs: { projects: [] }, inbox: [], locations: {}, unread: {}, lastMsg: {}, msgs: {}, msgsMore: {}, loaded: {}, gdrive: null,
+  projFilter: 'active', projSearch: '', clientSearch: '', openDay: null, sugFilter: 'open',
   calView: store.get('cd_calView') || 'month', calDate: todayStr(), pingTab: 'pings',
 };
 // Registries the view files fill in.
@@ -202,7 +210,6 @@ function sendWithProgress(method, path, body, onProgress) {
 // ============================================================ permissions (the server checks these too)
 const isAdmin = () => S.role === 'owner' || S.role === 'admin';
 const setting = (k) => !!(S.company && S.company.settings && S.company.settings[k]);
-const canCreateJobs = () => isAdmin() || (S.company.settings.membersCreateJobs !== false);
 const canCreateProjects = () => isAdmin() || (S.company.settings.membersCreateProjects !== false);
 const canPing = () => isAdmin() || (S.company.settings.membersPing !== false);
 const canInvite = () => isAdmin() || setting('membersInvite');
@@ -300,7 +307,7 @@ function peoplePicker(selected, name = 'people', opts = {}) {
 }
 const picked = (root, name = 'people') => $$(`[data-picker="${name}"] .person-chip.on`, root).map((b) => b.dataset.id);
 A.pick = (el) => { el.classList.toggle('on'); el.setAttribute('aria-pressed', el.classList.contains('on')); };
-// "Who can see this" control used by jobs, projects and events.
+// "Who can see this" control used by projects and events.
 function visibilityField(vis, ids, label = 'Who can see this') {
   return `<div class="field"><span>${esc(label)}</span>
     <div class="seg" role="radiogroup"><button type="button" class="${vis !== 'selected' ? 'on' : ''}" data-act="vis" data-v="all" role="radio" aria-checked="${vis !== 'selected'}">${icSize('users', 15, 'vertical-align:-3px;margin-right:4px')}Everyone</button>
@@ -328,3 +335,83 @@ A.fav = async (el) => {
 };
 const isTouch = () => matchMedia('(pointer: coarse)').matches || matchMedia('(hover: none)').matches;
 const wide = () => matchMedia('(min-width:900px)').matches;
+
+// ============================================================ time: types of work, durations, day totals
+// The same rules as the timesheet template (and the server): paid time counts towards the day; "job" time goes
+// against the project's job number, the rest is non-productive. Lunch, holiday and absence aren't counted.
+const CATS = {
+  field: { label: 'Field', color: '#8a8a8f', paid: true, job: true },
+  office: { label: 'Office', color: '#e8956b', paid: true, job: true },
+  rework: { label: 'Rework', color: '#d0604c', paid: true, job: true },
+  training: { label: 'Training', color: '#d4b106', paid: true, job: false },
+  nonprod: { label: 'Non-productive', color: '#c86fc4', paid: true, job: false },
+  lunch: { label: 'Lunch', color: '#4fb3e8', paid: false, job: false },
+  holiday: { label: 'Holiday', color: '#2f5fe0', paid: false, job: false },
+  absent: { label: 'Absent', color: '#8e1b1b', paid: false, job: false },
+};
+const WORK_CATS = ['field', 'office', 'rework', 'training', 'nonprod'];
+const cat = (k) => CATS[k] || CATS.field;
+const entryMins = (e, nowTs = Date.now()) => Math.max(0, ((e.end || nowTs) - e.start) / 60000);
+const entryDay = (e) => dstr(new Date(e.start));
+const minsOfDay = (ts) => { const d = new Date(ts); return d.getHours() * 60 + d.getMinutes(); };
+function fmtDur(mins, short = false) {
+  const m = Math.max(0, Math.round(mins)); const h = Math.floor(m / 60), r = m % 60;
+  if (short) return h ? `${h}h${r ? ' ' + pad(r) : ''}` : `${r}m`;
+  return h ? `${h}h ${pad(r)}m` : `${r}m`;
+}
+const fmtHrs = (h) => (Math.round(h * 100) / 100).toString();
+const fmtSigned = (h) => (h > 0 ? '+' : h < 0 ? '−' : '') + fmtHrs(Math.abs(h)) + 'h';
+function fmtElapsed(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`; }
+const dayHours = () => Number((S.company && S.company.settings && S.company.settings.dayHours) || 8);
+const hhmmToMin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+const timeVal = (ts) => clock(ts); // "09:05" for <input type=time>
+function atTime(ds, hm) { const [h, m] = hm.split(':').map(Number); const d = parseD(ds); d.setHours(h, m, 0, 0); return d.getTime(); }
+const userEntries = (uid) => Object.values(S.entries).filter((e) => e.userId === uid);
+function entriesOn(uid, ds) { return userEntries(uid).filter((e) => entryDay(e) === ds).sort((a, b) => a.start - b.start); }
+const runningOf = (uid) => Object.values(S.entries).find((e) => e.userId === uid && !e.end) || null;
+const myRunning = () => runningOf(S.user.id);
+// Totals for one person's day, worked out like the timesheet.
+function dayStats(list, nowTs = Date.now()) {
+  const o = { paid: 0, nonprod: 0, cats: {}, byProject: {}, first: null, last: null, running: null };
+  for (const e of list) {
+    const m = entryMins(e, nowTs); const k = CATS[e.category] ? e.category : 'field';
+    o.cats[k] = (o.cats[k] || 0) + m;
+    if (CATS[k].paid) { o.paid += m; if (CATS[k].job && e.projectId) o.byProject[e.projectId] = (o.byProject[e.projectId] || 0) + m; else o.nonprod += m; }
+    if (o.first == null || e.start < o.first) o.first = e.start;
+    const end = e.end || nowTs; if (o.last == null || end > o.last) o.last = end;
+    if (!e.end) o.running = e;
+  }
+  o.ot = o.paid === 0 ? 0 : Math.round((o.paid / 60 - dayHours()) * 100) / 100;
+  return o;
+}
+const isWeekend = (ds) => [0, 6].includes(parseD(ds).getDay());
+const otRate = (ds) => (isWeekend(ds) ? 1.5 : 1);
+function personInitials(name) { const w = String(name || '').trim().split(/\s+/).filter(Boolean); if (!w.length) return 'XX'; return (w.length === 1 ? w[0].slice(0, 2) : w[0][0] + w[w.length - 1][0]).toUpperCase(); }
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthFile = (name, ym) => `${personInitials(name)}_${MONTHS_SHORT[Number(ym.slice(5, 7)) - 1]}_${ym.slice(0, 4)}_Timesheet.xlsx`;
+const yearFile = (name, y) => `${personInitials(name)}_${y}_Timesheet.xlsx`;
+const monthLabel = (ym) => parseD(ym + '-01').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+const thisMonth = () => todayStr().slice(0, 7);
+function shiftMonth(ym, n) { const d = parseD(ym + '-01'); d.setMonth(d.getMonth() + n); return dstr(d).slice(0, 7); }
+const monthEnd = (ym) => { const d = parseD(ym + '-01'); d.setMonth(d.getMonth() + 1); d.setDate(0); return dstr(d); };
+// A task's logged time (everyone's), and a project's.
+function taskMins(taskId) { let m = 0; for (const e of Object.values(S.entries)) if (e.taskId === taskId && cat(e.category).paid) m += entryMins(e); return m; }
+function projectMins(pid) { let m = 0; for (const e of Object.values(S.entries)) if (e.projectId === pid && cat(e.category).paid) m += entryMins(e); return m; }
+const projectTasks = (pid) => Object.values(S.tasks).filter((t) => t.projectId === pid).sort((a, b) => (a.done - b.done) || ((a.order || 0) - (b.order || 0)));
+const projectPlanMins = (p) => { const t = projectTasks(p.id).reduce((a, x) => a + (x.planMins || 0), 0); return p.plannedHours ? Math.max(p.plannedHours * 60, 0) : t; };
+// Time to compare with the plan: the whole project if it has its own planned hours, otherwise just the tasks that have a plan.
+const projectPlanActual = (p) => (p.plannedHours ? projectMins(p.id) : projectTasks(p.id).filter((t) => t.planMins).reduce((a, t) => a + taskMins(t.id), 0));
+const projLabel = (p) => (p ? (p.ref ? `${p.ref} · ${p.name}` : p.name) : '');
+// Fetch older time (beyond the ~2 months the app loads) once per person per month.
+async function ensureMonth(uid, ym) {
+  const key = uid + '|' + ym;
+  if (S.loaded[key]) return false;
+  S.loaded[key] = 'loading';
+  try {
+    const r = await capi('GET', `/entries?user=${encodeURIComponent(uid)}&from=${ym}-01&to=${monthEnd(ym)}`);
+    for (const e of r.items) S.entries[e.id] = e;
+    for (const d of r.days) S.days[d.id] = d;
+    S.loaded[key] = true; return true;
+  } catch (e) { delete S.loaded[key]; toast(e.message, true); return false; }
+}
+const dayRec = (uid, ds) => S.days[uid + '_' + ds] || null;

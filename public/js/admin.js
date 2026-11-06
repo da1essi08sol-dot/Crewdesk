@@ -62,30 +62,28 @@ VIEWS.sheets = {
     const [from, to] = finRange();
     let rows = all.filter((r) => r.date >= from && r.date <= to && (FIN.type === 'all' || r.type === FIN.type));
     const q = FIN.q.trim().toLowerCase();
-    if (q) rows = rows.filter((r) => [r.category, r.description, (S.jobs[r.jobId] || {}).title, (S.clients[r.clientId] || {}).name].join(' ').toLowerCase().includes(q));
+    if (q) rows = rows.filter((r) => [r.category, r.description, (S.projects[r.projectId] || {}).name, (S.clients[r.clientId] || {}).name].join(' ').toLowerCase().includes(q));
     const k = FIN.sort.key, dir = FIN.sort.dir;
     rows.sort((a, b) => { const va = k === 'amount' ? Number(a.amount) : String(a[k] || ''), vb = k === 'amount' ? Number(b.amount) : String(b[k] || ''); return va < vb ? -dir : va > vb ? dir : (b.createdAt - a.createdAt); }); // newest first on ties
     const inc = rows.filter((r) => r.type === 'income').reduce((a, r) => a + Number(r.amount), 0);
     const exp = rows.filter((r) => r.type === 'expense').reduce((a, r) => a + Number(r.amount), 0);
-    // charts: last 12 months actuals + 6 months projected (from the trend), plus booked work from open jobs
+    // charts: last 12 months actuals + 6 months projected (from the trend)
     const months = monthsBack(12);
     const incM = sumBy(all, 'income', (r) => monthKey(r.date)); const expM = sumBy(all, 'expense', (r) => monthKey(r.date));
     const incV = months.map((m) => incM[m] || 0), expV = months.map((m) => expM[m] || 0);
     const f = trend(incV.slice(-6));
     const future = []; for (let i = 1; i <= 6; i++) { const d = new Date(); future.push(dstr(new Date(d.getFullYear(), d.getMonth() + i, 1)).slice(0, 7)); }
-    const booked = {}; for (const j of Object.values(S.jobs)) if (j.status !== 'done' && Number(j.price) > 0) { const when = monthKey(j.deadline && j.deadline >= todayStr() ? j.deadline : dstr(new Date(Date.now() + 30 * 864e5))); booked[when] = (booked[when] || 0) + Number(j.price); }
     const labels = months.concat(future).map(mLabel);
     const actualLine = incV.concat(future.map(() => null));
     const projLine = months.map((_, i) => (i === months.length - 1 ? incV[i] : null)).concat(future.map((_, i) => Math.round(f(5 + i + 1))));
-    const bookedBars = months.map(() => 0).concat(future.map((m) => booked[m] || 0));
     const projTotal = projLine.slice(months.length).reduce((a, b) => a + (b || 0), 0);
     const y0 = new Date().getFullYear();
     const thisY = monthsBack(12, new Date(y0, 11, 1)).map((m) => incM[m] || 0), lastY = monthsBack(12, new Date(y0 - 1, 11, 1)).map((m) => incM[m] || 0);
     const ytd = thisY.slice(0, new Date().getMonth() + 1).reduce((a, b) => a + b, 0), lytd = lastY.slice(0, new Date().getMonth() + 1).reduce((a, b) => a + b, 0);
     const cats = [...new Set(all.map((r) => r.category).filter(Boolean))].sort();
-    const jobsOpts = Object.values(S.jobs).sort((a, b) => a.ref.localeCompare(b.ref));
+    const projOpts = Object.values(S.projects).sort((a, b) => a.name.localeCompare(b.name));
     return `<div class="page-head"><div><h1>Spreadsheets</h1><div class="sub">${icSize('lock', 13, 'vertical-align:-2px')} Only owners and admins can see this page.</div></div>
-        <div class="row tight wrap"><button class="btn" data-act="fin-import">${ic('jobs')}<span>Add finished jobs</span></button><button class="btn" data-act="fin-csv">${ic('download')}<span>CSV</span></button><button class="btn" data-act="fin-xlsx">${ic('download')}<span>Excel</span></button><button class="btn primary" data-act="fin-add">${ic('plus')}<span>Add row</span></button></div></div>
+        <div class="row tight wrap"><button class="btn" data-act="fin-csv">${ic('download')}<span>CSV</span></button><button class="btn" data-act="fin-xlsx">${ic('download')}<span>Excel</span></button><button class="btn primary" data-act="fin-add">${ic('plus')}<span>Add row</span></button></div></div>
       <div class="kpis">
         <div class="kpi"><span class="v pos">${esc(money(inc))}</span><span class="l">Income · ${esc(rangeLabel())}</span></div>
         <div class="kpi"><span class="v neg">${esc(money(exp))}</span><span class="l">Expenses · ${esc(rangeLabel())}</span></div>
@@ -97,8 +95,8 @@ VIEWS.sheets = {
           ${svgChart({ labels: months.map(mLabel), bars: [{ name: 'Income', color: 'var(--ok)', values: incV }, { name: 'Expenses', color: 'var(--red)', values: expV, opacity: 0.75 }], title: 'Monthly income and expenses', width: 480, height: 260 })}
           <div class="legend"><span><i style="background:var(--ok)"></i>Income (actual)</span><span><i style="background:var(--red)"></i>Expenses (actual)</span></div></div>
         <div class="card"><div class="section-head"><h3>Income trend and projection</h3></div>
-          ${svgChart({ labels, bars: [{ name: 'Booked from open jobs', color: 'var(--accent)', values: bookedBars, opacity: 0.25 }], lines: [{ name: 'Actual income', color: 'var(--ok)', values: actualLine }, { name: 'Projected (estimate)', color: 'var(--accent)', values: projLine, dash: true }], title: 'Income trend with projection', width: 480, height: 260 })}
-          <div class="legend"><span><i style="background:var(--ok)"></i>Actual income</span><span><i class="dash"></i>Projection — an estimate based on the last 6 months</span><span><i style="background:var(--accent);opacity:.3"></i>Booked: prices of open jobs by deadline</span></div></div>
+          ${svgChart({ labels, lines: [{ name: 'Actual income', color: 'var(--ok)', values: actualLine }, { name: 'Projected (estimate)', color: 'var(--accent)', values: projLine, dash: true }], title: 'Income trend with projection', width: 480, height: 260 })}
+          <div class="legend"><span><i style="background:var(--ok)"></i>Actual income</span><span><i class="dash"></i>Projection — an estimate based on the last 6 months</span></div></div>
       </div>
       <div class="card section"><div class="section-head"><h3>${y0} compared with ${y0 - 1}</h3><span class="small ${ytd >= lytd ? 'pos' : 'neg'}">Year to date ${esc(money(ytd))} vs ${esc(money(lytd))}${lytd ? ` (${ytd >= lytd ? '+' : ''}${Math.round(((ytd - lytd) / lytd) * 100)}%)` : ''}</span></div>
         ${svgChart({ labels: monthsBack(12, new Date(y0, 11, 1)).map(mLabel), lines: [{ name: String(y0 - 1), color: 'var(--slate)', values: lastY, dash: false }, { name: String(y0), color: 'var(--ok)', values: thisY.map((v, i) => (i <= new Date().getMonth() ? v : null)) }], height: 220, width: 980, title: 'Income this year compared with last year' })}
@@ -112,16 +110,16 @@ VIEWS.sheets = {
         </div>
         <datalist id="fin-cats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
         <div class="sheet-table-wrap"><table class="sheet-table"><thead><tr>
-          ${[['date', 'Date'], ['type', 'Type'], ['category', 'Category'], ['description', 'Description'], ['jobId', 'Job'], ['amount', 'Amount']].map(([k2, l]) => `<th data-act="fin-sort" data-k="${k2}" aria-sort="${FIN.sort.key === k2 ? (dir > 0 ? 'ascending' : 'descending') : 'none'}">${l}${FIN.sort.key === k2 ? (dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}<th><span class="sr-only">Delete</span></th></tr></thead>
+          ${[['date', 'Date'], ['type', 'Type'], ['category', 'Category'], ['description', 'Description'], ['projectId', 'Project'], ['amount', 'Amount']].map(([k2, l]) => `<th data-act="fin-sort" data-k="${k2}" aria-sort="${FIN.sort.key === k2 ? (dir > 0 ? 'ascending' : 'descending') : 'none'}">${l}${FIN.sort.key === k2 ? (dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}<th><span class="sr-only">Delete</span></th></tr></thead>
           <tbody>${rows.length ? rows.map((r) => `<tr class="${r.type}" data-row="${r.id}">
             <td><input type="date" value="${esc(r.date)}" data-change="fin-field" data-k="date" aria-label="Date"></td>
             <td><select data-change="fin-field" data-k="type" aria-label="Type"><option value="income">Income</option><option value="expense" ${r.type === 'expense' ? 'selected' : ''}>Expense</option></select></td>
             <td><input value="${esc(r.category)}" list="fin-cats" data-change="fin-field" data-k="category" placeholder="e.g. Materials" aria-label="Category"></td>
             <td><input value="${esc(r.description)}" data-change="fin-field" data-k="description" placeholder="What it was for" aria-label="Description"></td>
-            <td><select data-change="fin-field" data-k="jobId" aria-label="Job"><option value="">—</option>${jobsOpts.map((j) => `<option value="${j.id}" ${j.id === r.jobId ? 'selected' : ''}>${esc(j.ref)} ${esc(j.title.slice(0, 30))}</option>`).join('')}</select></td>
+            <td><select data-change="fin-field" data-k="projectId" aria-label="Project"><option value="">—</option>${projOpts.map((p) => `<option value="${p.id}" ${p.id === r.projectId ? 'selected' : ''}>${esc((p.ref ? p.ref + ' ' : '') + p.name.slice(0, 30))}</option>`).join('')}</select></td>
             <td class="num"><input type="number" step="0.01" min="0" inputmode="decimal" value="${Number(r.amount) || ''}" placeholder="0.00" data-change="fin-field" data-k="amount" aria-label="Amount"></td>
             <td class="act"><button class="btn ghost sm icon" data-act="fin-del" data-id="${r.id}" aria-label="Delete row">${ic('trash')}</button></td></tr>`).join('')
-            : `<tr><td colspan="7"><div class="empty small">${all.length ? 'No rows match these filters.' : 'No records yet. Add rows by hand, or bring in finished jobs with prices.'}</div></td></tr>`}</tbody>
+            : `<tr><td colspan="7"><div class="empty small">${all.length ? 'No rows match these filters.' : 'No records yet. Add rows by hand, or import them from a spreadsheet.'}</div></td></tr>`}</tbody>
           ${rows.length ? `<tfoot><tr><td colspan="5">${plural(rows.length, 'row')} · income ${esc(money(inc))} · expenses ${esc(money(exp))}</td><td class="num" style="text-align:right">${esc(money(inc - exp))}</td><td></td></tr></tfoot>` : ''}
         </table></div>
         <p class="small muted" style="margin-top:8px">Changes save as soon as you leave a cell. Amounts are always positive — the Type column decides whether it’s money in or out.</p>
@@ -145,13 +143,9 @@ A['fin-add'] = async () => {
   const row = $(`tr[data-row="${item.id}"] input[data-k="description"]`); if (row) row.focus();
 };
 A['fin-del'] = async (el) => { const r = S.finance[el.dataset.id]; if (await confirmBox('Delete this row?', `${r.type === 'income' ? 'Income' : 'Expense'} of ${money(r.amount)} on ${fmtDate(r.date)} will be removed.`)) { await deleteItem('finance', r.id); renderView(false); } };
-A['fin-import'] = async () => {
-  try { const r = await capi('POST', '/finance/import-jobs'); toast(r.added ? `Added ${plural(r.added, 'row')} from finished jobs` : 'Nothing new — finished jobs with prices are already in'); setTimeout(() => renderView(false), 200); }
-  catch (e) { toast(e.message, true); }
-};
 function finRowsForExport() {
   return Object.values(S.finance).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ Date: r.date, Type: r.type === 'income' ? 'Income' : 'Expense', Category: r.category, Description: r.description,
-    Job: S.jobs[r.jobId] ? `${S.jobs[r.jobId].ref} ${S.jobs[r.jobId].title}` : '', Client: (S.clients[r.clientId] || {}).name || '', Amount: Number(r.amount) || 0 }));
+    Project: S.projects[r.projectId] ? `${S.projects[r.projectId].ref ? S.projects[r.projectId].ref + ' ' : ''}${S.projects[r.projectId].name}` : '', Client: (S.clients[r.clientId] || {}).name || '', Amount: Number(r.amount) || 0 }));
 }
 function download(name, blob) { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); }
 const safeCell = (v) => (typeof v === 'string' && /^[=+\-@\t\r]/.test(v) ? "'" + v : v); // stops spreadsheet formula injection
@@ -250,7 +244,7 @@ VIEWS.settings = {
           <div class="field"><span>Who can find your company</span>
             <div class="seg" role="radiogroup"><button type="button" class="${c.profile.visibility !== 'public' ? 'on' : ''}" data-act="co-vis" data-v="private" role="radio" aria-checked="${c.profile.visibility !== 'public'}">${icSize('lock', 14, 'vertical-align:-2px;margin-right:4px')}Private</button><button type="button" class="${c.profile.visibility === 'public' ? 'on' : ''}" data-act="co-vis" data-v="public" role="radio" aria-checked="${c.profile.visibility === 'public'}">${icSize('search', 14, 'vertical-align:-2px;margin-right:4px')}Public</button></div>
             <input type="hidden" name="visibility" value="${c.profile.visibility === 'public' ? 'public' : 'private'}">
-            <span class="hint">Private: only people you invite can join. Public: anyone on Crewdesk can find your profile and ask to join — you still choose who gets in. Your jobs, chats and files are never public.</span></div>
+            <span class="hint">Private: only people you invite can join. Public: anyone on Crewdesk can find your profile and ask to join — you still choose who gets in. Your projects, chats, files and timesheets are never public.</span></div>
           <div class="err-msg" data-err></div><button class="btn">Save profile</button></form>
         <div class="card stack"><h2>Banner</h2>
           <p class="small muted" style="margin:0">A picture shown across the top bar, to the right of your company name — your logo, a finished job, your vans. Wide photos work best (about 1600 × 300).</p>
@@ -259,20 +253,25 @@ VIEWS.settings = {
           <div class="row wrap tight"><button class="btn sm" data-act="banner-upload">${ic('image')}${c.banner ? 'Change banner' : 'Upload banner'}</button>${c.banner ? `<button class="btn sm ghost" data-act="banner-remove">Remove</button>` : ''}</div></div>
         <div class="card"><h2 style="margin-bottom:6px">What members can do</h2>
           ${toggle('membersCreateProjects', 'Create projects', 'Otherwise only admins can')}
-          ${toggle('membersCreateJobs', 'Create jobs', 'Otherwise only admins can')}
           ${toggle('membersPing', 'Send pings', 'Company-wide updates with attachments')}
           ${toggle('membersInvite', 'Invite people', 'Create invite links themselves')}
-          ${toggle('membersSeeMoney', 'See money', 'Prices, costs and profit on jobs')}
-          <div class="tiny muted" style="margin-top:8px">Make someone an admin from their profile on the Team page. Admins can always see every project and job.</div></div>`
+          <div class="tiny muted" style="margin-top:8px">Make someone an admin from their profile on the Team page. Admins can always see every project, and everyone’s time.</div></div>
+        <form class="card stack" data-form="co-hours"><h2>Working day</h2>
+          <p class="small muted" style="margin:0">Used to show people how their day is going, and for overtime on timesheets: anything over a standard day counts as overtime (as in your timesheet template).</p>
+          <div class="form-grid"><label class="field"><span>Usual start</span><input type="time" name="dayStart" value="${esc(c.settings.dayStart || '08:00')}" required></label>
+          <label class="field"><span>Usual finish</span><input type="time" name="dayEnd" value="${esc(c.settings.dayEnd || '16:30')}" required></label>
+          <label class="field"><span>Paid hours in a standard day</span><input type="number" name="dayHours" min="1" max="24" step="0.25" value="${esc(c.settings.dayHours || 8)}" required><span class="hint">Lunch isn’t counted. 8:00–16:30 with 30 minutes for lunch is 8 hours.</span></label></div>
+          <div class="err-msg" data-err></div><button class="btn">Save working day</button></form>`
         : `<div class="card"><h2>${esc(c.name)}</h2><p class="small muted" style="margin:6px 0 0">Admins manage company settings. Ask an admin if something needs changing.</p></div>`}
         <div class="card stack"><h2>Leave or delete</h2>
-          ${S.role === 'owner' ? `<p class="small muted" style="margin:0">To leave, first make someone else the owner from their profile. Deleting the company removes every project, job, photo, chat and record for everyone.</p><button class="btn danger" data-act="del-company">${ic('trash')}Delete company</button>`
+          ${S.role === 'owner' ? `<p class="small muted" style="margin:0">To leave, first make someone else the owner from their profile. Deleting the company removes every project, timesheet, photo, chat and record for everyone.</p><button class="btn danger" data-act="del-company">${ic('trash')}Delete company</button>`
             : `<button class="btn danger" data-act="leave-company">${ic('logout')}Leave ${esc(c.name)}</button>`}</div>
       </div>
     </div>`;
   },
 };
 C['co-setting'] = async (el) => { try { const r = await capi('PATCH', '', { settings: { [el.dataset.k]: el.checked } }); S.company = r.company; toast('Saved'); } catch (e) { toast(e.message, true); el.checked = !el.checked; } };
+F['co-hours'] = async (f, d) => { const r = await capi('PATCH', '', { settings: { dayStart: d.dayStart, dayEnd: d.dayEnd, dayHours: Number(d.dayHours) } }); S.company = r.company; toast('Working day saved'); };
 F['co-name'] = async (f, d) => { const r = await capi('PATCH', '', { name: d.name, settings: { currency: d.currency } }); S.company = r.company; updateChrome(); toast('Saved'); };
 A['co-vis'] = (el) => {
   const f = el.closest('.field');
@@ -336,12 +335,12 @@ A['invite-revoke'] = async (el) => {
   try { const r = await capi('DELETE', `/invites/${el.dataset.id}`); S.invites = S.invites.map((i) => (i.id === r.invite.id ? r.invite : i)); renderView(false); toast('Invite revoked'); } catch (e) { toast(e.message, true); }
 };
 A['del-company'] = async () => {
-  const pw = await confirmBox('Delete the whole company?', `Every project, job, photo, ping, chat and record in ${S.company.name} will be permanently deleted for everyone. This can’t be undone.`, 'Delete everything', true,
+  const pw = await confirmBox('Delete the whole company?', `Every project, task, photo, ping, chat, timesheet and record in ${S.company.name} will be permanently deleted for everyone. This can’t be undone.`, 'Delete everything', true,
     `<label class="field" style="margin-top:12px"><span>Type your password to confirm</span><input type="password" autocomplete="current-password" data-confirm-value></label>`);
   if (!pw) return;
   try { const r = await capi('DELETE', '', { password: pw }); S.companies = r.companies; S.cid = null; resetCompanyState(); enterApp(); toast('Company deleted'); } catch (e) { toast(e.message, true); }
 };
-A['leave-company'] = async () => { if (!(await confirmBox(`Leave ${S.company.name}?`, 'You’ll lose access to its projects, jobs and chats. You’ll need a new invite to come back.', 'Leave'))) return; try { const r = await capi('POST', '/leave'); S.companies = r.companies; S.cid = null; resetCompanyState(); enterApp(); } catch (e) { toast(e.message, true); } };
+A['leave-company'] = async () => { if (!(await confirmBox(`Leave ${S.company.name}?`, 'You’ll lose access to its projects and chats. Your time stays on the company’s timesheets. You’ll need a new invite to come back.', 'Leave'))) return; try { const r = await capi('POST', '/leave'); S.companies = r.companies; S.cid = null; resetCompanyState(); enterApp(); } catch (e) { toast(e.message, true); } };
 
 // ============================================================ MY PROFILE & SETTINGS
 VIEWS.profile = {
@@ -443,7 +442,7 @@ VIEWS.more = {
   render() {
     return `<h1 style="margin-bottom:14px">More</h1>
       <div class="card" style="padding:6px"><div class="menu">
-        ${moreTabs().map((k) => `<a href="#/${k}">${ic(TAB_ITEMS[k][1])}<span class="grow">${k === 'sheets' ? 'Spreadsheets' : k === 'team' ? 'Team &amp; map' : TAB_ITEMS[k][0]}</span>${k === 'sheets' ? '<span class="tiny muted">Admins</span>' : ''}${ic('right')}</a>`).join('')}
+        ${moreTabs().map((k) => `<a href="#/${k}">${ic(TAB_ITEMS[k][1])}<span class="grow">${({ sheets: 'Spreadsheets', team: 'Team &amp; map', admin: 'Admin dashboard', suggest: 'Suggestions', timesheet: 'My timesheet' })[k] || TAB_ITEMS[k][0]}</span>${k === 'sheets' || k === 'admin' ? '<span class="tiny muted">Admins</span>' : ''}${k === 'admin' ? '<span class="count hidden" data-badge="admin"></span>' : ''}${ic('right')}</a>`).join('')}
         <button data-act="edit-tabs">${ic('edit')}<span class="grow">Edit tab bar</span>${ic('right')}</button>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
@@ -464,7 +463,7 @@ VIEWS.more = {
 };
 
 // ============================================================ PRIVACY & TERMS
-const LEGAL_DATE = '3 November 2026';
+const LEGAL_DATE = '6 November 2026';
 function operatorLine() {
   const o = (S.info && S.info.operator) || {};
   if (o.name) return `${esc(o.name)}${o.address ? ', ' + esc(o.address) : ''}${o.email ? ` — <a href="mailto:${esc(o.email)}">${esc(o.email)}</a>` : ''}`;
@@ -478,15 +477,15 @@ function legalHtml(kind) {
   const op = operatorLine();
   if (kind === 'terms') return `<article class="legal">
     <h1>Terms of use</h1><p class="updated">Last updated ${LEGAL_DATE}</p>
-    <p>These terms cover your use of Crewdesk, a project, job and team-communication app run by ${op} (“we”).</p>
+    <p>These terms cover your use of Crewdesk, a project, timesheet and team-communication app run by ${op} (“we”).</p>
     <h2>The service</h2>
     <p>Crewdesk is currently offered free of charge. It may change, have downtime, or lose data, so keep your own copies of anything critical. Because nothing is paid for, there are no charges to refund. If paid plans are added later, prices and a refund policy will be shown before you pay.</p>
     <h2>Your account</h2>
     <ul><li>Use your real name and an email address you control, and keep your password private.</li>
     <li>You’re responsible for what happens under your account.</li>
-    <li>Company owners and admins control their company: they can change settings, see every project and job, invite and remove members, and delete the company and its content.</li></ul>
+    <li>Company owners and admins control their company: they can change settings, see every project and everyone’s time, invite and remove members, and delete the company and its content.</li></ul>
     <h2>What you put in Crewdesk</h2>
-    <ul><li>You keep ownership of your photos, files, messages and job details. You let us store them and show them to the people your company allows to see them, so the app can work.</li>
+    <ul><li>You keep ownership of your photos, files, messages and work details. You let us store them and show them to the people your company allows to see them, so the app can work.</li>
     <li>Only upload photos and documents you have the right to share, and don’t photograph people without their permission.</li>
     <li>If you add customer details, make sure you’re allowed to use them for the work.</li>
     <li>Don’t use Crewdesk for anything illegal or abusive, or to harass anyone, and don’t try to break, overload or get around its security.</li></ul>
@@ -506,7 +505,8 @@ function legalHtml(kind) {
     <h2>What we collect</h2>
     <ul><li><b>Account:</b> your name, email address and password. The password is stored only as a scrypt hash, which can’t be turned back into the password.</li>
     <li><b>Profile (optional):</b> phone number, job title, department, a short bio and a profile picture.</li>
-    <li><b>Your work:</b> projects, jobs, tasks, calendar events, photos, documents, messages, pings, and any customer details your company adds. Admins can also keep financial records in Spreadsheets.</li>
+    <li><b>Your work:</b> projects, tasks, calendar events, photos, documents, messages, pings, and any customer details your company adds. Admins can also keep financial records in Spreadsheets.</li>
+    <li><b>Your working time:</b> the times you start and stop work, what type of work it was, which project and task it was for, any notes you add, your end-of-day notes (what went well, what went wrong, what could improve), overtime approvals, and suggestions or questions you send to your admins. These make up your timesheets.</li>
     <li><b>Live location (optional, off by default):</b> only if you switch on location sharing, and only while Crewdesk is open on your device.</li>
     <li><b>Security records:</b> sign-ins, failed sign-ins, lockouts and password changes, with the email address and IP address involved, to protect accounts from attacks.</li>
     <li><b>Technical:</b> when you were last online, and a list of your signed-in devices (browser type and IP address).</li></ul>
@@ -514,13 +514,15 @@ function legalHtml(kind) {
     <h2>Why we use it</h2>
     <ul><li>To run the app for you and your company — this is necessary to provide the service you signed up for.</li>
     <li>To keep accounts secure and stop misuse — this is in our legitimate interests.</li>
+    <li>Your company uses your working time to produce timesheets and pay overtime, and to see how projects are going against their plan.</li>
     <li>Live location is used only because you chose to switch it on (your consent), which you can withdraw at any time.</li></ul>
     <h2>Who can see it</h2>
     <ul><li>People in the same company see your name, profile picture, title and department. Your phone number and email are shown to them unless you hide them in your settings.</li>
-    <li>Projects, jobs and events can be limited to selected people; otherwise everyone in the company can see them. Owners and admins can see all projects and jobs. Direct messages and group chats can only be read by the people in them.</li>
+    <li>Projects and events can be limited to selected people; otherwise everyone in the company can see them. Owners and admins can see all projects. Direct messages and group chats can only be read by the people in them.</li>
+    <li><b>Your time:</b> owners and admins can see all of your time entries, timesheets, end-of-day notes and suggestions, and approve your overtime. People who can see a project can see who logged time on it, when, and the notes on that time. Time not on a project (lunch, holiday, absence and so on) and your end-of-day notes are only seen by you and the admins.</li>
     <li>Pings are visible to everyone in the company. The person who posted a ping, and admins, can see how many people have read it.</li>
     <li>Uploaded photos and documents can only be opened by signed-in people who are allowed to see the item they’re attached to.</li>
-    <li><b>Company profiles</b> are private by default. If an owner or admin makes one public, its name, picture, banner, description, trade, area, website and member count can be found by anyone signed in to Crewdesk. A company’s jobs, chats, files and member list are never public.</li>
+    <li><b>Company profiles</b> are private by default. If an owner or admin makes one public, its name, picture, banner, description, trade, area, website and member count can be found by anyone signed in to Crewdesk. A company’s projects, chats, files, timesheets and member list are never public.</li>
     <li>If you ask to join a company, its owners and admins see your name, email address, profile picture and any message you add.</li>
     <li>Your profile is only visible to people in your companies, unless you choose to let people outside them see it. If you do, anyone signed in to Crewdesk can see your name, picture, job title, department, bio and public companies — never your phone number, email address, location or when you’re online.</li>
     <li>Your profile can show which companies you’re in: public ones to people who can see your profile, private ones only to people who are in them too. You can turn this off in your settings.</li></ul>
@@ -528,6 +530,7 @@ function legalHtml(kind) {
     <ul><li><b>Hosting:</b> Render (web hosting) and Neon (database), both in the EU (Frankfurt), store data for us under contract.</li>
     <li><b>Email:</b> confirmation, password-reset, security and invite emails are sent through our email provider (Brevo or Resend), which processes your email address to deliver them.</li>
     <li><b>Password breach check:</b> when you choose a password, we send the first 5 characters of its SHA-1 hash to the Have I Been Pwned service. The password itself never leaves our server and can’t be worked out from what’s sent.</li>
+    <li><b>Google Drive (only if your company turns it on):</b> an admin can connect the company’s Google Drive so timesheets are copied into a folder there automatically. Google then stores those timesheets under the company’s own Google account and terms.</li>
     <li><b>Maps:</b> the team map loads map data from OpenFreeMap (or OpenStreetMap as a backup), which sees your IP address and this site’s address. “Directions” opens Google Maps, whose own privacy policy applies.</li></ul>
     <h2>Cookies and storage</h2>
     <p>Crewdesk uses one cookie: a sign-in cookie that keeps you signed in. It’s strictly necessary, can’t be read by scripts, and isn’t used for tracking, so no cookie banner is needed. Your browser also remembers your chosen company, theme and list filters on your device. Signing out removes the sign-in.</p>
@@ -536,6 +539,7 @@ function legalHtml(kind) {
     <li>Accounts that never confirm their email are deleted after 7 days.</li>
     <li>Live positions are deleted when you turn sharing off, and automatically after 12 hours.</li>
     <li>Your notification list keeps the latest 200 items. Security records keep the latest 1,500 events across the service.</li>
+    <li>Time entries, timesheets and day notes are kept as your company’s payroll records while the company uses Crewdesk, including after you leave the company.</li>
     <li>Daily backups of the database are kept for 14 days, then deleted.</li>
     <li>If you delete your account, your profile, picture, sign-ins and location are deleted. Messages, photos and pings you posted stay part of your company’s records, shown as from a “Former member”, unless the company deletes them. Deleting a company deletes all of its data (backups expire within 14 days).</li></ul>
     <h2>Security</h2>

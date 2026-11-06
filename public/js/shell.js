@@ -35,9 +35,14 @@ async function loadCompany(keepView = false) {
   let st;
   try { st = await capi('GET', '/state'); }
   catch (e) { if (e.status === 401) return; toast(e.message, true); S.cid = null; store.set('cd_cid', null); return boot(); }
-  Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, jobs: st.jobs, tasks: st.tasks, clients: st.clients, pings: st.pings,
-    photos: st.photos, projects: st.projects, events: st.events, finance: st.finance, chats: st.chats, invites: st.invites || [], favs: st.favs || { jobs: [], projects: [] },
-    inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg });
+  Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, tasks: st.tasks, clients: st.clients, pings: st.pings,
+    photos: st.photos, projects: st.projects, events: st.events, finance: st.finance, chats: st.chats, invites: st.invites || [], favs: st.favs || { projects: [] },
+    inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg, suggestions: st.suggestions || {}, gdrive: st.gdrive || null });
+  // Time: keep older months already fetched, and replace the recent ones with what the server just sent.
+  if (!keepView) { S.entries = {}; S.days = {}; S.loaded = {}; }
+  const cut = Date.now() - 62 * 864e5;
+  for (const [k, e] of Object.entries(S.entries)) if (!e.end || e.start >= cut) delete S.entries[k];
+  Object.assign(S.entries, st.entries || {}); Object.assign(S.days, st.days || {});
   if (!keepView) { S.msgs = {}; S.msgsMore = {}; }
   S.members = Object.fromEntries(st.members.map((m) => [m.id, m]));
   const mine = S.companies.find((c) => c.id === S.cid); if (mine) { mine.name = st.company.name; mine.role = st.role; }
@@ -56,21 +61,22 @@ function signOutLocal(msg) {
 }
 
 // ============================================================ frame
-const SIDE_NAV = [['home', 'Home', 'home'], ['projects', 'Projects', 'folder'], ['jobs', 'Jobs', 'jobs'], ['calendar', 'Calendar', 'cal'], ['chat', 'Chat', 'chat'],
-  ['pings', 'Pings', 'ping'], ['team', 'Team & map', 'team'], ['clients', 'Clients', 'contacts']];
+const SIDE_NAV = [['home', 'Home', 'home'], ['projects', 'Projects', 'folder'], ['timesheet', 'My timesheet', 'timesheet'], ['calendar', 'Calendar', 'cal'], ['chat', 'Chat', 'chat'],
+  ['pings', 'Pings', 'ping'], ['team', 'Team & map', 'team'], ['clients', 'Clients', 'contacts'], ['suggest', 'Suggestions', 'bulb']];
 // Everything that can go in the phone's bottom tab bar; people choose up to four, and the rest live under More.
-const TAB_ITEMS = { home: ['Home', 'home'], projects: ['Projects', 'folder'], jobs: ['Jobs', 'jobs'], calendar: ['Calendar', 'cal'], chat: ['Chat', 'chat'],
-  pings: ['Pings', 'ping'], team: ['Team', 'team'], clients: ['Clients', 'contacts'], sheets: ['Sheets', 'sheet'] };
-const DEFAULT_TABS = ['home', 'projects', 'chat', 'pings'];
-const tabAllowed = (k) => !!TAB_ITEMS[k] && (k !== 'sheets' || isAdmin());
+const TAB_ITEMS = { home: ['Home', 'home'], projects: ['Projects', 'folder'], timesheet: ['Timesheet', 'timesheet'], calendar: ['Calendar', 'cal'], chat: ['Chat', 'chat'],
+  pings: ['Pings', 'ping'], team: ['Team', 'team'], clients: ['Clients', 'contacts'], suggest: ['Suggest', 'bulb'], admin: ['Admin', 'admin'], sheets: ['Sheets', 'sheet'] };
+const defaultTabs = () => (isAdmin() ? ['home', 'projects', 'admin', 'chat'] : ['home', 'projects', 'timesheet', 'chat']);
+const DEFAULT_TABS = ['home', 'projects', 'timesheet', 'chat'];
+const tabAllowed = (k) => !!TAB_ITEMS[k] && ((k !== 'sheets' && k !== 'admin') || isAdmin());
 function myTabs() {
-  const t = (S.user && S.user.prefs && Array.isArray(S.user.prefs.tabs) ? S.user.prefs.tabs : DEFAULT_TABS).filter(tabAllowed).slice(0, 4);
-  return t.length ? t : DEFAULT_TABS;
+  const t = (S.user && S.user.prefs && Array.isArray(S.user.prefs.tabs) ? S.user.prefs.tabs : defaultTabs()).filter(tabAllowed).slice(0, 4);
+  return t.length ? t : defaultTabs();
 }
 const moreTabs = () => Object.keys(TAB_ITEMS).filter((k) => tabAllowed(k) && !myTabs().includes(k));
 const bottomNav = () => myTabs().map((k) => [k, TAB_ITEMS[k][0], TAB_ITEMS[k][1]]).concat([['more', 'More', 'more']]);
 function navLink([k, l, i], extra = '') {
-  return `<a class="navbtn" data-nav="${k}" href="#/${k}" ${extra}>${ic(i)}<span>${l}</span>${k === 'chat' || k === 'pings' || k === 'more' ? `<span class="count hidden" data-badge="${k}"></span>` : ''}</a>`;
+  return `<a class="navbtn" data-nav="${k}" href="#/${k}" ${extra}>${ic(i)}<span>${l}</span>${['chat', 'pings', 'more', 'admin', 'home'].includes(k) ? `<span class="count hidden" data-badge="${k}"></span>` : ''}</a>`;
 }
 function coButton(cls = '') {
   return `<button class="co-btn ${cls}" data-act="co-menu" aria-haspopup="menu" aria-label="Company menu: ${esc(S.company.name)}">${S.company.logo ? coLogo(S.company, 30) : brand()}<span class="name ellipsis" data-co-name>${esc(S.company.name)}</span>${icSize('down', 15, 'flex:none;color:var(--muted)')}</button>`;
@@ -80,7 +86,7 @@ function renderShell() {
     <aside class="sidebar" aria-label="Main">
       ${coButton()}
       <nav class="stack tight" style="gap:1px" aria-label="Sections">${SIDE_NAV.map((n) => navLink(n)).join('')}
-      ${isAdmin() ? `<div class="label navsec">Admin</div>${navLink(['sheets', 'Spreadsheets', 'sheet'])}` : ''}
+      ${isAdmin() ? `<div class="label navsec">Admin</div>${navLink(['admin', 'Admin dashboard', 'admin'])}${navLink(['sheets', 'Spreadsheets', 'sheet'])}` : ''}
       ${navLink(['settings', 'Company settings', 'settings'])}</nav>
       <div class="grow"></div>
       <button class="navbtn" data-act="me-menu" aria-haspopup="menu" id="side-me"></button>
@@ -89,7 +95,7 @@ function renderShell() {
     <div style="min-width:0">
       <header class="topbar">
         ${coButton()}
-        <button class="searchbox" data-act="search" aria-label="Search">${ic('search')}<span>Search projects, jobs, people…</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'} K</kbd></button>
+        <button class="searchbox" data-act="search" aria-label="Search">${ic('search')}<span>Search projects, tasks, people…</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'} K</kbd></button>
         <div class="grow"></div>
         <button class="icon-btn mobile-only" data-act="search" aria-label="Search">${ic('search')}</button>
         <button class="icon-btn mobile-only" data-act="me-menu" aria-haspopup="menu" aria-label="My account" id="top-me"></button>
@@ -111,12 +117,16 @@ function updateChrome() {
   const pingN = unreadPings() + S.inbox.filter((n) => !n.read).length;
   const setBadge = (k, n) => $$(`[data-badge="${k}"]`).forEach((b) => { b.textContent = n > 99 ? '99+' : n; b.classList.toggle('hidden', !n); b.setAttribute('aria-label', `${n} unread`); });
   setBadge('chat', chatN); setBadge('pings', pingN);
+  const newSug = isAdmin() ? Object.values(S.suggestions).filter((x) => x.status === 'new' && x.createdBy !== S.user.id).length : 0;
+  setBadge('admin', newSug);
+  $$('[data-badge="home"]').forEach((b) => { const on = !!myRunning(); b.classList.toggle('hidden', !on); b.classList.toggle('rec', on); b.textContent = ''; b.setAttribute('aria-label', on ? 'Timer running' : ''); });
+  const hiddenTabs = moreTabs(); setBadge('more', hiddenTabs.includes('admin') ? newSug : 0);
   document.title = (chatN + pingN ? `(${chatN + pingN}) ` : '') + 'Crewdesk';
   const r = parseHash();
-  const map = { job: 'jobs', project: 'projects', client: 'clients', person: 'team', ping: 'pings', company: 'companies' };
+  const map = { project: 'projects', client: 'clients', person: 'team', ping: 'pings', company: 'companies' };
   let active = map[r.name] || r.name;
+  if (active === 'timesheet' && r.args[1] && r.args[1] !== S.user.id && isAdmin()) active = 'admin';
   const tabs = myTabs();
-  if (active === 'jobs' && !tabs.includes('jobs') && tabs.includes('projects')) active = 'projects';
   const inBottom = tabs.includes(active);
   $$('.navbtn').forEach((b) => {
     let on = b.dataset.nav === active;
@@ -180,7 +190,7 @@ function route(opts = {}) {
   const key = location.hash;
   const prev = current;
   const sameView = prev.key === key;
-  const tabSwitch = prev.name === 'job' && r.name === 'job' && prev.args[0] === r.args[0];
+  const tabSwitch = prev.name === 'project' && r.name === 'project' && prev.args[0] === r.args[0];
   const inkFrom = tabSwitch ? tabInk : null;
   const next = { key, name: r.name, args: r.args, v };
   const dir = navDirection(prev, next);
@@ -228,7 +238,7 @@ window.addEventListener('hashchange', () => {
   route();
 });
 const motionOK = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
-// Underline that slides between job tabs.
+// Underline that slides between tabs (on a project page).
 let tabInk = null;
 function placeTabInk(from) {
   const nav = $('#view .tabs'); if (!nav) { tabInk = null; return; }
@@ -266,15 +276,16 @@ function handleEvent(ev) {
       const isNew = !coll[ev.item.id];
       coll[ev.item.id] = ev.item;
       if (ev.coll === 'pings' && isNew && ev.item.createdBy !== S.user.id) alertUser(`New ping from ${firstName(ev.item.createdBy)}: ${ev.item.title}`, '#/ping/' + ev.item.id, ev.item.body || '', { from: ev.item.createdBy, where: 'New ping', text: ev.item.title + (ev.item.body ? ' — ' + ev.item.body : '') });
-      scheduleRender(); if (ev.coll === 'jobs') updateMap(); break;
+      if (ev.coll === 'entries' && ev.item.userId === S.user.id) syncTimerChrome();
+      scheduleRender(); if (ev.coll === 'projects') updateMap(); break;
     }
     case 'remove': {
       if (!S[ev.coll]) break;
       delete S[ev.coll][ev.id];
       const r = parseHash();
-      if (ev.coll === 'jobs') { delete S.unread['job:' + ev.id]; delete S.lastMsg['job:' + ev.id]; if ((r.name === 'job' && r.args[0] === ev.id) || (r.name === 'chat' && r.args[0] === 'job:' + ev.id)) { toast('That job was deleted or is no longer shared with you'); location.hash = '#/jobs'; } }
+      if (ev.coll === 'entries') syncTimerChrome();
       if (ev.coll === 'chats' && r.name === 'chat' && r.args[0] === 'chat:' + ev.id) { toast('You’re no longer in that chat'); location.hash = '#/chat'; }
-      if (ev.coll === 'projects' && r.name === 'project' && r.args[0] === ev.id) { toast('That project was deleted or is no longer shared with you'); location.hash = '#/projects'; }
+      if (ev.coll === 'projects') { delete S.unread['project:' + ev.id]; delete S.lastMsg['project:' + ev.id]; if ((r.name === 'project' && r.args[0] === ev.id) || (r.name === 'chat' && r.args[0] === 'project:' + ev.id)) { toast('That project was deleted or is no longer shared with you'); location.hash = '#/projects'; } }
       scheduleRender(); break;
     }
     case 'msg': onMessage(ev.item); break;
@@ -329,7 +340,7 @@ function openSearch() {
   if ($('.search-pop')) return;
   const el = document.createElement('div');
   el.className = 'search-pop';
-  el.innerHTML = `<div class="search-panel" role="dialog" aria-modal="true" aria-label="Search"><div class="q">${ic('search')}<input type="search" placeholder="Search projects, jobs, people, clients, pings…" aria-label="Search" autocomplete="off"><button class="btn ghost sm" data-sclose>Esc</button></div><div class="search-results" role="listbox"></div></div>`;
+  el.innerHTML = `<div class="search-panel" role="dialog" aria-modal="true" aria-label="Search"><div class="q">${ic('search')}<input type="search" placeholder="Search projects, tasks, people, clients, pings…" aria-label="Search" autocomplete="off"><button class="btn ghost sm" data-sclose>Esc</button></div><div class="search-results" role="listbox"></div></div>`;
   document.body.appendChild(el);
   const inp = $('input', el), out = $('.search-results', el);
   let sel = 0, results = [];
@@ -360,8 +371,8 @@ function searchAll(q) {
   const has = (...v) => v.join(' ').toLowerCase().includes(q);
   const out = [];
   const add = (group, icon, title, sub, link) => out.push({ group, icon: ic(icon), title, sub, link });
-  Object.values(S.projects).filter((p) => has(p.name, p.description)).slice(0, 6).forEach((p) => add('Projects', 'folder', p.name, p.archived ? 'Archived' : (p.description || '').slice(0, 80), '#/project/' + p.id));
-  Object.values(S.jobs).filter((j) => has(j.title, j.ref, j.address, j.description, (S.clients[j.clientId] || {}).name)).slice(0, 8).forEach((j) => add('Jobs', 'jobs', j.title, `${j.ref} · ${STATUS[j.status]}${j.address ? ' · ' + j.address : ''}`, '#/job/' + j.id));
+  Object.values(S.projects).filter((p) => has(p.name, p.ref, p.address, p.description, (S.clients[p.clientId] || {}).name)).slice(0, 8).forEach((p) => add('Projects', 'folder', projLabel(p), p.archived ? 'Archived' : [p.address, (p.description || '').slice(0, 60)].filter(Boolean).join(' · '), '#/project/' + p.id));
+  Object.values(S.tasks).filter((t) => S.projects[t.projectId] && has(t.title, t.notes)).slice(0, 8).forEach((t) => add('Tasks', 'list', t.title, `${S.projects[t.projectId].name}${t.done ? ' · Done' : ''}`, '#/project/' + t.projectId));
   Object.values(S.members).filter((m) => has(m.name, m.title, m.dept, m.email)).slice(0, 6).forEach((m) => add('People', 'user', m.name, [m.title, m.dept].filter(Boolean).join(' · '), '#/person/' + m.id));
   Object.values(S.clients).filter((c) => has(c.name, c.company, c.phone, c.email, c.address)).slice(0, 5).forEach((c) => add('Clients', 'contacts', c.name, [c.company, c.phone].filter(Boolean).join(' · '), '#/client/' + c.id));
   Object.values(S.pings).filter((p) => has(p.title, p.body)).slice(0, 5).forEach((p) => add('Pings', 'ping', p.title, `${member(p.createdBy).name} · ${fmtDateTime(p.createdAt)}`, '#/ping/' + p.id));
@@ -416,4 +427,4 @@ function enableSharing(on, inputEl) {
   }, (err) => fail(err.code === 1 ? 'Location permission was denied' : 'Could not get your location'), { enableHighAccuracy: true, timeout: 20000 });
 }
 function applyTheme() { const t = store.get('cd_theme'); if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
-setInterval(() => { if (S.company && ['home', 'team', 'chat', 'pings'].includes(parseHash().name)) scheduleRender(); }, 60000);
+setInterval(() => { if (S.company && ['home', 'team', 'chat', 'pings', 'project', 'admin', 'timesheet'].includes(parseHash().name)) scheduleRender(); }, 30000);
