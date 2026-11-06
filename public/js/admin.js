@@ -595,25 +595,35 @@ const TUTORIALS = [
 ];
 const tutWide = () => matchMedia('(min-width: 900px)').matches;
 const tutSrc = (v) => (tutWide() ? '/tutorials/desk/' : '/tutorials/') + v;
+const TUT_ALL = () => [['Crewdesk in a minute', 'promo', ['A quick tour of everything Crewdesk does.']]].concat(TUTORIALS);
 VIEWS.tutorials = {
   manual: true,
   render() {
-    const all = [['Crewdesk in a minute', 'promo', ['A quick tour of everything Crewdesk does.']]].concat(TUTORIALS.map(([t, v, st]) => [t, v, st]));
+    const all = TUT_ALL();
     return `<a class="back" href="#/more">${ic('back')}Back</a>
-    <div class="page-head"><div><h1>Tutorials</h1><div class="sub">${all.length} short videos, in order. Each one plays on to the next.</div></div></div>
-    <ol class="tut-list">${all.map(([t, v, steps], i) => `<li class="card tut" id="tut-${i}">
-      <div class="tut-head"><span class="tut-num">${i + 1}</span><b class="grow">${esc(t)}</b></div>
-      <video class="tut-vid${tutWide() ? ' wide' : ''}" data-tut="${i}" src="${tutSrc(v)}.mp4" poster="${tutSrc(v)}.jpg" controls playsinline webkit-playsinline preload="none" aria-label="${esc(t)}"></video>
-      <details class="tut-written"><summary>Written guide</summary><ol class="tut-steps">${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></details></li>`).join('')}</ol>`;
-  },
-  mount() {
-    const vids = $$('video[data-tut]');
-    vids.forEach((v, i) => {
-      v.addEventListener('play', () => vids.forEach((o) => { if (o !== v && !o.paused) o.pause(); }));
-      v.addEventListener('ended', () => { const n = vids[i + 1]; if (!n) return; n.closest('.tut').scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => n.play().catch(() => {}), 500); });
-    });
+    <div class="page-head"><div><h1>Tutorials</h1><div class="sub">${all.length} short videos. Tap one to watch — it plays on to the next.</div></div></div>
+    <div class="tut-grid">${all.map(([t, v], i) => `<button class="tut-tile ${i === 0 ? 'hero' : ''}" data-act="tut-open" data-i="${i}" style="--d:${i * 35}ms">
+      <span class="tut-thumb"><img src="${tutSrc(v)}.jpg" alt="" loading="lazy"><span class="tut-play">${icSize('play', 18)}</span><span class="tut-n">${i + 1}</span></span>
+      <span class="tut-label">${esc(t)}</span></button>`).join('')}</div>`;
   },
 };
+// The player: the video, its written guide underneath, and Previous / Next. Plays on to the next one.
+A['tut-open'] = (el) => tutPlay(Number(el.dataset.i));
+function tutPlay(i) {
+  const all = TUT_ALL(); const [t, v, steps] = all[i]; const old = $('.tut-player');
+  const html = `<div class="tut-pbar"><button class="mh-ib" data-act="tut-close" aria-label="Close">${icSize('x', 20)}</button><b class="grow ellipsis">${i + 1}. ${esc(t)}</b>
+      <button class="mh-ib" data-act="tut-step" data-d="-1" ${i ? '' : 'disabled'} aria-label="Previous">${icSize('left', 18)}</button><button class="mh-ib" data-act="tut-step" data-d="1" ${i < all.length - 1 ? '' : 'disabled'} aria-label="Next">${icSize('right', 18)}</button></div>
+    <div class="tut-pbody"><video class="tut-pvid ${tutWide() ? 'wide' : ''}" src="${tutSrc(v)}.mp4" poster="${tutSrc(v)}.jpg" controls playsinline webkit-playsinline autoplay aria-label="${esc(t)}"></video>
+      <details class="tut-written" ${tutWide() ? 'open' : ''}><summary>Written guide</summary><ol class="tut-steps">${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></details></div>`;
+  let p = old; if (!p) { p = document.createElement('div'); p.className = 'tut-player'; p.setAttribute('role', 'dialog'); p.setAttribute('aria-modal', 'true'); document.body.appendChild(p);
+    p._key = (e) => { if (e.key === 'Escape') A['tut-close'](); }; document.addEventListener('keydown', p._key); }
+  p.dataset.i = i; p.innerHTML = html;
+  const vid = p.querySelector('video'); vid.play().catch(() => {});
+  vid.addEventListener('ended', () => { if (i < all.length - 1) setTimeout(() => { if (p.isConnected && Number(p.dataset.i) === i) tutPlay(i + 1); }, 700); });
+}
+A['tut-step'] = (el) => { const p = $('.tut-player'); if (p) tutPlay(Number(p.dataset.i) + Number(el.dataset.d)); };
+A['tut-close'] = () => { const p = $('.tut-player'); if (!p) return; document.removeEventListener('keydown', p._key); const v = p.querySelector('video'); if (v) v.pause(); if (motionOK()) leave(p); else p.remove(); };
+window.addEventListener('hashchange', () => A['tut-close']());
 
 
 // A private practice company: you're the owner, everyone else is fake (they can't sign in and are never emailed).

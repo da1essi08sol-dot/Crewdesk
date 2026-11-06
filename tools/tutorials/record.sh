@@ -18,9 +18,9 @@ done; done
 pkill -f crewdesk-tutorials 2>/dev/null || true
 mkdir -p "$APP/public/tutorials/desk"
 for s in $LIST; do
-  ffmpeg -loglevel error -y -ss 1.3 -i "$W/raw/$s.webm" -vf fps=30 -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p -movflags +faststart -an "$APP/public/tutorials/$s.mp4"
-  ffmpeg -loglevel error -y -i "$APP/public/tutorials/$s.mp4" -vf "select=eq(n\,30)" -frames:v 1 -q:v 4 "$APP/public/tutorials/$s.jpg"
+  ffmpeg -loglevel error -y -ss 1.3 -i "$W/raw/$s.webm" -vf "crop=390:664:0:0,fps=30" -c:v libx264 -preset veryfast -crf 26 -pix_fmt yuv420p -movflags +faststart -an "$APP/public/tutorials/$s.mp4"
+  ffmpeg -loglevel error -y -i "$APP/public/tutorials/$s.mp4" -ss 6 -frames:v 1 -q:v 4 "$APP/public/tutorials/$s.jpg"
   ffmpeg -loglevel error -y -ss 1.3 -i "$W/raw/$s-desk.webm" -vf fps=30 -c:v libx264 -preset veryfast -crf 30 -pix_fmt yuv420p -movflags +faststart -an "$APP/public/tutorials/desk/$s.mp4"
-  ffmpeg -loglevel error -y -i "$APP/public/tutorials/desk/$s.mp4" -vf "select=eq(n\,30)" -frames:v 1 -q:v 5 "$APP/public/tutorials/desk/$s.jpg"
+  ffmpeg -loglevel error -y -i "$APP/public/tutorials/desk/$s.mp4" -ss 6 -frames:v 1 -vf scale=640:-2 -q:v 4 "$APP/public/tutorials/desk/$s.jpg"
   echo "encoded $s"
 done

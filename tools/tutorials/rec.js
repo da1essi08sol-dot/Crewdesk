@@ -13,8 +13,8 @@ const CSS = `#tut-cap{position:fixed;left:14px;right:14px;bottom:96px;z-index:99
 async function setup(name, desktop) {
   desktop = desktop || process.env.DESK === '1'; const outName = desktop ? name + '-desk' : name;
   const browser = await chromium.launch();
-  const size = desktop ? { width: 1280, height: 720 } : { width: 390, height: 844 };
-  const ctx = await browser.newContext(Object.assign({}, desktop ? { viewport: size } : devices['iPhone 13'], { deviceScaleFactor: desktop ? 1 : 2, recordVideo: { dir: OUT + '/' + outName, size: desktop ? size : { width: 390, height: 844 } } }));
+  const size = desktop ? { width: 1280, height: 720 } : { width: 390, height: 664 };
+  const ctx = await browser.newContext(Object.assign({}, desktop ? { viewport: size } : devices['iPhone 13'], { deviceScaleFactor: desktop ? 1 : 2, recordVideo: { dir: OUT + '/' + outName, size: desktop ? size : { width: 390, height: 664 } } }));
   const page = await ctx.newPage(); page.on('pageerror', (e) => console.log('ERR', e.message));
   await ctx.grantPermissions(['geolocation']); await ctx.setGeolocation({ latitude: 54.77612, longitude: -1.58455, accuracy: 4 });
   // mock aerial imagery (this machine can't reach real map servers)

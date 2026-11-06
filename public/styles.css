@@ -1722,3 +1722,26 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 @keyframes msg-out { to { opacity: 0; transform: scale(.9); max-height: 0; margin: 0; } }
 .msgs .bubble { -webkit-touch-callout: none; }
 .mi.danger { color: var(--red); }
+
+/* ---- tutorials: grid of tiles, and a player */
+.tut-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 640px) { .tut-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .tut-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.tut-tile { display: flex; flex-direction: column; gap: 8px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; color: var(--ink); animation: rise .45s var(--spring) both; animation-delay: var(--d, 0ms); }
+.tut-tile.hero { grid-column: 1 / -1; }
+.tut-thumb { position: relative; display: block; border-radius: 16px; overflow: hidden; background: #0f4f2f; aspect-ratio: 16 / 10; box-shadow: 0 2px 10px rgba(0,0,0,.12); transition: transform .35s var(--spring), box-shadow .3s; }
+.tut-tile.hero .tut-thumb { aspect-ratio: 16 / 8; }
+.tut-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.tut-tile:hover .tut-thumb { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(0,0,0,.18); } .tut-tile:active .tut-thumb { transform: scale(.97); }
+.tut-play { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; background: rgba(255,255,255,.92); color: #0f4f2f; display: grid; place-items: center; box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+.tut-play svg { margin-left: 3px; }
+.tut-n { position: absolute; left: 8px; top: 8px; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px; background: rgba(0,0,0,.6); color: #fff; font: 700 12px/24px var(--font); text-align: center; }
+.tut-label { font-weight: 650; font-size: 14px; line-height: 1.3; padding: 0 2px; }
+.tut-player { position: fixed; inset: 0; z-index: 240; background: var(--bg); display: flex; flex-direction: column; animation: sheet-up .45s var(--spring); }
+.tut-player.leaving { animation: sheet-down .25s var(--ease-out) forwards; }
+.tut-pbar { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-t)) 10px 8px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.tut-pbar .mh-ib[disabled] { opacity: .35; }
+.tut-pbody { flex: 1; overflow-y: auto; padding: 14px; display: grid; gap: 14px; align-content: start; justify-items: center; }
+.tut-pvid { width: 100%; max-width: 420px; max-height: calc(100dvh - 150px); aspect-ratio: 390 / 664; border-radius: 16px; background: #000; }
+.tut-pvid.wide { max-width: 1000px; aspect-ratio: 16 / 9; }
+.tut-player .tut-written { width: 100%; max-width: 1000px; }
