@@ -358,18 +358,18 @@ function openSearch() {
     if (!results.length) { out.innerHTML = `<div class="empty small">Nothing found for “${esc(inp.value)}”.</div>`; return; }
     sel = Math.min(sel, results.length - 1);
     let grp = '';
-    out.innerHTML = results.map((r, i) => { const g = r.group !== grp ? `<div class="grp label">${esc(r.group)}</div>` : ''; grp = r.group; return `${g}<a class="res ${i === sel ? 'sel' : ''}" href="${esc(r.link)}" role="option" aria-selected="${i === sel}" data-i="${i}"><span class="ic">${r.icon}</span><span class="grow"><span class="ellipsis" style="display:block;font-weight:600">${esc(r.title)}</span>${r.sub ? `<span class="ellipsis tiny muted" style="display:block">${esc(r.sub)}</span>` : ''}</span></a>`; }).join('');
+    out.innerHTML = results.map((r, i) => { const g = r.group !== grp ? `<div class="grp label">${esc(r.group)}</div>` : ''; grp = r.group; return `${g}<a class="res ${i === sel ? 'sel' : ''}" data-i="${i}" href="${esc(r.link)}" role="option" aria-selected="${i === sel}" data-i="${i}"><span class="ic">${r.icon}</span><span class="grow"><span class="ellipsis" style="display:block;font-weight:600">${esc(r.title)}</span>${r.sub ? `<span class="ellipsis tiny muted" style="display:block">${esc(r.sub)}</span>` : ''}</span></a>`; }).join('');
   };
   const onKey = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); close(); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(results.length - 1, sel + 1); paint(); $('.res.sel', out) && $('.res.sel', out).scrollIntoView({ block: 'nearest' }); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); paint(); $('.res.sel', out) && $('.res.sel', out).scrollIntoView({ block: 'nearest' }); }
-    else if (e.key === 'Enter' && results[sel]) { e.preventDefault(); location.hash = results[sel].link; close(); }
+    else if (e.key === 'Enter' && results[sel]) { e.preventDefault(); if (results[sel].pre) results[sel].pre(); location.hash = results[sel].link; close(); }
   };
   document.addEventListener('keydown', onKey, true);
   inp.addEventListener('input', () => { sel = 0; paint(); });
   el.addEventListener('mousedown', (e) => { if (e.target === el) close(); });
-  el.addEventListener('click', (e) => { if (e.target.closest('.res') || e.target.closest('[data-sclose]')) close(); });
+  el.addEventListener('click', (e) => { const r = e.target.closest('.res'); if (r && results[r.dataset.i] && results[r.dataset.i].pre) results[r.dataset.i].pre(); if (r || e.target.closest('[data-sclose]')) close(); });
   paint(); inp.focus();
 }
 function searchAll(q) {
@@ -377,6 +377,18 @@ function searchAll(q) {
   const has = (...v) => v.join(' ').toLowerCase().includes(q);
   const out = [];
   const add = (group, icon, title, sub, link) => out.push({ group, icon: ic(icon), title, sub, link });
+  // Parts of the app ("tutorials", "timesheet", "settings"…), matched on name and everyday words for them.
+  const PAGES = [['Home', 'home', '#/home', 'timer start stop clock log time today finish day lunch'], ['Projects', 'folder', '#/projects', 'jobs job numbers tasks sites'],
+    ['Archived projects', 'archive', '#/projects', 'archive old finished jobs folders clear pdf report', () => { S.projFilter = 'archived'; }], ['Calendar', 'cal', '#/calendar', 'events diary schedule site visits gateshead warrington calendars'],
+    ['Chat', 'chat', '#/chat', 'messages group dm talk'], ['Pings', 'ping', '#/pings', 'announcements notices'], ['My timesheet', 'timesheet', '#/timesheet', 'hours overtime holiday xlsx download upload month year review'],
+    ['Team & map', 'team', '#/team', 'people staff colleagues map locations'], ['Clients', 'contacts', '#/clients', 'customers contacts'], ['Suggestions', 'bulb', '#/suggest', 'ideas bugs hr question feedback'],
+    ['Tutorials', 'play', '#/tutorials', 'help videos guide how to learn tour promo'], ['My settings', 'user', '#/profile', 'profile photo name theme dark light tabs password notifications'],
+    ['Spreadsheets', 'sheet', '#/sheets', 'finance money invoices excel'], ['Privacy', 'lock', '#/privacy', 'data policy'], ['Terms', 'help', '#/terms', 'conditions']];
+  if (isAdmin()) PAGES.push(['Admin dashboard', 'admin', '#/admin', 'working now people overview'], ['Timesheets (admin)', 'timesheet', '#/admin/timesheets', 'everyone zip incomplete google drive'],
+    ['Timesheet archive', 'archive', '#/admin/timesheets/archive', 'completed months years folders'], ['Company settings', 'settings', '#/settings', 'invite working day hours permissions logo']);
+  PAGES.filter(([t, , , k]) => has(t, k)).slice(0, 6).forEach(([t, i, l, , pre]) => { add('Go to', i, t, '', l); if (pre) out[out.length - 1].pre = pre; });
+  if (['tutorial', 'video', 'help', 'guide', 'how to'].some((w) => q.includes(w) || (q.length > 2 && w.startsWith(q)))) (typeof TUTORIALS !== 'undefined' ? TUTORIALS : []).forEach(([t]) => add('Tutorials', 'play', t, 'Video and written guide', '#/tutorials'));
+  else (typeof TUTORIALS !== 'undefined' ? TUTORIALS : []).filter(([t]) => has(t)).slice(0, 3).forEach(([t]) => add('Tutorials', 'play', t, 'Video and written guide', '#/tutorials'));
   Object.values(S.projects).filter((p) => has(p.name, p.ref, p.address, p.description, (S.clients[p.clientId] || {}).name)).slice(0, 8).forEach((p) => add('Projects', 'folder', projLabel(p), p.archived ? 'Archived' : [p.address, (p.description || '').slice(0, 60)].filter(Boolean).join(' · '), '#/project/' + p.id));
   Object.values(S.tasks).filter((t) => S.projects[t.projectId] && has(t.title, t.notes)).slice(0, 8).forEach((t) => add('Tasks', 'list', t.title, `${S.projects[t.projectId].name}${t.done ? ' · Done' : ''}`, '#/project/' + t.projectId));
   Object.values(S.members).filter((m) => has(m.name, m.title, m.dept, m.email)).slice(0, 6).forEach((m) => add('People', 'user', m.name, [m.title, m.dept].filter(Boolean).join(' · '), '#/person/' + m.id));
