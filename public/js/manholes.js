@@ -183,18 +183,19 @@ function mhGoogle(el, view) {
     const B = (a, label, svg) => `<button type="button" data-cam="${a}" aria-label="${label}" title="${label}">${svg}</button>`;
     pad.innerHTML = B('in', 'Closer', '+') + B('out', 'Further', '−') + B('left', 'Turn left', '⟲') + B('right', 'Turn right', '⟳') + B('up', 'Tilt up', '⤒') + B('down', 'Look down', '⤓') + B('orbit', 'Fly around', '◎') + B('north', 'Face north', 'N');
     el.appendChild(pad);
+    let orbitT = 0;
     const cam = (k) => {
-      if (!m3) return; m3.stopCameraAnimation && m3.stopCameraAnimation();
-      const cp = { center: m3.center, range: m3.range, tilt: m3.tilt, heading: m3.heading || 0 };
-      if (k === 'in') cp.range = Math.max(2, cp.range * 0.6); if (k === 'out') cp.range = Math.min(20000, cp.range / 0.6);
-      if (k === 'left') cp.heading = (cp.heading - 30 + 360) % 360; if (k === 'right') cp.heading = (cp.heading + 30) % 360;
-      if (k === 'up') cp.tilt = Math.min(90, cp.tilt + 12); if (k === 'down') cp.tilt = Math.max(0, cp.tilt - 12);
-      if (k === 'north') cp.heading = 0;
-      if (k === 'orbit') return m3.flyCameraAround({ camera: cp, durationMillis: 16000, repeatCount: 1 });
-      m3.flyCameraTo({ endCamera: cp, durationMillis: 450 });
+      if (!m3) return;
+      if (k === 'orbit') { if (orbitT) { clearInterval(orbitT); orbitT = 0; return; } orbitT = setInterval(() => { if (!m3) return clearInterval(orbitT); m3.heading = ((m3.heading || 0) + 0.6) % 360; }, 30); return; }
+      if (orbitT) { clearInterval(orbitT); orbitT = 0; }
+      if (k === 'in') m3.range = Math.max(3, m3.range * 0.85); if (k === 'out') m3.range = Math.min(20000, m3.range / 0.85);
+      if (k === 'left') m3.heading = ((m3.heading || 0) - 6 + 360) % 360; if (k === 'right') m3.heading = ((m3.heading || 0) + 6) % 360;
+      if (k === 'up') m3.tilt = Math.min(90, (m3.tilt || 0) + 4); if (k === 'down') m3.tilt = Math.max(0, (m3.tilt || 0) - 4);
+      if (k === 'north') m3.heading = 0;
     };
     let hold = 0;
-    pad.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-cam]'); if (!b) return; e.preventDefault(); const k = b.dataset.cam; cam(k); if (k !== 'orbit' && k !== 'north') { clearInterval(hold); hold = setInterval(() => cam(k), 380); } });
+    pad.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-cam]'); if (!b) return; e.preventDefault(); const k = b.dataset.cam; cam(k); clearInterval(hold); if (k !== 'orbit' && k !== 'north') hold = setInterval(() => cam(k), 60); });
+    m3.addEventListener('pointerdown', () => { if (orbitT) { clearInterval(orbitT); orbitT = 0; } });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => pad.addEventListener(ev, () => clearInterval(hold)));
     lib3 = lib; try { pinLib = await g.importLibrary('marker'); } catch (_) {}
     sync3d();
