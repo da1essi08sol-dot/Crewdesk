@@ -2198,9 +2198,14 @@ async function mhStaticMap(list, mp) {
   const jpeg = async (u) => { try { const r = await fetch(u); if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null; return { data: Buffer.from(await r.arrayBuffer()), w: 1280, h: 1280, c, z }; } catch (_) { return null; } };
   let img = null;
   if (STATIC_KEY && !overFree('gStatic')) { countUse('gStatic'); img = await jpeg(`https://maps.googleapis.com/maps/api/staticmap?center=${c.lat},${c.lng}&zoom=${z}&size=640x640&scale=2&maptype=satellite&format=jpg&key=${encodeURIComponent(STATIC_KEY)}`); if (img) img.src = 'Google'; }
-  if (!img) { // free Esri imagery of exactly the same square (Web Mercator)
-    const C = merc(c.lat, c.lng, z), w = 40075016.68557849 / (256 * 2 ** z), x = C.x * w - 20037508.342789244, y = 20037508.342789244 - C.y * w, h = 320 * w;
-    img = await jpeg(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${x - h},${y - h},${x + h},${y + h}&bboxSR=3857&imageSR=3857&size=1280,1280&format=jpg&f=image`); if (img) img.src = 'Esri, Maxar, Earthstar Geographics';
+  if (!img) { // free Esri imagery: the satellite tiles covering the same square, placed side by side in the PDF
+    const tz = Math.min(z + 1, 19), f = 2 ** (tz - z), C = merc(c.lat, c.lng, z), span = 256 / f; // tile size in zoom-z pixels
+    const x0 = Math.floor((C.x - 320) / span), x1 = Math.floor((C.x + 320) / span), y0 = Math.floor((C.y - 320) / span), y1 = Math.floor((C.y + 320) / span);
+    const jobs = []; for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) jobs.push({ tx, ty });
+    if (jobs.length <= 64) {
+      const tiles = (await Promise.all(jobs.map(async (j) => { try { const r = await fetch(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${tz}/${j.ty}/${j.tx}`); if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null; return { data: Buffer.from(await r.arrayBuffer()), px: j.tx * span, py: j.ty * span, span }; } catch (_) { return null; } }))).filter(Boolean);
+      if (tiles.length === jobs.length) img = { tiles, c, z, src: 'Esri, Maxar, Earthstar Geographics' };
+    }
   }
   return img;
 }
@@ -2208,7 +2213,7 @@ const unmerc = (x, y, z) => { const n = 256 * 2 ** z; return { lng: (x / n) * 36
 function mhDrawMap(doc, d, list, mp, bg, top, size) {
   const x0 = doc.m + (doc.inner - size) / 2, y0 = top - size;
   let proj; let zUsed; let bgC;
-  if (bg) { const C = merc(bg.c.lat, bg.c.lng, bg.z); zUsed = bg.z; bgC = { C, k: 640 / size }; proj = (r) => { const p = merc(r.lat, r.lng, bg.z); return { x: x0 + size / 2 + ((p.x - C.x) / 640) * size, y: y0 + size / 2 - ((p.y - C.y) / 640) * size }; }; doc.image(bg.data, bg.w, bg.h, x0, y0, size, size); }
+  if (bg) { const C = merc(bg.c.lat, bg.c.lng, bg.z); zUsed = bg.z; bgC = { C, k: 640 / size }; proj = (r) => { const p = merc(r.lat, r.lng, bg.z); return { x: x0 + size / 2 + ((p.x - C.x) / 640) * size, y: y0 + size / 2 - ((p.y - C.y) / 640) * size }; }; if (bg.tiles) { for (const t of bg.tiles) { const k = size / 640, w = t.span * k; doc.clipImage(t.data, 256, 256, x0, y0, size, size, x0 + size / 2 + (t.px - C.x) * k, y0 + size / 2 - (t.py - C.y) * k - w, w, w); } } else doc.image(bg.data, bg.w, bg.h, x0, y0, size, size); }
   else { const { c, z } = mhFit(list, mp, size, size); zUsed = z; const C = merc(c.lat, c.lng, z); bgC = { C, k: 1 }; doc.rect(x0, y0, size, size, '#eef3ef');
     proj = (r) => { const p = merc(r.lat, r.lng, z); return { x: x0 + size / 2 + (p.x - C.x), y: y0 + size / 2 - (p.y - C.y) }; }; }
   for (const r of list) {

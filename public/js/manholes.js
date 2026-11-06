@@ -90,7 +90,7 @@ async function mhEngine(el, view) {
 }
 function mhLibre(el, view) {
   let layer = view.layer || 'satellite';
-  const m = new maplibregl.Map({ container: el, style: esriStyle(layer), center: [view.center.lng, view.center.lat], zoom: view.zoom, maxZoom: 22, attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false });
+  const m = new maplibregl.Map({ container: el, style: esriStyle(layer), center: [view.center.lng, view.center.lat], zoom: Math.min(view.zoom, 19.4), maxZoom: 21, attributionControl: { compact: true }, dragRotate: false, pitchWithRotate: false });
   m.touchZoomRotate.disableRotation();
   m.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'bottom-right');
   // 3D buildings: free OpenStreetMap building heights (OpenFreeMap), drawn over the satellite picture.
@@ -124,7 +124,7 @@ function mhLibre(el, view) {
       const h = { set(p) { mk.setLngLat([p.lng, p.lat]); }, setDraggable(b, fn) { mk.setDraggable(!!b); opts.onDragEnd = fn; }, remove() { mk.remove(); markers.delete(id); }, el: node };
       markers.set(id, h); return h;
     },
-    flyTo(ll, z) { m.easeTo({ center: [ll.lng, ll.lat], zoom: z == null ? m.getZoom() : z, duration: 650 }); },
+    flyTo(ll, z) { m.easeTo({ center: [ll.lng, ll.lat], zoom: z == null ? m.getZoom() : Math.min(z, 19.4), duration: 650 }); },
     fit(pts) { if (!pts.length) return; const b = pts.reduce((bb, p) => bb.extend([p.lng, p.lat]), new maplibregl.LngLatBounds([pts[0].lng, pts[0].lat], [pts[0].lng, pts[0].lat])); m.fitBounds(b, { padding: 70, maxZoom: 19, duration: 600 }); },
     resize() { m.resize(); },
     destroy() { m.remove(); },
