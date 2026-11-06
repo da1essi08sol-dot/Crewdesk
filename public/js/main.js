@@ -51,13 +51,13 @@ document.addEventListener('submit', async (e) => {
 // Drag photos onto a project's photo area or a chat (computers); paste photos into a chat.
 document.addEventListener('dragover', (e) => {
   if (!S.company || !e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
-  if (e.target.closest('[data-drop], .chat-pane')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
+  if (e.target.closest('[data-drop], .chat-pane')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; const pane = e.target.closest('.chat-pane'); $$('.chat-pane.drop-on').forEach((x) => { if (x !== pane) x.classList.remove('drop-on'); }); if (pane) pane.classList.add('drop-on'); }
 });
 document.addEventListener('drop', (e) => {
   if (!S.company || !e.dataTransfer || !e.dataTransfer.files.length) return;
   const files = [...e.dataTransfer.files].filter(isImageFile);
   const pane = e.target.closest('.chat-pane');
-  if (pane) { e.preventDefault(); if (files.length) addChatPhotos(pane.dataset.ch, files); return; }
+  if (pane) { e.preventDefault(); pane.classList.remove('drop-on'); addChatAttachments(pane.dataset.ch, e.dataTransfer.files); return; }
   const r = parseHash();
   const zone = e.target.closest('[data-drop]');
   const jobId = zone ? zone.dataset.drop : r.name === 'project' ? r.args[0] : null;
@@ -65,9 +65,10 @@ document.addEventListener('drop', (e) => {
 });
 document.addEventListener('paste', (e) => {
   const ta = e.target.closest && e.target.closest('.composer textarea'); if (!ta || !e.clipboardData) return;
-  const files = [...e.clipboardData.files].filter(isImageFile);
-  if (files.length) { e.preventDefault(); addChatPhotos(ta.form.dataset.ch, files); }
+  const files = [...e.clipboardData.files];
+  if (files.length) { e.preventDefault(); addChatAttachments(ta.form.dataset.ch, files); }
 });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('.chat-pane')) $$('.chat-pane.drop-on').forEach((x) => x.classList.remove('drop-on')); });
 window.addEventListener('unhandledrejection', (e) => { if (e.reason instanceof ApiError) e.preventDefault(); });
 
 applyTheme();

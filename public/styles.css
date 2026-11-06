@@ -1402,3 +1402,33 @@ a.pfill:hover, button.pfill:hover { filter: brightness(1.06); }
 .cal-surface.cal-anim { will-change: transform, opacity; }
 .cg-main { transition: border-color .25s; }
 .cg-date b { transition: background-color .25s, color .25s; }
+
+/* chat attachments: files in the composer and in bubbles; drop target */
+.pick-options.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.attach-doc { display: inline-flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); max-width: 240px; flex: none; }
+.attach-doc.failed { border-color: var(--red); }
+.attach-doc .nm { display: flex; flex-direction: column; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.attach-doc .nm small { font-weight: 500; color: var(--muted); }
+.attach-doc button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px; display: grid; }
+.attach-doc button svg { width: 16px; height: 16px; }
+.attach-doc .ext, .bubble-file .ext { flex: none; width: 34px; height: 40px; border-radius: 6px; display: grid; place-items: center; font: 800 9.5px var(--font); text-transform: uppercase; color: #fff; background: var(--slate); }
+.attach-doc .ext.pdf, .bubble-file .ext.pdf { background: #c4271d; }
+.attach-doc .ext:is(.doc, .docx, .odt, .rtf), .bubble-file .ext:is(.doc, .docx, .odt, .rtf) { background: #0a5fd1; }
+.attach-doc .ext:is(.xls, .xlsx, .ods, .csv), .bubble-file .ext:is(.xls, .xlsx, .ods, .csv) { background: #1a7a43; }
+.attach-doc .ext:is(.ppt, .pptx), .bubble-file .ext:is(.ppt, .pptx) { background: #c4570b; }
+.bubble-files { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; }
+.bubble-file { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 8px; border-radius: 12px; border: 0; cursor: pointer; text-align: left; color: inherit; font: inherit; background: color-mix(in srgb, currentColor 10%, transparent); min-width: 200px; max-width: 100%; }
+.bubble-file .nm { display: flex; flex-direction: column; min-width: 0; font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
+.bubble-file .nm small { font-weight: 500; opacity: .75; }
+.chat-pane.drop-on { outline: 2.5px dashed var(--accent); outline-offset: -6px; }
+.chat-pane.drop-on .msgs::after { content: "Drop to attach"; position: sticky; bottom: 10px; align-self: center; background: var(--accent); color: var(--accent-ink); padding: 8px 16px; border-radius: 99px; font-weight: 700; }
+
+/* own timesheet upload */
+.upl-card { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.upl-card .grow { flex: 1 1 220px; }
+.upl-card.on { align-items: flex-start; border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+.upl-ico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); flex: none; }
+.upl-ico svg { width: 18px; height: 18px; }
+.xl-ico.pdf { background: #c4271d; }
+.upl-tag { color: var(--accent-text); }
+label.btn { cursor: pointer; }

@@ -16,6 +16,9 @@ function choosePhotos({ multiple = true, title = 'Add photos', selfie = false } 
       if (ok.length) resolve(multiple ? ok : ok.slice(0, 1));
     };
     if (!isTouch()) return pickInput('image/*', multiple, finish);
+    // iPhone shows its own menu (Photo Library / Take Photo / Choose File) for any photo picker, so go straight to it
+    // rather than showing our own menu first — choosing twice is just repetition.
+    if (isIOS() && !selfie) return pickInput('image/*', multiple, finish);
     sheet(`${sheetHead(title)}
       <div class="pick-options">
         <label class="pick-btn">${ic('camera')}<span>Take photo</span><small>Open the camera</small>
@@ -27,6 +30,7 @@ function choosePhotos({ multiple = true, title = 'Add photos', selfie = false } 
     });
   });
 }
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 function pickInput(accept, multiple, cb) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = accept; inp.multiple = multiple; inp.style.display = 'none';
@@ -345,13 +349,48 @@ async function addChatPhotos(ch, files) {
 }
 function paintAttach(ch) {
   const pane = document.querySelector(`.chat-pane[data-ch="${CSS.escape(ch)}"]`); if (!pane) return;
-  const box = pane.querySelector('[data-attach]'); const arr = pendingImgs[ch] || [];
-  box.classList.toggle('hidden', !arr.length);
+  const box = pane.querySelector('[data-attach]'); const arr = pendingImgs[ch] || []; const docs = pendingFiles[ch] || [];
+  box.classList.toggle('hidden', !arr.length && !docs.length);
   box.innerHTML = arr.map((p, i) => `<span class="attach-thumb"><img src="${p.data}" alt="Photo ${i + 1} ready to send"><button type="button" data-act="unattach" data-ch="${esc(ch)}" data-key="${p.key}" aria-label="Remove photo ${i + 1}">${ic('x')}</button></span>`).join('')
-    + (arr.length ? `<span class="small muted" style="flex:none">${plural(arr.length, 'photo')} ready</span>` : '');
+    + docs.map((f) => `<span class="attach-doc ${f.failed ? 'failed' : ''}"><span class="ext ${esc(f.ext)}">${esc(f.ext)}</span><span class="nm">${esc(f.name)}<small>${f.failed ? 'Failed' : f.id ? fileSize(f.size) : 'Uploading ' + Math.round(f.progress * 100) + '%'}</small></span><button type="button" data-act="unattach" data-ch="${esc(ch)}" data-key="${f.key}" aria-label="Remove ${esc(f.name)}">${ic('x')}</button></span>`).join('');
+  const send = pane.querySelector('.send-btn'); if (send) send.toggleAttribute('data-empty', !arr.length && !docs.length && !(pane.querySelector('textarea') || {}).value);
 }
-A.attach = async (el) => { const files = await choosePhotos({ multiple: true, title: 'Send photos' }); addChatPhotos(el.dataset.ch, files); };
-A.unattach = (el) => { const ch = el.dataset.ch; pendingImgs[ch] = (pendingImgs[ch] || []).filter((p) => p.key !== el.dataset.key); paintAttach(ch); };
+// The paperclip: take a photo, pick from the photo library, or attach a file. On a computer it opens the file picker
+// (and you can drag files onto the chat).
+function addChatAttachments(ch, files) {
+  const list = [...(files || [])];
+  const photos = list.filter(isImageFile), docs = list.filter((f) => !isImageFile(f));
+  if (photos.length) addChatPhotos(ch, photos);
+  if (docs.length) addChatFiles(ch, docs);
+}
+A.attach = (el) => {
+  const ch = el.dataset.ch;
+  if (!isTouch()) return pickInput('image/*,' + DOC_ACCEPT, true, (fs) => addChatAttachments(ch, fs));
+  sheet(`${sheetHead('Attach')}
+    <div class="pick-options three">
+      <label class="pick-btn">${ic('camera')}<span>Take photo</span><small>Open the camera</small>
+        <input type="file" accept="image/*" capture="environment" data-pick aria-label="Take a photo with the camera"></label>
+      <label class="pick-btn">${ic('gallery')}<span>Photo library</span><small>${isIOS() ? 'Your iPhone asks once which' : 'Choose photos'}</small>
+        <input type="file" accept="image/*" multiple data-pick aria-label="Choose from your photo library"></label>
+      <label class="pick-btn">${ic('file')}<span>File</span><small>PDF, Word, Excel…</small>
+        <input type="file" accept="${DOC_ACCEPT}" multiple data-pick aria-label="Choose a file"></label>
+    </div>`, (sh, close) => { $$('[data-pick]', sh).forEach((inp) => inp.addEventListener('change', () => { const fs = [...inp.files]; close(); addChatAttachments(ch, fs); })); });
+};
+A.unattach = (el) => { const ch = el.dataset.ch; pendingImgs[ch] = (pendingImgs[ch] || []).filter((p) => p.key !== el.dataset.key); pendingFiles[ch] = (pendingFiles[ch] || []).filter((p) => p.key !== el.dataset.key); paintAttach(ch); };
+const pendingFiles = {}; // channel -> [{ key, name, size, ext, progress, id, failed }]
+function addChatFiles(ch, files) {
+  const arr = pendingFiles[ch] = pendingFiles[ch] || [];
+  for (const file of files) {
+    if (arr.length >= 10) { toast('You can send up to 10 files at once', true); break; }
+    if (file.size > 15 * 1024 * 1024) { toast(`${file.name} is too big — files can be up to 15 MB`, true); continue; }
+    const it = { key: Math.random().toString(36).slice(2), name: file.name, size: file.size, ext: (file.name.split('.').pop() || '').toLowerCase(), progress: 0.02, id: '', failed: '' };
+    arr.push(it);
+    readAsDataURL(file).then((data) => sendWithProgress('POST', `/api/c/${S.cid}/files`, { name: file.name, data }, (x) => { it.progress = x; paintAttach(ch); }))
+      .then((r) => { it.id = r.file.id; it.progress = 1; paintAttach(ch); })
+      .catch((e) => { it.failed = e.message; paintAttach(ch); toast(e.message, true); });
+  }
+  paintAttach(ch);
+}
 
 // ---- ping attachments (photos and documents)
 // Each file uploads straight away with its own progress bar; the ping links them when it's posted.

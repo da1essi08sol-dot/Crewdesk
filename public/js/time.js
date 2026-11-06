@@ -363,6 +363,7 @@ VIEWS.timesheet = {
     for (let d = parseD(ym + '-01'); dstr(d) <= end; d.setDate(d.getDate() + 1)) all.push(dstr(d));
     const shown = all.filter((ds) => ds <= todayStr() && (ms.byDay[ds] || dayRec(uid, ds) || !isWeekend(ds))).reverse();
     const approved = Object.keys(ms.byDay).filter((ds) => (dayRec(uid, ds) || {}).approvedBy).length;
+    const up = S.sheetUploads[uid + '_' + ym];
     const base = `#/timesheet/`;
     return `${me ? '' : `<a class="back" href="#/admin/people">${ic('back')}Admin · People</a>`}
       <div class="page-head"><div class="row" style="min-width:0">${me ? '' : avatar(m, 'lg')}<div style="min-width:0"><h1>${me ? 'My timesheet' : esc(m.name)}</h1><div class="sub">${me ? 'Filled in from what you log. Change anything that’s wrong, or add overtime.' : 'Timesheet, notes and overtime approvals'}</div></div></div>
@@ -373,14 +374,43 @@ VIEWS.timesheet = {
         <div class="kpi"><span class="v ${ms.ot > 0 ? 'pos' : ms.ot < 0 ? 'neg' : ''}">${fmtSigned(ms.ot)}</span><span class="l">Overtime (${fmtSigned(ms.otPay)} at rate)</span></div>
         <div class="kpi"><span class="v">${approved}</span><span class="l">Days approved</span></div>
       </div>
+      ${sheetUploadCard(uid, ym, me)}
       <div class="ts-actions">
-        <a class="btn primary" href="/api/c/${S.cid}/timesheet/${uid}/${ym}" download="${esc(monthFile(m.name, ym))}">${ic('download')}<span>${esc(monthFile(m.name, ym))}</span></a>
+        <a class="btn primary" href="/api/c/${S.cid}/timesheet/${uid}/${ym}${up ? '?generated=1' : ''}" download="${esc(monthFile(m.name, ym))}">${ic('download')}<span>${up ? 'Automatic: ' : ''}${esc(monthFile(m.name, ym))}</span></a>
         <a class="btn" href="/api/c/${S.cid}/timesheet/${uid}/${ym.slice(0, 4)}" download="${esc(yearFile(m.name, ym.slice(0, 4)))}">${ic('download')}<span>Whole year (${ym.slice(0, 4)})</span></a>
         <button class="btn" data-act="add-time" data-date="${ym === thisMonth() ? todayStr() : end}" data-user="${uid}">${ic('plus')}<span>Add time</span></button>
       </div>
       ${loading && !Object.keys(ms.byDay).length ? '<div class="skeleton" style="height:240px;margin-top:16px"></div>' : `<div class="card flush ts-days" style="margin-top:16px">${shown.length ? shown.map((ds) => tsDay(uid, ds, ms.byDay[ds] || [])).join('') : '<div class="empty small">Nothing in this month yet.</div>'}</div>`}
       <p class="tiny muted" style="margin-top:10px">${icSize('clock', 12, 'vertical-align:-1px')} Paid hours include field, office, rework, training and non-productive time. Lunch, holiday and absence are shown on the timesheet but not counted. Overtime is anything over ${fmtHrs(dayHours())} hours a day (or under it, as a minus), like the template. ✎ marks times changed by hand.</p>`;
   },
+};
+// Upload your own timesheet for the month: admins then get that file instead of the automatic one.
+function sheetUploadCard(uid, ym, me) {
+  const up = S.sheetUploads[uid + '_' + ym]; const nm = member(uid).name.split(' ')[0];
+  const fileName = up ? monthFile(member(uid).name, ym).replace(/\.xlsx$/, '.' + up.ext) : '';
+  if (up) return `<div class="card upl-card on"><span class="xl-ico ${up.ext === 'pdf' ? 'pdf' : ''}" aria-hidden="true">${esc(up.ext.toUpperCase())}</span>
+    <div class="grow" style="min-width:0"><b>${me ? 'You’re using your own timesheet for ' : `${esc(nm)} uploaded their own timesheet for `}${esc(monthLabel(ym))}</b>
+      <div class="small muted">${esc(up.name)} · ${fileSize(up.size)} · ${esc(fmtDateTime(up.at))}. ${me ? 'Admins get this file instead of the automatic one.' : 'This is the file in the Timesheets folder.'}</div>
+      <div class="row wrap tight" style="margin-top:10px"><a class="btn sm primary" href="/api/c/${S.cid}/timesheet/${uid}/${ym}" download="${esc(fileName)}">${ic('eye')}Open it</a>
+        <label class="btn sm">${ic('upload')}Replace<input type="file" class="sr-only" accept=".xlsx,.xls,.ods,.pdf" data-change="sheet-upload" data-user="${uid}" data-ym="${ym}"></label>
+        <button class="btn sm ghost" data-act="sheet-unupload" data-user="${uid}" data-ym="${ym}">Use the automatic one again</button></div></div></div>`;
+  return `<div class="card upl-card"><span class="upl-ico" aria-hidden="true">${ic('upload')}</span><div class="grow" style="min-width:0"><b>${me ? 'Prefer to fill in your own?' : `Upload ${esc(nm)}’s own timesheet`}</b>
+    <div class="small muted">Upload a finished timesheet for ${esc(monthLabel(ym))} (Excel or PDF) and admins get that file instead of the automatic one.</div></div>
+    <label class="btn sm">${ic('upload')}Upload<input type="file" class="sr-only" accept=".xlsx,.xls,.ods,.pdf" data-change="sheet-upload" data-user="${uid}" data-ym="${ym}"></label></div>`;
+}
+C['sheet-upload'] = async (el) => {
+  const file = el.files && el.files[0]; if (!file) return;
+  const lbl = el.closest('label'); lbl.classList.add('busy');
+  try {
+    const data = await readAsDataURL(file);
+    const r = await sendWithProgress('POST', `/api/c/${S.cid}/timesheet/${el.dataset.user}/${el.dataset.ym}/upload`, { name: file.name, data });
+    S.sheetUploads[el.dataset.user + '_' + el.dataset.ym] = r.item; renderView(false); toast('Uploaded — admins will get your file for this month');
+  } catch (e) { toast(e.message, true); lbl.classList.remove('busy'); }
+};
+A['sheet-unupload'] = async (el) => {
+  if (!(await confirmBox('Use the automatic timesheet again?', 'Your uploaded file is removed, and admins get the timesheet made from your logged time instead.', 'Use automatic', false))) return;
+  try { await capi('DELETE', `/timesheet/${el.dataset.user}/${el.dataset.ym}/upload`); delete S.sheetUploads[el.dataset.user + '_' + el.dataset.ym]; renderView(false); toast('Back to the automatic timesheet'); }
+  catch (e) { toast(e.message, true); }
 };
 function tsDay(uid, ds, list) {
   list = list.slice().sort((a, b) => a.start - b.start);
@@ -492,12 +522,13 @@ function adminFolder() {
     : `<div class="card stack"><div class="row wrap">${icSize('check', 22, 'color:var(--ok);flex:none')}<div class="grow" style="min-width:0"><h3>Google Drive connected</h3><p class="small muted" style="margin:4px 0 0">${esc(g.email || 'Google account')} · ${g.lastSync ? 'last copied ' + timeAgo(g.lastSync) : 'not copied yet'}${g.lastError ? ` · <span class="neg">${esc(g.lastError)}</span>` : ''}</p></div></div>
         <div class="row wrap tight">${g.folderUrl ? `<a class="btn sm" href="${esc(g.folderUrl)}" target="_blank" rel="noopener noreferrer">${ic('folder')}Open folder</a>` : ''}<button class="btn sm" data-act="drive-sync">${ic('refresh')}Copy this month now</button><button class="btn sm ghost" data-act="drive-off">Disconnect</button></div></div>`;
   return `<div class="row between wrap" style="margin-bottom:12px">${adminMonthNav('timesheets')}<a class="btn primary" href="/api/c/${S.cid}/timesheets/${ym}" download="Timesheets_${MONTHS_SHORT[Number(ym.slice(5, 7)) - 1]}_${ym.slice(0, 4)}.zip">${ic('download')}<span>Download all (.zip)</span></a></div>
-    ${loading ? '<div class="skeleton" style="height:200px"></div>' : `<div class="files">${ids.map((id) => { const m = monthStats(id, ym); const name = member(id).name;
-      return `<div class="filecard"><span class="xl-ico" aria-hidden="true">XLS</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(monthFile(name, ym))}</b><span class="tiny muted ellipsis" style="display:block">${esc(name)} · ${esc(fmtDur(m.paid, true))} · OT ${fmtSigned(m.ot)}</span></div>
-        <a class="btn sm icon" href="#/timesheet/${ym}/${id}" aria-label="Open ${esc(name)}’s timesheet">${ic('eye')}</a><a class="btn sm icon primary" href="/api/c/${S.cid}/timesheet/${id}/${ym}" download="${esc(monthFile(name, ym))}" aria-label="Download ${esc(monthFile(name, ym))}">${ic('download')}</a></div>`; }).join('')}</div>`}
+    ${loading ? '<div class="skeleton" style="height:200px"></div>' : `<div class="files">${ids.map((id) => { const m = monthStats(id, ym); const name = member(id).name; const up = S.sheetUploads[id + '_' + ym];
+      const fname = up ? monthFile(name, ym).replace(/\.xlsx$/, '.' + up.ext) : monthFile(name, ym);
+      return `<div class="filecard"><span class="xl-ico ${up && up.ext === 'pdf' ? 'pdf' : ''}" aria-hidden="true">${up ? esc(up.ext.toUpperCase()) : 'XLS'}</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(fname)}</b><span class="tiny muted ellipsis" style="display:block">${esc(name)} · ${up ? `<b class="upl-tag">Their own upload</b>` : `${esc(fmtDur(m.paid, true))} · OT ${fmtSigned(m.ot)}`}</span></div>
+        <a class="btn sm icon" href="#/timesheet/${ym}/${id}" aria-label="Open ${esc(name)}’s timesheet">${ic('eye')}</a><a class="btn sm icon primary" href="/api/c/${S.cid}/timesheet/${id}/${ym}" download="${esc(fname)}" aria-label="Download ${esc(fname)}">${ic('download')}</a></div>`; }).join('')}</div>`}
     <div class="section"><div class="section-head"><h2>Whole year ${y}</h2></div><div class="files">${ids.map((id) => `<a class="filecard" href="/api/c/${S.cid}/timesheet/${id}/${y}" download="${esc(yearFile(member(id).name, y))}"><span class="xl-ico" aria-hidden="true">XLS</span><div class="grow" style="min-width:0"><b class="ellipsis" style="display:block">${esc(yearFile(member(id).name, y))}</b><span class="tiny muted">${esc(member(id).name)} · summary, every entry, day notes</span></div>${ic('download')}</a>`).join('')}</div></div>
     <div class="section">${drive}</div>
-    <p class="tiny muted">Monthly files use your company’s “Time &amp; Overtime Sheet” template, named with each person’s initials. They’re made fresh each time you download, so they always include the latest changes.</p>`;
+    <p class="tiny muted">Monthly files use your company’s “Time &amp; Overtime Sheet” template, named with each person’s initials. They’re made fresh each time you download, so they always include the latest changes — unless someone has uploaded their own timesheet for the month, in which case you get theirs.</p>`;
 }
 A['drive-connect'] = async () => { try { const r = await capi('POST', '/gdrive/connect'); location.href = r.url; } catch (e) { toast(e.message, true); } };
 A['drive-sync'] = async (el) => { el.classList.add('busy'); try { const r = await capi('POST', '/gdrive/sync'); S.gdrive = r.gdrive; toast(`Copied ${plural(r.files, 'timesheet')} to Google Drive`); renderView(false); } catch (e) { toast(e.message, true); el.classList.remove('busy'); } };

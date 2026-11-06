@@ -37,7 +37,7 @@ async function loadCompany(keepView = false) {
   catch (e) { if (e.status === 401) return; toast(e.message, true); S.cid = null; store.set('cd_cid', null); return boot(); }
   Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, tasks: st.tasks, clients: st.clients, pings: st.pings,
     photos: st.photos, projects: st.projects, events: st.events, finance: st.finance, chats: st.chats, invites: st.invites || [], favs: st.favs || { projects: [] },
-    inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg, suggestions: st.suggestions || {}, gdrive: st.gdrive || null });
+    inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg, suggestions: st.suggestions || {}, gdrive: st.gdrive || null, sheetUploads: st.sheetUploads || {} });
   // Time: keep older months already fetched, and replace the recent ones with what the server just sent.
   if (!keepView) { S.entries = {}; S.days = {}; S.loaded = {}; }
   const cut = Date.now() - 62 * 864e5;
@@ -293,6 +293,7 @@ function handleEvent(ev) {
       S.inbox.push(ev.item); if (S.inbox.length > 200) S.inbox.shift();
       alertUser(ev.item.text, ev.item.link, '', { from: ev.item.by && S.members[ev.item.by] ? ev.item.by : null, icon: 'bell', title: ev.item.by && S.members[ev.item.by] ? member(ev.item.by).name : 'Crewdesk', text: ev.item.text }); scheduleRender(); break;
     case 'typing': onTyping(ev); break;
+    case 'sheetUpload': if (ev.item) S.sheetUploads[ev.key] = ev.item; else delete S.sheetUploads[ev.key]; scheduleRender(); break;
     case 'presence':
       if (S.members[ev.userId]) { S.members[ev.userId].online = ev.online; S.members[ev.userId].lastSeen = ev.lastSeen; }
       scheduleRender(); break;

@@ -73,7 +73,7 @@ function chatPane(ch, embedded = false) {
     <div class="msgs" data-msgs role="log" aria-live="polite" aria-label="Messages"><div class="empty small">Loading…</div></div>
     <div class="attach-preview hidden" data-attach></div>
     <form class="composer" data-form="send" data-ch="${esc(ch)}">
-      <button type="button" class="btn ghost icon" data-act="attach" data-ch="${esc(ch)}" aria-label="Add photos">${ic('camera')}</button>
+      <button type="button" class="btn ghost icon" data-act="attach" data-ch="${esc(ch)}" aria-label="Attach a photo or file" title="Attach a photo or file${isTouch() ? '' : ' — or drag files here'}">${ic('clip')}</button>
       <textarea name="text" rows="1" placeholder="Message ${esc(t.kind === 'dm' ? t.name.split(' ')[0] : t.kind === 'general' ? 'everyone' : t.kind === 'project' ? 'project' : 'group')}…" data-input="autosize" enterkeyhint="send" aria-label="Message"></textarea>
       <button class="btn primary send-btn" aria-label="Send" data-empty>${ic('send')}</button>
     </form>
@@ -90,7 +90,8 @@ async function mountChat(ch) {
 }
 function refreshPanes(ch) { $$('.chat-pane').forEach((pane) => { if (pane.dataset.ch === ch && S.msgs[ch]) renderMsgs(pane, ch); }); }
 const msgImages = (m) => (m.images && m.images.length ? m.images : m.image ? [m.image] : []);
-function msgPreview(m) { const n = msgImages(m).length; return m.text || (n > 1 ? `📷 ${n} photos` : n ? '📷 Photo' : ''); }
+function msgPreview(m) { const n = msgImages(m).length; const f = (m.files || []).length; return m.text || (n > 1 ? `📷 ${n} photos` : n ? '📷 Photo' : f > 1 ? `📎 ${f} files` : f ? '📎 ' + m.files[0].name : ''); }
+const msgFiles = (m) => ((m.files || []).length ? `<span class="bubble-files">${m.files.map((fl) => `<button type="button" class="bubble-file" data-act="file-open" ${fileAttrs(fl)}><span class="ext ${esc(fl.ext || 'file')}">${esc(fl.kind === 'image' ? 'img' : fl.ext || 'file')}</span><span class="nm">${esc(fl.name)}<small>${fileSize(fl.size || 0)}</small></span></button>`).join('')}</span>` : '');
 const seenMsgs = new Set();
 function renderMsgs(pane, ch, forceBottom = false) {
   const box = $('[data-msgs]', pane);
@@ -113,7 +114,7 @@ function renderMsgs(pane, ch, forceBottom = false) {
     const fresh = !first && !seenMsgs.has(m.id) && motionOK(); seenMsgs.add(m.id);
     html += `<div class="msg ${mine ? 'mine' : ''} ${endRun ? 'last' : ''} ${fresh ? 'new' : ''} ${m.pending ? 'pending' : ''}" style="${startRun && mine ? 'margin-top:8px' : ''}">
       ${mine ? '' : avatar(who, 'sm')}
-      <div class="bubble">${imgs.length ? `<div class="bubble-photos ${imgs.length === 1 ? 'one' : ''}">${imgs.map((u, k) => `<button type="button" data-act="chat-photo" data-ch="${esc(ch)}" data-msg="${m.id}" data-i="${k}" aria-label="Open photo ${k + 1} from ${esc(who.name)}"><img src="${esc(u)}" alt="Photo from ${esc(who.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''}${m.text ? linkify(m.text) : ''}</div>
+      <div class="bubble">${msgFiles(m)}${imgs.length ? `<div class="bubble-photos ${imgs.length === 1 ? 'one' : ''}">${imgs.map((u, k) => `<button type="button" data-act="chat-photo" data-ch="${esc(ch)}" data-msg="${m.id}" data-i="${k}" aria-label="Open photo ${k + 1} from ${esc(who.name)}"><img src="${esc(u)}" alt="Photo from ${esc(who.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''}${m.text ? linkify(m.text) : ''}</div>
       <span class="msg-time" title="${esc(fmtDateTime(m.at))}">${m.pending ? 'Sending…' : clock(m.at)}</span></div>`;
   });
   html += `<div class="typing-row" data-typing>${typingHtml(ch)}</div>`;
@@ -220,17 +221,19 @@ A['chat-photo'] = (el) => {
   openViewer(msgImages(m).map((u, k) => ({ url: u, by: m.userId, at: m.at, caption: k === 0 ? m.text : '', where: info ? info.name : 'Chat', alt: `Photo from ${member(m.userId).name}` })), Number(el.dataset.i) || 0);
 };
 F.send = async (f, d) => {
-  const ch = f.dataset.ch; const text = (d.text || '').trim(); const imgs = pendingImgs[ch] || [];
-  if (!text && !imgs.length) return;
+  const ch = f.dataset.ch; const text = (d.text || '').trim(); const imgs = pendingImgs[ch] || []; const docs = pendingFiles[ch] || [];
+  if (docs.some((x) => !x.id && !x.failed)) return toast('Wait a moment — your file is still uploading');
+  const fileIds = docs.filter((x) => x.id).map((x) => x.id);
+  if (!text && !imgs.length && !fileIds.length) return;
   const ta = f.querySelector('textarea'); const btn = f.querySelector('.send-btn');
   const pane = f.closest('.chat-pane'); const box = $('[data-msgs]', pane);
   sendTyping(ch, false);
   if (motionOK()) { btn.classList.remove('fly'); void btn.offsetWidth; btn.classList.add('fly'); }
-  if (imgs.length) { // photos: show upload progress on the button
+  if (imgs.length || fileIds.length) { // photos and files: show upload progress on the button
     btn.disabled = true;
     try {
-      const r = await sendWithProgress('POST', `/api/c/${S.cid}/messages`, { channel: ch, text, images: imgs.map((p) => p.data) }, (x) => { btn.style.opacity = String(0.4 + x * 0.6); });
-      ta.value = ''; ta.style.height = ''; delete pendingImgs[ch]; paintAttach(ch); onMessage(r.item); box.scrollTop = box.scrollHeight;
+      const r = await sendWithProgress('POST', `/api/c/${S.cid}/messages`, { channel: ch, text, images: imgs.map((p) => p.data), files: fileIds }, (x) => { btn.style.opacity = String(0.4 + x * 0.6); });
+      ta.value = ''; ta.style.height = ''; delete pendingImgs[ch]; delete pendingFiles[ch]; paintAttach(ch); onMessage(r.item); box.scrollTop = box.scrollHeight;
     } finally { btn.disabled = false; btn.style.opacity = ''; btn.toggleAttribute('data-empty', !ta.value.trim()); if (matchMedia('(hover:hover)').matches) ta.focus(); }
     return;
   }

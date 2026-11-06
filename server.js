@@ -158,6 +158,7 @@ function cdata(cid) {
   for (const k of COLLS) d[k] = d[k] || {};
   d.messages = d.messages || {};
   d.inbox = d.inbox || {};
+  d.sheetUploads = d.sheetUploads || {}; // userId_YYYY-MM -> a timesheet the person uploaded themselves
   return d;
 }
 const DEFAULT_SETTINGS = { membersSeeMoney: false, membersCreateProjects: true, membersInvite: false, membersPing: true, allowCodeJoin: true, currency: '£',
@@ -265,6 +266,7 @@ function buildFileIndex() {
     for (const p of Object.values(d.photos || {})) for (const u of [p.url, p.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'photo', cid, project: p.projectId }; }
     for (const [ch, list] of Object.entries(d.messages || {})) for (const m of list) for (const u of msgImages(m)) { const n = name(u); if (n) idx[n] = { kind: 'msg', cid, ch }; }
     for (const f of Object.values(d.files || {})) for (const u of [f.url, f.thumb]) { const n = name(u); if (n) idx[n] = { kind: 'file', cid, fileId: f.id }; }
+    for (const u of Object.values(d.sheetUploads || {})) idx[u.stored] = { kind: 'sheet', cid, user: u.userId };
   }
   db.fileIndex = idx;
 }
@@ -464,7 +466,7 @@ function dropFile(url) {
     storage.delFile(n).catch((e) => console.error('Could not delete file:', e.message));
   }
 }
-function dropMessageFiles(list) { for (const m of list || []) for (const u of msgImages(m)) dropFile(u); }
+function dropMessageFiles(list) { for (const m of list || []) { for (const u of msgImages(m)) dropFile(u); for (const f of m.files || []) { dropFile(f.url); if (f.thumb && f.thumb !== f.url) dropFile(f.thumb); } } }
 function dropCompanyFiles(cid) {
   for (const [n, e] of Object.entries(db.fileIndex)) if (e.cid === cid) { delete db.fileIndex[n]; storage.delFile(n).catch(() => {}); }
 }
@@ -474,12 +476,14 @@ function canReadFile(user, e) {
   if (e.kind === 'banner' || e.kind === 'logo') { const c = db.companies[e.cid]; return !!(c && (c.members[user.id] || (c.profile && c.profile.visibility === 'public'))); }
   const c = db.companies[e.cid]; if (!c) return false;
   const x = ctxFor(c, user.id); if (!x) return false;
+  if (e.kind === 'sheet') return e.user === user.id || isAdmin(x.role);
   if (e.kind === 'photo') { const p = projectOf(x, e.project); return !!(p && canSeeProject(x, p)); }
   if (e.kind === 'msg') return canSeeChannel(x, e.ch);
   if (e.kind === 'file') {
     const f = x.d.files[e.fileId]; if (!f) return false;
     if (f.status !== 'attached') return f.by === user.id;
     if (f.scope && f.scope.ping) return !!x.d.pings[f.scope.ping];
+    if (f.scope && f.scope.ch) return canSeeChannel(x, f.scope.ch);
     return false;
   }
   return false;
@@ -487,11 +491,11 @@ function canReadFile(user, e) {
 
 // ---------------------------------------------------------------- messages
 const msgImages = (m) => (m.images && m.images.length ? m.images : m.image ? [m.image] : []);
-function msgPreview(m) { const n = msgImages(m).length; return m.text || (n > 1 ? `📷 ${n} photos` : n ? '📷 Photo' : ''); }
-function postMessage(cid, channel, userId, text, images, system = false) {
+function msgPreview(m) { const n = msgImages(m).length; const f = (m.files || []).length; return m.text || (n > 1 ? `📷 ${n} photos` : n ? '📷 Photo' : f > 1 ? `📎 ${f} files` : f ? '📎 ' + m.files[0].name : ''); }
+function postMessage(cid, channel, userId, text, images, system = false, files = []) {
   const d = cdata(cid);
   const arr = d.messages[channel] = d.messages[channel] || [];
-  const msg = { id: uid(), channel, userId, text: str(text, 4000), images: images || [], at: now(), system };
+  const msg = { id: uid(), channel, userId, text: str(text, 4000), images: images || [], files, at: now(), system };
   arr.push(msg);
   if (arr.length > 3000) dropMessageFiles(arr.splice(0, arr.length - 3000));
   save();
@@ -1196,6 +1200,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     const invites = isAdmin(role) || c.settings.membersInvite
       ? Object.values(c.invites).filter((i) => isAdmin(role) || i.createdBy === user.id).sort((a, b) => b.createdAt - a.createdAt).slice(0, 50).map((i) => publicInvite(i, c)) : [];
     return json(res, 200, Object.assign({ company: publicCompany(c, role), role, me: meUser(user), members: memberList(c, user.id), locations: locs,
+      sheetUploads: Object.fromEntries(Object.entries(d.sheetUploads).filter(([, u]) => isAdmin(role) || u.userId === user.id).map(([k, u]) => [k, publicSheet(u)])),
       favs: user.favs[cid] || { projects: [] }, inbox: (d.inbox[user.id] || []).slice(-100), invites, gdrive: isAdmin(role) ? gdrive.status(c) : null }, stateFor(x), unreadFor(x)));
   }
   if (sub === '' && M === 'PATCH') {
@@ -1420,8 +1425,14 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     if (raw.length > 6) bad('You can send up to 6 photos at once');
     const images = [];
     for (const img of raw) images.push(await saveImage(img, 4 * 1024 * 1024, { kind: 'msg', cid, ch: b.channel }));
-    if (!str(b.text) && !images.length) bad('Message is empty');
-    const msg = postMessage(cid, b.channel, user.id, b.text, images);
+    // Documents (and photos sent as files) are uploaded first with /files, then linked to the message here.
+    const files = [];
+    if (Array.isArray(b.files)) {
+      if (b.files.length > 10) bad('You can send up to 10 files at once');
+      for (const id of b.files.map(String)) { const f = d.files[id]; if (!f || f.status !== 'pending' || f.by !== user.id) continue; f.status = 'attached'; f.scope = { ch: b.channel }; files.push(publicFile(f)); }
+    }
+    if (!str(b.text) && !images.length && !files.length) bad('Message is empty');
+    const msg = postMessage(cid, b.channel, user.id, b.text, images, false, files);
     markRead(user, cid, b.channel, msg.at);
     const ch = /^chat:(.+)$/.exec(b.channel);
     if (ch && d.chats[ch[1]] && d.chats[ch[1]].kind === 'dm') { /* the live 'msg' event already alerts the other person */ }
@@ -1622,6 +1633,13 @@ function projectNames(d, entries) {
   for (const e of entries) if (e.projectId && !out[e.projectId]) out[e.projectId] = { ref: e.pref || '', name: e.pname || 'Deleted project' };
   return out;
 }
+const publicSheet = (u) => ({ userId: u.userId, ym: u.ym, name: u.name, ext: u.ext, size: u.size, at: u.at, by: u.by });
+// A month's timesheet as admins get it: the person's own upload if they've given one, otherwise made from their time.
+async function sheetFor(c, userId, y, mo, generated = false) {
+  const u = !generated && cdata(c.id).sheetUploads[`${userId}_${y}-${pad2(mo)}`];
+  if (u) { const f = await storage.getFile(u.stored); if (f) return { name: ts.monthFileName(personNameOf(userId), y, mo).replace(/\.xlsx$/, '.' + u.ext), data: f.data, uploaded: true, type: f.type }; }
+  return monthFileFor(c, userId, y, mo);
+}
 function monthFileFor(c, userId, y, mo) {
   const d = cdata(c.id); const ym = `${y}-${pad2(mo)}`;
   const entries = Object.values(d.entries).filter((e) => e.userId === userId && localDay(e.start).slice(0, 7) === ym);
@@ -1661,9 +1679,9 @@ async function runDriveSync(cid, all = false) {
   const c = db.companies[cid]; if (!c || !c.gdrive || !c.gdrive.refreshToken) return { files: 0 };
   const q = driveQueue.get(cid); driveQueue.delete(cid);
   const files = [];
-  const add = (uidv, ym) => { const [y, mo] = ym.split('-').map(Number); const f = monthFileFor(c, uidv, y, mo); files.push({ year: y, monthLabel: `${pad2(mo)} ${new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' })}`, name: f.name, data: f.data }); };
-  if (all) { const ym = localDay(now()).slice(0, 7); for (const id of peopleInMonth(c, ym)) add(id, ym); }
-  else if (q) for (const [id, months] of q.users) for (const ym of months) add(id, ym);
+  const add = async (uidv, ym) => { const [y, mo] = ym.split('-').map(Number); const f = await sheetFor(c, uidv, y, mo); files.push({ year: y, monthLabel: `${pad2(mo)} ${new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' })}`, name: f.name, data: f.data }); };
+  if (all) { const ym = localDay(now()).slice(0, 7); for (const id of peopleInMonth(c, ym)) await add(id, ym); }
+  else if (q) for (const [id, months] of q.users) for (const ym of months) await add(id, ym);
   try { await gdrive.upload(c, `${c.name} — Crewdesk timesheets`, files); }
   catch (e) { c.gdrive.lastError = e.message; console.error('Google Drive sync failed:', e.message); }
   save(); broadcastAdmins(c, { t: 'reload' });
@@ -1792,11 +1810,37 @@ async function timeApi(req, res, url, x, sub) {
     if (b.approve && target !== user.id) notify(cid, [target], `${who} approved your time for ${ukDay(Date.parse(m[1] + 'T12:00:00Z'))}`, '#/timesheet/' + m[1].slice(0, 7));
     return json(res, 200, { item: r });
   }
-  // Timesheet files: a month in the company's template, or a whole year.
+  // Your own timesheet for a month: upload it and admins get it instead of the automatic one (DELETE to go back).
+  if ((m = /^\/timesheet\/([A-Za-z0-9]+)\/(\d{4}-\d{2})\/upload$/.exec(sub)) && (M === 'POST' || M === 'DELETE')) {
+    const target = forUser(m[1]); const key = `${target}_${m[2]}`; const old = d.sheetUploads[key];
+    const tell = (item) => broadcast(cid, { t: 'sheetUpload', key, item }, { only: Object.keys(c.members).filter((id) => id === target || isAdmin(c.members[id].role)) });
+    if (M === 'DELETE') {
+      if (old) { dropFile('/uploads/' + old.stored); delete d.sheetUploads[key]; save(); tell(null); syncSoon(c, target, [m[2]]); }
+      return json(res, 200, { ok: true });
+    }
+    throttle('sheetup:' + user.id, 30, 3600e3, 'You’ve uploaded a lot — try again later');
+    const b = await readBody(req, 24 * 1024 * 1024);
+    const name = str(b.name, 120).replace(/[\\/:*?"<>|]+/g, '_') || 'timesheet';
+    const ext = ((/\.([a-z0-9]{2,5})$/i.exec(name) || [])[1] || '').toLowerCase();
+    if (!['xlsx', 'xls', 'ods', 'pdf'].includes(ext)) bad('Upload your timesheet as an Excel file (.xlsx or .xls), an .ods file or a PDF');
+    const buf = decodeData(b.data);
+    if (buf.length > 15 * 1024 * 1024) bad('That file is too big — up to 15 MB');
+    if (!docOk(ext, buf)) bad('That file doesn’t match its type, so it was refused');
+    const stored = uid(18) + '.' + ext;
+    await storage.putFile(stored, DOC_TYPES[ext], buf);
+    db.fileIndex[stored] = { kind: 'sheet', cid, user: target };
+    if (old) dropFile('/uploads/' + old.stored);
+    const item = d.sheetUploads[key] = { userId: target, ym: m[2], name, ext, size: buf.length, stored, at: now(), by: user.id };
+    save(); tell(publicSheet(item)); syncSoon(c, target, [m[2]]);
+    const admins = Object.keys(c.members).filter((id) => isAdmin(c.members[id].role) && id !== user.id);
+    if (target === user.id) notify(cid, admins, `${who} uploaded their own timesheet for ${new Date(m[2] + '-01T12:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}`, `#/timesheet/${m[2]}/${target}`);
+    return json(res, 200, { item: publicSheet(item) });
+  }
+  // Timesheet files: a month in the company's template (or the person's own upload), or a whole year.
   if ((m = /^\/timesheet\/([A-Za-z0-9]+)\/(\d{4})(?:-(\d{2}))?$/.exec(sub)) && M === 'GET') {
     const target = forUser(m[1]);
-    const f = m[3] ? monthFileFor(c, target, Number(m[2]), Number(m[3])) : yearFileFor(c, target, Number(m[2]));
-    return sendDownload(res, f.name, f.data);
+    const f = m[3] ? await sheetFor(c, target, Number(m[2]), Number(m[3]), url.searchParams.get('generated') === '1') : yearFileFor(c, target, Number(m[2]));
+    return sendDownload(res, f.name, f.data, f.type);
   }
   // Admins: everyone's timesheets for a month in one zip, a folder per person.
   if ((m = /^\/timesheets\/(\d{4})-(\d{2})$/.exec(sub)) && M === 'GET') {
@@ -1805,7 +1849,7 @@ async function timeApi(req, res, url, x, sub) {
     const ids = new Set(peopleInMonth(c, `${m[1]}-${m[2]}`).concat(Object.keys(c.members)));
     const files = []; const used = new Set();
     for (const id of ids) {
-      const f = monthFileFor(c, id, y, mo);
+      const f = await sheetFor(c, id, y, mo);
       let folderName = ts.safeName(personNameOf(id)); while (used.has(folderName)) folderName += ' (2)'; used.add(folderName);
       files.push({ name: `${folderName}/${f.name}`, data: f.data });
     }

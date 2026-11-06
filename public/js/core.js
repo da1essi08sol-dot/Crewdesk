@@ -165,7 +165,7 @@ const store = {
 const S = {
   cid: store.get('cd_cid'), user: null, companies: [], role: null, company: null, info: null,
   members: {}, teams: {}, tasks: {}, clients: {}, pings: {}, photos: {}, projects: {}, events: {}, finance: {}, chats: {}, entries: {}, days: {}, suggestions: {},
-  invites: [], favs: { projects: [] }, inbox: [], locations: {}, unread: {}, lastMsg: {}, msgs: {}, msgsMore: {}, loaded: {}, gdrive: null,
+  invites: [], favs: { projects: [] }, sheetUploads: {}, inbox: [], locations: {}, unread: {}, lastMsg: {}, msgs: {}, msgsMore: {}, loaded: {}, gdrive: null,
   projFilter: 'active', projSearch: '', clientSearch: '', openDay: null, sugFilter: 'open',
   calView: ['day', 'week', 'month', 'list'].includes(store.get('cd_calView')) ? store.get('cd_calView') : 'month', calDate: todayStr(), pingTab: 'pings',
 };
