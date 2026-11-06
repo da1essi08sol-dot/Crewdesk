@@ -340,6 +340,7 @@ S.calHide = new Set((store.get('cd_calHide') || '').split(',').filter(Boolean));
 const calKind = (it) => (it.kind === 'start' || it.kind === 'due' ? 'project' : it.kind);
 function calShow(it) {
   if (S.calHide && S.calHide.has(calKind(it))) return false;
+  if (it.kind === 'event' && S.calHide && S.calHide.has('cal:' + ((calOf(it.ev) || {}).id || 'none'))) return false;
   if (!S.calMine) return true;
   const me = S.user.id;
   if (it.kind === 'event') { const e = it.ev; return e.createdBy === me || !(e.participants || []).length || e.participants.includes(me); }
@@ -352,7 +353,9 @@ A['cal-kind'] = (el) => { const k = el.dataset.k; S.calHide.has(k) ? S.calHide.d
 
 // Colours, as in Apple Calendar: events blue (or their own colour), project starts green, due dates orange, tasks purple.
 const CAL_C = { event: '#0a84ff', start: '#30b158', due: '#ff9500', task: '#af52de' };
-const itColor = (it) => (it.kind === 'event' ? (it.ev.color || CAL_C.event) : CAL_C[it.kind]);
+const cals = () => (S.company && S.company.settings && S.company.settings.calendars) || [];
+const calOf = (e) => (e && e.calendarId ? cals().find((k) => k.id === e.calendarId) : null);
+const itColor = (it) => (it.kind === 'event' ? ((calOf(it.ev) || {}).color || it.ev.color || CAL_C.event) : CAL_C[it.kind]);
 const itTitle = (it) => (it.kind === 'event' ? it.title : it.title.replace(/^(Due|Starts): /, ''));
 function calPill(it) {
   const label = (it.kind === 'due' ? 'Due: ' : it.kind === 'start' ? 'Starts: ' : '') + itTitle(it);
@@ -372,7 +375,8 @@ function schedItem(it) {
   const c = esc(itColor(it));
   const tm = it.kind === 'event' ? (it.time ? `<b>${esc(it.time)}</b>${it.ev.end ? `<span>${esc(it.ev.end)}</span>` : ''}` : '<b>All day</b>') : it.kind === 'task' ? '<b>Task</b>' : `<b>${it.kind === 'due' ? 'Due' : 'Starts'}</b>`;
   const people = it.kind === 'event' && (it.ev.participants || []).length ? avatarStack(it.ev.participants, 3) : it.kind === 'task' && (S.tasks[it.id].assignees || []).length ? avatarStack(S.tasks[it.id].assignees, 3) : '';
-  const body = `<span class="si-time">${tm}</span><span class="si-card" style="--c:${c}"><span class="si-title">${esc(itTitle(it))}</span>${it.sub ? `<span class="si-sub">${esc(it.sub)}</span>` : ''}${people ? `<span class="si-people">${people}</span>` : ''}</span>`;
+  const sub = [it.kind === 'event' && calOf(it.ev) ? calOf(it.ev).name : '', it.sub].filter(Boolean).join(' · ');
+  const body = `<span class="si-time">${tm}</span><span class="si-card" style="--c:${c}"><span class="si-title">${esc(itTitle(it))}</span>${sub ? `<span class="si-sub">${esc(sub)}</span>` : ''}${people ? `<span class="si-people">${people}</span>` : ''}</span>`;
   return it.kind === 'event' ? `<button class="si" data-act="event-open" data-id="${it.id}">${body}</button>` : `<a class="si" href="${it.link}">${body}</a>`;
 }
 function dayLabel2(ds) { return ds === todayStr() ? 'Today' : days(ds) === 1 ? 'Tomorrow' : days(ds) === -1 ? 'Yesterday' : parseD(ds).toLocaleDateString('en-GB', { weekday: 'long' }); }
@@ -429,7 +433,9 @@ function calFilters() {
   const kinds = [['event', 'Events', CAL_C.event], ['task', 'Tasks', CAL_C.task], ['project', 'Project dates', CAL_C.start]];
   return `<div class="cal-filters" role="toolbar" aria-label="Show">
     <button class="cf ${S.calMine ? 'on' : ''}" data-act="cal-mine" aria-pressed="${S.calMine}">${icSize('user', 14)}Just me</button>
-    ${kinds.map(([k, l, c]) => `<button class="cf kind ${S.calHide.has(k) ? 'off' : 'on'}" data-act="cal-kind" data-k="${k}" aria-pressed="${!S.calHide.has(k)}" style="--c:${c}"><i></i>${l}</button>`).join('')}</div>`;
+    ${kinds.map(([k, l, c]) => `<button class="cf kind ${S.calHide.has(k) ? 'off' : 'on'}" data-act="cal-kind" data-k="${k}" aria-pressed="${!S.calHide.has(k)}" style="--c:${c}"><i></i>${l}</button>`).join('')}
+    ${cals().length ? `<span class="cf-sep" aria-hidden="true"></span>${cals().concat([{ id: 'none', name: 'No calendar', color: CAL_C.event }]).map((k) => `<button class="cf kind ${S.calHide.has('cal:' + k.id) ? 'off' : 'on'}" data-act="cal-kind" data-k="cal:${k.id}" aria-pressed="${!S.calHide.has('cal:' + k.id)}" style="--c:${k.color}"><i></i>${esc(k.name)}</button>`).join('')}` : ''}
+    ${isAdmin() ? `<button class="cf" data-act="cal-manage">${icSize(cals().length ? 'edit' : 'plus', 14)}${cals().length ? 'Calendars' : 'Add calendars'}</button>` : ''}</div>`;
 }
 // Coloured bars under a date (one per item, up to three; with more, two bars and "+N") — easier to spot than dots.
 function calMarks(its, always = false) {
@@ -586,6 +592,7 @@ function eventSheet(ev, preset = {}) {
         <label class="row full" style="gap:8px"><span class="switch"><input type="checkbox" name="allDay" ${e.allDay ? 'checked' : ''} data-change="ev-allday"><i></i></span><span>All day</span></label>
         <label class="field ${e.allDay ? 'hidden' : ''}" data-time><span>Start time</span><input type="time" name="start" value="${esc(e.start || '09:00')}"></label>
         <label class="field ${e.allDay ? 'hidden' : ''}" data-time><span>End time</span><input type="time" name="end" value="${esc(e.end || '')}"></label>
+        ${cals().length ? `<label class="field full"><span>Calendar</span><select name="calendarId"><option value="">No calendar</option>${cals().map((k) => `<option value="${k.id}" ${k.id === (e.calendarId || preset.calendarId || '') ? 'selected' : ''}>${esc(k.name)}</option>`).join('')}</select></label>` : ''}
         <label class="field full"><span>Project</span><select name="projectId"><option value="">None</option>${projs.map((p) => `<option value="${p.id}" ${p.id === e.projectId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
         <label class="field full"><span>Where</span><input name="location" value="${esc(e.location)}" placeholder="Address or meeting link"></label>
         <label class="field full"><span>Details</span><textarea name="description" placeholder="Anything people should know">${esc(e.description)}</textarea></label>
@@ -604,6 +611,7 @@ F.event = async (f, d, close) => {
   const startsAt = new Date(d.date + 'T' + (allDay ? '00:00' : (d.start || '00:00')) + ':00').getTime();
   const body = { title: d.title, date: d.date, endDate: d.endDate, allDay, start: allDay ? '' : d.start, end: allDay ? '' : d.end, startsAt, description: d.description, location: d.location,
     participants: picked(f), visibility: d.private ? 'selected' : 'all', projectId: d.projectId };
+  if ('calendarId' in d) body.calendarId = d.calendarId;
   await saveItem('events', f.dataset.id || null, body);
   close(); toast(f.dataset.id ? 'Event updated' : 'Added to the calendar');
 };
@@ -664,4 +672,24 @@ A['archive-clear'] = async (el) => {
     scoped ? 'Clear folder' : 'Clear archive');
   if (!ok) return;
   try { const r = await capi('POST', '/archive/clear', scoped ? { confirm: true, folder } : { confirm: true }); toast(`Cleared ${plural(r.cleared, 'project')}`); } catch (e) { toast(e.message, true); }
+};
+
+
+// ============================================================ NAMED CALENDARS (admins): e.g. one per office — Gateshead, Warrington
+const CAL_PALETTE = ['#00a7a7', '#ff2d92', '#5856d6', '#a2845e', '#ff3b30', '#18693f', '#8e8e93', '#d4a106'];
+function calRow(k) { return `<div class="cal-row row" data-cal="${esc(k.id || '')}"><input type="color" class="cal-col" value="${esc(k.color)}" aria-label="Colour"><input class="input grow" maxlength="40" value="${esc(k.name)}" placeholder="e.g. Gateshead" aria-label="Calendar name"><button type="button" class="btn ghost sm icon" data-act="cal-row-del" aria-label="Remove">${ic('trash')}</button></div>`; }
+A['cal-manage'] = () => {
+  sheet(`${sheetHead('Calendars')}<p class="small muted" style="margin-top:0">Name separate calendars — for example one for each office, like Gateshead and Warrington. Everyone can show or hide each one, and pick it when adding an event.</p>
+    <div class="stack tight" data-cal-list>${cals().map(calRow).join('')}</div>
+    <button type="button" class="btn sm" data-act="cal-row-add" style="margin-top:10px">${ic('plus')}Add a calendar</button>
+    <div class="err-msg" data-err></div>
+    <div class="sheet-foot"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" data-act="cal-save">Save</button></div>`, (sh) => { if (!cals().length) sh.querySelector('[data-act="cal-row-add"]').click(); });
+};
+A['cal-row-add'] = (el) => { const list = el.closest('.sheet').querySelector('[data-cal-list]'); const n = list.children.length; list.insertAdjacentHTML('beforeend', calRow({ id: '', name: '', color: CAL_PALETTE[n % CAL_PALETTE.length] })); list.lastElementChild.querySelector('.input').focus(); };
+A['cal-row-del'] = (el) => el.closest('.cal-row').remove();
+A['cal-save'] = async (el) => {
+  const sh = el.closest('.sheet');
+  const list = $$('.cal-row', sh).map((r) => ({ id: r.dataset.cal, name: r.querySelector('.input').value.trim(), color: r.querySelector('.cal-col').value })).filter((k) => k.name);
+  try { const r = await capi('PATCH', '', { settings: { calendars: list } }); if (r.company) S.company = Object.assign(S.company, r.company); closeSheets(); renderView(false); toast('Calendars saved'); }
+  catch (e) { const er = sh.querySelector('[data-err]'); if (er) er.textContent = e.message; }
 };

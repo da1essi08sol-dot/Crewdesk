@@ -1471,3 +1471,7 @@ label.btn { cursor: pointer; }
 .ts-year > .ts-month { margin: 8px 0 8px 14px; }
 .ts-month > summary .btn { flex: none; }
 .month-nav .pill { margin-right: 6px; }
+
+.cf-sep { width: 1px; align-self: stretch; background: var(--line); margin: 2px 2px; flex: none; }
+.cal-row { gap: 8px; }
+.cal-col { width: 40px; height: 40px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: none; flex: none; cursor: pointer; }

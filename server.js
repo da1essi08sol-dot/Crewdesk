@@ -723,9 +723,10 @@ const RULES = {
       if ('visibility' in b) o.visibility = vis(b.visibility);
       if ('projectId' in b) { const p = x.d.projects[b.projectId]; if (b.projectId && (!p || !canSeeProject(x, p))) bad('That project no longer exists'); o.projectId = p ? p.id : ''; }
       if ('color' in b) o.color = color(b.color, '');
+      if ('calendarId' in b) o.calendarId = (x.c.settings.calendars || []).some((k) => k.id === b.calendarId) ? String(b.calendarId) : '';
       return o;
     },
-    defaults: () => ({ title: '', date: '', endDate: '', allDay: true, start: '', end: '', startsAt: 0, description: '', location: '', participants: [], visibility: 'all', projectId: '', color: '', remindedAt: 0 }),
+    defaults: () => ({ calendarId: '', title: '', date: '', endDate: '', allDay: true, start: '', end: '', startsAt: 0, description: '', location: '', participants: [], visibility: 'all', projectId: '', color: '', remindedAt: 0 }),
   },
   finance: {
     create: (x) => isAdmin(x.role), edit: (x) => isAdmin(x.role), del: (x) => isAdmin(x.role),
@@ -1322,6 +1323,12 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
       if ('currency' in b.settings) c.settings.currency = str(b.settings.currency, 3) || '£';
       if ('dayStart' in b.settings) c.settings.dayStart = hhmm(b.settings.dayStart) || bad('Enter the usual start time, like 08:00');
       if ('dayEnd' in b.settings) c.settings.dayEnd = hhmm(b.settings.dayEnd) || bad('Enter the usual finish time, like 16:30');
+      if ('calendars' in b.settings) { // named calendars, e.g. one per office: Gateshead, Warrington
+        if (!Array.isArray(b.settings.calendars)) bad('Calendars must be a list');
+        const seen = new Set();
+        c.settings.calendars = b.settings.calendars.slice(0, 30).map((k) => ({ id: /^[A-Za-z0-9]{4,20}$/.test(String(k.id || '')) ? String(k.id) : uid(8), name: str(k.name, 40) || bad('Give each calendar a name'), color: color(k.color, '#0a84ff') || '#0a84ff' }))
+          .filter((k) => !seen.has(k.id) && seen.add(k.id));
+      }
       if ('dayHours' in b.settings) { const h = num(b.settings.dayHours); if (!(h > 0 && h <= 24)) bad('A standard day must be between 0 and 24 hours'); c.settings.dayHours = h; }
     }
     if (b.password) {
