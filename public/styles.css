@@ -131,7 +131,7 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .icon-btn:hover { background: var(--hover); }
 .icon-btn svg { width: 21px; height: 21px; }
 .brandmark { display: inline-block; width: 30px; height: 30px; flex: none; }
-.brandmark svg { width: 100%; height: 100%; display: block; }
+.brandmark svg, .brandmark img { width: 100%; height: 100%; display: block; }
 /* Green marker, white tick — swapped in dark mode */
 .brandmark .lm-pin { fill: #18693f; }
 .brandmark .lm-tick { stroke: #ffffff; }
