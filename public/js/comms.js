@@ -74,7 +74,7 @@ function chatPane(ch, embedded = false) {
     <div class="attach-preview hidden" data-attach></div>
     <form class="composer" data-form="send" data-ch="${esc(ch)}">
       <button type="button" class="btn ghost icon" data-act="attach" data-ch="${esc(ch)}" aria-label="Add photos">${ic('camera')}</button>
-      <textarea name="text" rows="1" placeholder="Message ${esc(t.kind === 'dm' ? t.name.split(' ')[0] : t.kind === 'general' ? 'everyone' : t.kind === 'project' ? 'the project team' : t.name)}…" data-input="autosize" enterkeyhint="send" aria-label="Message"></textarea>
+      <textarea name="text" rows="1" placeholder="Message ${esc(t.kind === 'dm' ? t.name.split(' ')[0] : t.kind === 'general' ? 'everyone' : t.kind === 'project' ? 'project' : 'group')}…" data-input="autosize" enterkeyhint="send" aria-label="Message"></textarea>
       <button class="btn primary send-btn" aria-label="Send" data-empty>${ic('send')}</button>
     </form>
   </div>`;
