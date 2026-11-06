@@ -297,7 +297,7 @@ function popMenu(anchor, html) {
   el.addEventListener('click', (e) => { if (e.target.closest('a,button')) setTimeout(closeMenu, 0); });
   return el;
 }
-function closeMenu() { if (openMenuEl) { openMenuEl._off(); openMenuEl.remove(); if (openMenuEl._anchor) openMenuEl._anchor.setAttribute('aria-expanded', 'false'); openMenuEl = null; } }
+function closeMenu() { if (openMenuEl) { const m = openMenuEl; openMenuEl = null; m._off(); if (m._anchor) m._anchor.setAttribute('aria-expanded', 'false'); if (motionOK()) leave(m); else m.remove(); } }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openMenuEl) closeMenu(); });
 
 function peoplePicker(selected, name = 'people', opts = {}) {

@@ -350,7 +350,7 @@ function openSearch() {
   document.body.appendChild(el);
   const inp = $('input', el), out = $('.search-results', el);
   let sel = 0, results = [];
-  const close = () => { el.remove(); document.removeEventListener('keydown', onKey, true); };
+  const close = () => { document.removeEventListener('keydown', onKey, true); if (motionOK()) leave(el); else el.remove(); };
   const paint = () => {
     const q = inp.value.trim().toLowerCase();
     results = searchAll(q);

@@ -1478,3 +1478,10 @@ label.btn { cursor: pointer; }
 
 button.verdict.has-info { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: inherit; }
 .verdict-info { margin-top: 6px; line-height: 1.45; }
+
+/* closing animations to match the opening ones */
+.menu-pop.leaving { animation: menu-out .16s ease-in forwards; pointer-events: none; }
+@keyframes menu-out { to { opacity: 0; transform: scale(.92); } }
+.search-pop.leaving { animation: fade-out .18s ease-in forwards; pointer-events: none; }
+.search-pop.leaving .search-panel { animation: sheet-pop-out .18s ease-in forwards; }
+@media (prefers-reduced-motion: reduce) { .menu-pop.leaving, .search-pop.leaving, .search-pop.leaving .search-panel { animation: none; } }
