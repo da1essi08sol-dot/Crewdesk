@@ -2231,8 +2231,19 @@ function mhDrawMap(doc, d, list, mp, bg, top, size) {
   // grid: one line every `nice` metres, through the centre
   const gc = bg ? '#ffffff' : '#c9d6cc', gw = bg ? 0.35 : 0.5;
   for (let i = -Math.ceil(size / 2 / len); i <= Math.ceil(size / 2 / len); i++) { const o = size / 2 + i * len; if (o <= 0 || o >= size) continue; doc.line(x0 + o, y0, x0 + o, y0 + size, gc, gw); doc.line(x0, y0 + o, x0 + size, y0 + o, gc, gw); }
-  doc.rect(x0 + 8, y0 + 8, len + 16, 26, '#ffffff'); doc.rect(x0 + 16, y0 + 18, len / 2, 3, '#1d2421'); doc.rect(x0 + 16 + len / 2, y0 + 18, len / 2, 3, '#8a948f');
-  doc.text('0', x0 + 14, y0 + 24, 6.5); doc.text(nice >= 1000 ? nice / 1000 + ' km' : nice + ' m', x0 + 12 + len, y0 + 24, 6.5, { bold: true }); doc.text(`Grid ${nice >= 1000 ? nice / 1000 + ' km' : nice + ' m'}`, x0 + 16, y0 + 11, 6, { color: '#55605a' });
+  { // scale bar: 4 alternating segments, labels at 0, half and full, plus the printed ratio (A4, 100%)
+    const fmt = (v) => (v >= 1000 ? +(v / 1000).toFixed(2) + ' km' : +v.toFixed(v < 10 ? 1 : 0) + ' m');
+    const ratio = Math.round(mPerPt / 0.000352778 / 10) * 10;
+    const lab = fmt(nice), labW = doc.textWidth(lab, 7, true), ratioT = `Scale 1:${ratio.toLocaleString('en-GB')} at A4 · grid ${fmt(nice)}`, rW = doc.textWidth(ratioT, 6);
+    const bx = x0 + 10, by = y0 + 10, pw = Math.max(len + labW / 2 + 22, rW + 16);
+    doc.rect(bx - 2, by - 2, pw + 4, 38, '#00000033'); doc.rect(bx, by, pw, 34, '#ffffff');
+    const sx = bx + 8, sy = by + 15, seg = len / 4;
+    for (let k = 0; k < 4; k++) doc.rect(sx + k * seg, sy, seg, 4, k % 2 ? '#ffffff' : '#1d2421');
+    doc.line(sx, sy, sx + len, sy, '#1d2421', 0.6); doc.line(sx, sy + 4, sx + len, sy + 4, '#1d2421', 0.6);
+    for (const t of [0, 2, 4]) doc.line(sx + t * seg, sy - 2, sx + t * seg, sy + 4, '#1d2421', 0.6);
+    doc.text('0', sx - 2, sy + 7, 6.5); const half = fmt(nice / 2); doc.text(half, sx + len / 2 - doc.textWidth(half, 6.5) / 2, sy + 7, 6.5); doc.text(lab, sx + len - labW / 2, sy + 7, 7, { bold: true });
+    doc.text(ratioT, sx, by + 5, 6, { color: '#55605a' });
+  }
   // corner coordinates (WGS84)
   const corner = (px, py) => unmerc(bgC.C.x + (px - size / 2) * bgC.k, bgC.C.y + (py - size / 2) * bgC.k, zUsed);
   const tl = corner(0, 0), br = corner(size, size); const f = (v) => v.toFixed(5);
