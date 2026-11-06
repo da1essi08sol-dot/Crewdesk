@@ -12,7 +12,7 @@ module.exports = async (setup) => { const T = await setup('promo');
   await T.tap('.projcard:has-text("East Coast")', 1300);
   await T.cap('Planned hours against actual, task by task, person by person.', 3000);
   await T.scroll(400, 1500); await T.scroll(-400, 700);
-  await T.go('#/files', 900); await T.tap('.mh-card >> nth=0', 3200);
+  await T.go('#/maps', 900); await T.tap('.mh-card >> nth=0', 3200);
   await T.cap('Manhole maps: every chamber pinned on the satellite map, with photos and survey details.', 3200);
   await T.tap('.mhm:has-text("MH002")', 2600); await T.tap('[data-act="mh-close"]', 600);
   await T.cap('Export a manhole index, labelled map, full PDF report or Excel register.', 2600);

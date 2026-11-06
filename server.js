@@ -253,7 +253,7 @@ function secLog(type, info = {}) {
 
 // ---------------------------------------------------------------- data shape & migration
 // Two levels of work: projects (the bigger thing) made up of tasks (the smaller things). Time is logged as entries.
-const COLLS = ['teams', 'tasks', 'clients', 'pings', 'photos', 'projects', 'events', 'finance', 'chats', 'files', 'entries', 'days', 'suggestions'];
+const COLLS = ['teams', 'tasks', 'clients', 'pings', 'resources', 'photos', 'projects', 'events', 'finance', 'chats', 'files', 'entries', 'days', 'suggestions'];
 function cdata(cid) {
   const d = db.data[cid] = db.data[cid] || {};
   for (const k of COLLS) d[k] = d[k] || {};
@@ -479,7 +479,7 @@ const RECENT = 62 * 864e5; // the app loads about two months of your own time; o
 function stateFor(x) {
   const out = {}; const d = x.d; const admin = isAdmin(x.role);
   const yearAgo = new Date(now() - 365 * 864e5).toISOString().slice(0, 10);
-  for (const coll of ['teams', 'clients', 'pings', 'photos', 'projects', 'finance', 'chats', 'suggestions']) {
+  for (const coll of ['teams', 'clients', 'pings', 'resources', 'photos', 'projects', 'finance', 'chats', 'suggestions']) {
     const o = {}; for (const [k, v] of Object.entries(d[coll])) { const s = viewFor(coll, v, x); if (s) o[k] = s; }
     out[coll] = o;
   }
@@ -612,6 +612,7 @@ function canReadFile(user, e) {
     const f = x.d.files[e.fileId]; if (!f) return false;
     if (f.status !== 'attached') return f.by === user.id;
     if (f.scope && f.scope.ping) return !!x.d.pings[f.scope.ping];
+    if (f.scope && f.scope.res) return !!x.d.resources[f.scope.res];
     if (f.scope && f.scope.ch) return canSeeChannel(x, f.scope.ch);
     return false;
   }
@@ -743,6 +744,19 @@ const RULES = {
     },
     defaults: () => ({ title: '', body: '', pinned: false, files: [], readBy: {} }),
   },
+  resources: { // Files → Resources: training documents, guides and forms with a picture and attachments
+    create: () => true,
+    edit: (x, p) => isAdmin(x.role) || p.createdBy === x.uid,
+    del: (x, p) => isAdmin(x.role) || p.createdBy === x.uid,
+    clean(b) {
+      const o = {};
+      if ('title' in b) o.title = str(b.title, 150) || bad('Give it a title');
+      if ('body' in b) o.body = str(b.body, 8000);
+      if ('category' in b) o.category = str(b.category, 40);
+      return o;
+    },
+    defaults: () => ({ title: '', body: '', category: '', files: [] }),
+  },
   events: {
     create: () => true,
     edit: (x, e) => isAdmin(x.role) || e.createdBy === x.uid,
@@ -795,7 +809,7 @@ const RULES = {
   },
 };
 const REQUIRED = { projects: ['name', 'Give the project a name'], tasks: ['title', 'A task needs a title'], clients: ['name', 'Give the client a name'],
-  pings: ['title', 'Give the ping a title'], events: ['title', 'Give the event a title'], teams: ['name', 'Give the team a name'], finance: ['date', 'Enter a date'],
+  pings: ['title', 'Give the ping a title'], resources: ['title', 'Give it a title'], events: ['title', 'Give the event a title'], teams: ['name', 'Give the team a name'], finance: ['date', 'Enter a date'],
   suggestions: ['text', 'Write something first'] };
 
 const ACCESS_FIELDS = { projects: ['visibility', 'members', 'chat'], tasks: ['projectId'], events: ['visibility', 'participants', 'projectId'] };
@@ -1758,7 +1772,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   if (/^\/(entries|days|timesheet|timesheets|gdrive|stats)(\/|$)|^\/projects\/[A-Za-z0-9]+\/(timesheet|pdf|handover)$/.test(sub)) return timeApi(req, res, url, x, sub);
 
   // --- generic collections
-  if ((m = /^\/(projects|tasks|clients|pings|events|finance|teams|suggestions)(?:\/([A-Za-z0-9]+))?$/.exec(sub))) {
+  if ((m = /^\/(projects|tasks|clients|pings|resources|events|finance|teams|suggestions)(?:\/([A-Za-z0-9]+))?$/.exec(sub))) {
     const coll = m[1]; const id = m[2]; const R = RULES[coll]; const store = d[coll];
     if (!id && M === 'POST') {
       if (!R.create(x)) deny();
@@ -1768,6 +1782,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
       const [field, msg] = REQUIRED[coll]; if (!item[field]) bad(msg);
       if (coll === 'tasks' && !item.projectId) bad('A task needs a project');
       if (coll === 'pings') { item.readBy = { [user.id]: now() }; item.files = attachFiles(x, b.files, item.id, []); }
+      if (coll === 'resources') item.files = attachFiles(x, b.files, item.id, [], 'res');
       if (coll === 'suggestions') throttle('suggest:' + user.id, 30, 3600e3, 'You’ve sent a lot — try again a little later');
       store[item.id] = item;
       afterChange(cid, coll, null, item, user);
@@ -1783,6 +1798,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
         const before = JSON.parse(JSON.stringify(item));
         Object.assign(item, R.clean(b, x, item), { updatedAt: now(), updatedBy: user.id });
         if (coll === 'pings' && 'files' in b) item.files = attachFiles(x, b.files, item.id, before.files || []);
+        if (coll === 'resources' && 'files' in b) item.files = attachFiles(x, b.files, item.id, before.files || [], 'res');
         afterChange(cid, coll, before, item, user);
         save();
         if (accessChanged(coll, before, item)) broadcast(cid, { t: 'reload' }); else upsert(cid, coll, item);
@@ -1793,7 +1809,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
         delete store[id];
         if (coll === 'projects') { dropProjectData(cid, d, item); broadcast(cid, { t: 'reload' }); }
         if (coll === 'tasks') for (const e of Object.values(d.entries)) if (e.taskId === id) { e.tname = e.tname || item.title; touchEntry(cid, e); }
-        if (coll === 'pings') for (const fid of (item.files || []).map((f) => f.id)) { const f = d.files[fid]; if (f) { dropFile(f.url); if (f.thumb && f.thumb !== f.url) dropFile(f.thumb); delete d.files[fid]; } }
+        if (coll === 'pings' || coll === 'resources') for (const fid of (item.files || []).map((f) => f.id)) { const f = d.files[fid]; if (f) { dropFile(f.url); if (f.thumb && f.thumb !== f.url) dropFile(f.thumb); delete d.files[fid]; } }
         if (coll === 'clients') for (const p of Object.values(d.projects)) if (p.clientId === id) { p.clientId = ''; upsert(cid, 'projects', p); }
         save(); removeItem(cid, coll, id);
         return json(res, 200, { ok: true });
@@ -2744,7 +2760,7 @@ async function timeApi(req, res, url, x, sub) {
 
 function publicFile(f) { return { id: f.id, kind: f.kind, name: f.name, type: f.type, ext: f.ext || '', size: f.size, url: f.url, thumb: f.thumb || '', w: f.w || 0, h: f.h || 0 }; }
 // Link uploaded files to a ping. Only the uploader's own unattached files (or ones already on this ping) can be used.
-function attachFiles(x, ids, pingId, current) {
+function attachFiles(x, ids, pingId, current, key = 'ping') {
   if (!Array.isArray(ids)) return current;
   if (ids.length > 10) bad('You can attach up to 10 files');
   const keep = [];
@@ -2752,9 +2768,9 @@ function attachFiles(x, ids, pingId, current) {
     const f = x.d.files[id];
     if (!f) continue;
     const mine = f.status === 'pending' && f.by === x.uid;
-    const already = f.status === 'attached' && f.scope && f.scope.ping === pingId;
+    const already = f.status === 'attached' && f.scope && f.scope[key] === pingId;
     if (!mine && !already) continue;
-    f.status = 'attached'; f.scope = { ping: pingId };
+    f.status = 'attached'; f.scope = { [key]: pingId };
     keep.push(publicFile(f));
   }
   for (const old of current || []) if (!keep.some((k) => k.id === old.id)) { const f = x.d.files[old.id]; if (f) { dropFile(f.url); if (f.thumb && f.thumb !== f.url) dropFile(f.thumb); delete x.d.files[old.id]; } }

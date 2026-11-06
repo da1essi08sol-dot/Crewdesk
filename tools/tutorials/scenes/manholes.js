@@ -1,7 +1,7 @@
 module.exports = async (setup) => { const T = await setup('manholes');
   await T.card('Manhole maps', 'Record every chamber on the satellite map'); await T.uncard();
-  await T.go('#/files', 1400);
-  await T.cap('Files lists every manhole map. Or open a project → Maps.', 2400);
+  await T.go('#/maps', 1400);
+  await T.cap('Files → Maps lists every manhole map. Or open a project → Maps.', 2400);
   await T.tap('.mh-card >> nth=0', 3500);
   await T.cap('Each pin is a manhole, coloured by type, with its reference.', 2800);
   await T.cap('Tap one to open its record.', 1200);

@@ -398,7 +398,7 @@ VIEWS.ping = {
 A['open-ping'] = (el, e) => { if (e && e.target.closest('a,button,[data-person]') && e.target.closest('a,button,[data-person]') !== el) return; location.hash = '#/ping/' + el.dataset.id; };
 document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches && e.target.matches('.ping[data-act="open-ping"]')) location.hash = '#/ping/' + e.target.dataset.id; });
 A['att-view'] = (el) => {
-  const p = Object.values(S.pings).find((x) => (x.files || []).some((f) => f.id === el.dataset.file)); if (!p) return;
+  const p = Object.values(S.pings).concat(Object.values(S.resources || {})).find((x) => (x.files || []).some((f) => f.id === el.dataset.file)); if (!p) return;
   const imgs = p.files.filter((f) => f.kind === 'image');
   openViewer(imgs.map((f) => ({ url: f.url, by: p.createdBy, at: p.createdAt, caption: f.name, where: p.title, alt: f.name })), imgs.findIndex((f) => f.id === el.dataset.file));
 };

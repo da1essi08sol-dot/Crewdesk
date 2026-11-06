@@ -76,6 +76,13 @@ const pick = (a) => a[Math.floor(rnd() * a.length)];
   [['idea', 'Could we get a second drone battery for long flights?', 'new', 3], ['bug', 'Calendar on my phone didn’t show Monday’s site visit', 'seen', 5], ['idea', 'Add a checklist for van kit before leaving the office', 'new', 1], ['question', 'Can I carry over 2 days holiday into next year?', 'done', 9]]
     .forEach(([kind, text, status, ago], i) => { const s = id(); const u = U[[3, 6, 10, 13][i]]; d.suggestions[s] = { id: s, kind, text, status, reply: status === 'done' ? 'Yes — up to 5 days. Chloe' : '', repliedBy: status === 'done' ? U[11] : '', repliedAt: 0, userId: u, createdBy: u, createdAt: now - ago * day, updatedAt: now }; });
   const pg = id(); d.pings[pg] = { id: pg, title: 'New site safety rules', body: 'Hi-vis and boots on every site from Monday. Rail sites need your PTS card.', pinned: true, files: [], readBy: {}, createdBy: U[0], createdAt: now - 2 * day, updatedAt: now - 2 * day };
+  d.resources = d.resources || {};
+  [['Total station setup guide', 'Training', 'Step-by-step setup, levelling and backsight checks for the Leica TS16. Read before your first solo job.', 1],
+   ['Manhole survey procedure', 'Procedures', 'How we lift covers safely, measure cover and invert levels, and record photos. Always work in pairs on the road.', 0],
+   ['RAMS template', 'Forms & templates', 'Risk assessment and method statement template for site visits. Fill in and send to the site manager before arrival.', 1],
+   ['Working near railways', 'Health & safety', 'PTS rules, lookouts and site access for Network Rail sites.', 0],
+   ['Civil 3D linework standards', 'Software guides', 'Layer names, codes and line styles we use for topo drawings.', 2]]
+    .forEach(([title, category, body, by], i) => { const rid = id(); d.resources[rid] = { id: rid, title, category, body, files: [], createdBy: U[by], createdAt: now - (i + 1) * 3 * day, updatedAt: now - (i + 1) * 3 * day }; });
   // A manhole map on the Elm Road job, part done.
   {
     const pr = {}; const PRE = [['Fire water', '#e5484d', 'hydrant', 'Fire Hydrant'], ['Clean water', '#2f7de1', 'tap', 'Water Tap'], ['Surface water', '#30a46c', 'drop', 'Water Drop'], ['Foul water', '#8d5a33', 'drain', 'Drain'], ['Combined sewer', '#8e4ec6', 'pipe', 'Sewer Pipe'], ['Unknown', '#868e96', 'question', 'Question Mark']];

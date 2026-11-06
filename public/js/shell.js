@@ -35,7 +35,7 @@ async function loadCompany(keepView = false) {
   let st;
   try { st = await capi('GET', '/state'); }
   catch (e) { if (e.status === 401) return; toast(e.message, true); S.cid = null; store.set('cd_cid', null); return boot(); }
-  Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, tasks: st.tasks, clients: st.clients, pings: st.pings,
+  Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, tasks: st.tasks, clients: st.clients, pings: st.pings, resources: st.resources || {},
     photos: st.photos, projects: st.projects, events: st.events, finance: st.finance, chats: st.chats, invites: st.invites || [], favs: st.favs || { projects: [] },
     inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg, suggestions: st.suggestions || {}, gdrive: st.gdrive || null, sheetUploads: st.sheetUploads || {}, totals: st.totals || { tasks: {}, projects: {} }, projectCounts: st.projectCounts || {} });
   S.mhPresets = st.mhPresets || {}; S.mhMaps = st.mhMaps || {}; S.mhCounts = st.mhCounts || {}; S.mapsKey = st.mapsKey || ''; if (!keepView) S.manholes = {};
@@ -124,7 +124,7 @@ function updateChrome() {
   const hiddenTabs = moreTabs(); setBadge('more', hiddenTabs.includes('admin') ? newSug : 0);
   document.title = (chatN + pingN ? `(${chatN + pingN}) ` : '') + 'Crewdesk';
   const r = parseHash();
-  const map = { project: 'projects', client: 'clients', person: 'team', ping: 'pings', company: 'companies' };
+  const map = { project: 'projects', client: 'clients', person: 'team', ping: 'pings', company: 'companies', maps: 'files', resource: 'files', mhmap: 'files' };
   let active = map[r.name] || r.name;
   if (active === 'timesheet' && r.args[1] && r.args[1] !== S.user.id && isAdmin()) active = 'admin';
   const tabs = myTabs();
@@ -386,7 +386,7 @@ function searchAll(q) {
     ['Archived projects', 'archive', '#/projects', 'archive old finished jobs folders clear pdf report', () => { S.projFilter = 'archived'; }], ['Calendar', 'cal', '#/calendar', 'events diary schedule site visits gateshead warrington calendars'],
     ['Chat', 'chat', '#/chat', 'messages group dm talk'], ['Pings', 'ping', '#/pings', 'announcements notices'], ['My timesheet', 'timesheet', '#/timesheet', 'hours overtime holiday xlsx download upload month year review'],
     ['Team & map', 'team', '#/team', 'people staff colleagues map locations'], ['Clients', 'contacts', '#/clients', 'customers contacts'], ['Suggestions', 'bulb', '#/suggest', 'ideas bugs hr question feedback'],
-    ['Files', 'folder', '#/files', 'manhole maps photos attachments documents drawings'], ['Manhole maps', 'pin', '#/files', 'manhole drainage sewer utility survey map satellite'],
+    ['Files', 'folder', '#/files', 'resources training documents guides forms attachments'], ['Maps', 'pin', '#/maps', 'manhole maps photos'], ['Manhole maps', 'pin', '#/maps', 'manhole drainage sewer utility survey map satellite'],
     ['Tutorials', 'play', '#/tutorials', 'help videos guide how to learn tour promo'], ['My settings', 'user', '#/profile', 'profile photo name theme dark light tabs password notifications'],
     ['Spreadsheets', 'sheet', '#/sheets', 'finance money invoices excel'], ['Privacy', 'lock', '#/privacy', 'data policy'], ['Terms', 'help', '#/terms', 'conditions']];
   if (isAdmin()) PAGES.push(['Admin dashboard', 'admin', '#/admin', 'working now people overview'], ['Timesheets (admin)', 'timesheet', '#/admin/timesheets', 'everyone zip incomplete google drive'],

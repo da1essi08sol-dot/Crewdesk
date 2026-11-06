@@ -1,7 +1,7 @@
 // Plotting manholes: edit mode, choosing a type, placing by tap or GPS, moving, filling in survey details and photos.
 module.exports = async (setup) => { const T = await setup('mhplot');
   await T.card('Plotting manholes', 'Put every chamber on the map, on site or in the office'); await T.uncard();
-  await T.go('#/files', 1200);
+  await T.go('#/maps', 1200);
   await T.tap('.mh-card >> nth=0', 3200);
   await T.cap('Switch to Edit mode to add and move manholes.', 1300);
   await T.tap('[data-act="mh-mode"][data-m="edit"]', 1300);

@@ -7,7 +7,7 @@
 set -e
 T="$(cd "$(dirname "$0")" && pwd)"; APP="$(cd "$T/../.." && pwd)"; W="$T/.work"; mkdir -p "$W/raw"
 [ -d "$W/tiles/20" ] || python3 "$T/mktiles.py"
-LIST="$*"; [ -z "$LIST" ] && LIST="promo home projects timesheet calendar chat team suggest admin mhplot manholes sheets settings"
+LIST="$*"; [ -z "$LIST" ] && LIST="promo home projects timesheet calendar chat team suggest admin files mhplot manholes sheets settings"
 for s in $LIST; do for d in 0 1; do
   pkill -f crewdesk-tutorials 2>/dev/null || true; sleep 0.5
   node "$T/demo-data.js" "$W/data" >/dev/null

@@ -262,7 +262,7 @@ VIEWS.mhmap = {
   manual: true,
   render(id) {
     const mp = S.mhMaps[id];
-    if (!mp) return `<a class="back" href="#/files">${ic('back')}Files</a><div class="card empty"><h3>Map not found</h3><div class="small">It may have been deleted, or you don’t have access to its project.</div></div>`;
+    if (!mp) return `<a class="back" href="#/maps">${ic('back')}Maps</a><div class="card empty"><h3>Map not found</h3><div class="small">It may have been deleted, or you don’t have access to its project.</div></div>`;
     return '<div class="mh-holder"></div>';
   },
   async mount(id) {
@@ -695,15 +695,81 @@ function projectMapsTab(p) {
     ${list.length ? mhMapCards(list) : `<div class="card empty">${mhIcon('cover', 28)}<h3>No manhole maps yet</h3><div class="small">Make one to start pinning manholes on the satellite map.</div></div>`}`;
 }
 // "Files": everything attached to projects you can see — manhole maps first.
-VIEWS.files = {
+VIEWS.maps = {
   render() {
     const byP = {}; for (const mp of Object.values(S.mhMaps)) (byP[mp.projectId] = byP[mp.projectId] || []).push(mp);
     const photoN = {}; for (const ph of Object.values(S.photos)) photoN[ph.projectId] = (photoN[ph.projectId] || 0) + 1;
     const pids = [...new Set(Object.keys(byP).concat(Object.keys(photoN)))].filter((id) => S.projects[id]).sort((a, b) => S.projects[a].name.localeCompare(S.projects[b].name));
-    return `<div class="page-head"><div><h1>Files</h1><div class="sub">Manhole maps and photos for the projects you work on.</div></div>
+    return `<a class="back" href="#/files">${ic('back')}Files</a><div class="page-head"><div><h1>Maps</h1><div class="sub">Manhole maps and photos for the projects you work on.</div></div>
         <button class="btn primary" data-act="mh-new-map">${ic('plus')}<span>Create manhole map</span></button></div>
       ${pids.length ? pids.map((id) => { const p = S.projects[id]; return `<div class="section"><div class="section-head"><h2 class="row tight"><span class="team-swatch" style="background:${esc(p.color || 'var(--line-2)')};width:10px;height:10px;border-radius:50%"></span>${esc(projLabel(p))}</h2>
           ${photoN[id] ? `<a class="btn sm" href="#/project/${id}/photos">${ic('gallery')}<span>${plural(photoN[id], 'photo')}</span></a>` : ''}</div>${mhMapCards(byP[id] || []) || '<p class="small muted">No manhole maps.</p>'}</div>`; }).join('')
         : `<div class="card empty">${mhIcon('cover', 28)}<h3>Nothing here yet</h3><div class="small">Create a manhole map for a project to get started.</div></div>`}`;
   },
+};
+
+// ---------------------------------------------------------------- Files: training documents and resources, plus the Maps folder
+const RES_CATS = ['Training', 'Health & safety', 'Procedures', 'Forms & templates', 'Software guides', 'Company documents'];
+VIEWS.files = {
+  render() {
+    const all = Object.values(S.resources || {}).sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+    const cats = [...new Set(all.map((r) => r.category).filter(Boolean))].sort();
+    const cat = S.resCat || ''; const q = (S.resQ || '').toLowerCase();
+    const list = all.filter((r) => (!cat || r.category === cat) && (!q || `${r.title} ${r.body} ${r.category} ${(r.files || []).map((f) => f.name).join(' ')}`.toLowerCase().includes(q)));
+    const nMaps = Object.keys(S.mhMaps || {}).length;
+    const card = (r) => {
+      const img = (r.files || []).find((f) => f.kind === 'image'); const docs = (r.files || []).filter((f) => f.kind !== 'image');
+      return `<a class="res-card card" href="#/resource/${r.id}">${img ? `<div class="res-cover"><img src="${esc(img.thumb || img.url)}" alt="" loading="lazy"></div>` : `<div class="res-cover res-noimg">${ic('folder')}</div>`}
+        <div class="res-body">${r.category ? `<span class="pill">${esc(r.category)}</span>` : ''}<h3>${esc(r.title)}</h3>${r.body ? `<p class="small muted res-snip">${esc(r.body.slice(0, 160))}</p>` : ''}
+        <div class="row tight wrap tiny muted">${docs.slice(0, 3).map((f) => `<span class="res-file"><span class="ext ${esc(f.ext)}">${esc(f.ext)}</span>${esc(f.name)}</span>`).join('')}${docs.length > 3 ? `<span>+${docs.length - 3} more</span>` : ''}</div></div></a>`;
+    };
+    return `<div class="page-head"><div><h1>Files</h1><div class="sub">Training documents and resources for everyone in ${esc(S.company.name)}.</div></div>
+        <button class="btn primary" data-act="res-new">${ic('plus')}<span>Add resource</span></button></div>
+      <div class="res-folders"><a class="res-folder card" href="#/maps"><span class="res-fic">${mhIcon('cover', 22)}</span><div class="grow"><b>Maps</b><div class="tiny muted">${plural(nMaps, 'manhole map')} · project photos</div></div>${ic('right')}</a></div>
+      <div class="section-head" style="margin-top:6px"><h2>Resources</h2></div>
+      <div class="res-tools"><input class="input" type="search" placeholder="Search resources" value="${esc(S.resQ || '')}" data-res-q aria-label="Search resources">
+        <div class="seg res-cats" role="radiogroup" aria-label="Category"><button type="button" class="${!cat ? 'on' : ''}" data-act="res-cat" data-c="">All</button>${cats.map((c) => `<button type="button" class="${cat === c ? 'on' : ''}" data-act="res-cat" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div></div>
+      ${list.length ? `<div class="res-grid">${list.map(card).join('')}</div>` : `<div class="card empty">${ic('folder')}<h3>${all.length ? 'Nothing matches' : 'No resources yet'}</h3><div class="small">${all.length ? 'Try another search or category.' : 'Add training documents, guides, forms and photos for the team.'}</div></div>`}`;
+  },
+  mount() { const i = $('[data-res-q]'); if (i) { let t = 0; i.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { S.resQ = i.value; const pos = i.selectionStart; renderView(); const j = $('[data-res-q]'); if (j) { j.focus(); j.setSelectionRange(pos, pos); } }, 250); }); } },
+};
+A['res-cat'] = (el) => { S.resCat = el.dataset.c; renderView(); };
+VIEWS.resource = {
+  render(id) {
+    const r = (S.resources || {})[id];
+    if (!r) return `<a class="back" href="#/files">${ic('back')}Files</a><div class="card empty"><h3>Not found</h3><div class="small">It may have been deleted.</div></div>`;
+    const imgs = (r.files || []).filter((f) => f.kind === 'image'); const docs = (r.files || []).filter((f) => f.kind !== 'image');
+    const canEdit = isAdmin() || r.createdBy === S.user.id;
+    return `<a class="back" href="#/files">${ic('back')}Files</a>
+      <article class="card stack">
+        ${imgs[0] ? `<button type="button" class="res-hero" data-act="att-view" data-file="${imgs[0].id}"><img src="${esc(imgs[0].url)}" alt="${esc(imgs[0].name)}"></button>` : ''}
+        <div class="row between top"><div class="grow">${r.category ? `<span class="pill">${esc(r.category)}</span>` : ''}<h1 style="margin-top:4px">${esc(r.title)}</h1></div>
+          ${canEdit ? `<div class="row tight"><button class="btn sm icon" data-act="res-edit" data-id="${r.id}" aria-label="Edit">${ic('edit')}</button><button class="btn sm icon danger" data-act="res-del" data-id="${r.id}" aria-label="Delete">${ic('trash')}</button></div>` : ''}</div>
+        <div class="row small muted">${avatar(member(r.createdBy), 'sm')}<span>${personName(r.createdBy)} · ${esc(fmtDateTime(r.createdAt))}${r.updatedAt && r.updatedAt - r.createdAt > 60000 ? ' · edited' : ''}</span></div>
+        ${r.body ? `<div class="pre">${linkify(r.body)}</div>` : ''}
+        ${docs.length ? `<div><div class="label" style="margin-bottom:6px">Files (${docs.length})</div><div class="stack tight">${docs.map((f) => `<div class="att-row"><span class="att-doc" style="height:auto;border:0;padding:0"><span class="ext ${esc(f.ext)}">${esc(f.ext)}</span></span><div class="grow"><div class="ellipsis small bold">${esc(f.name)}</div><div class="tiny muted">${f.size ? (f.size > 1e6 ? (f.size / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1e3)) + ' KB') : ''}</div></div>
+          <button class="btn sm" data-act="file-open" ${fileAttrs(f)}>${ic('eye')}Open</button><button class="btn sm icon" data-act="file-save" ${fileAttrs(f)} aria-label="Save ${esc(f.name)}">${ic('download')}</button></div>`).join('')}</div></div>` : ''}
+        ${imgs.length > 1 ? `<div><div class="label" style="margin-bottom:6px">Photos (${imgs.length})</div><div class="att-grid">${imgs.map((f) => `<button type="button" data-act="att-view" data-file="${f.id}" aria-label="View ${esc(f.name)}"><img src="${esc(f.thumb || f.url)}" alt="${esc(f.name)}" loading="lazy"></button>`).join('')}</div></div>` : ''}
+      </article>`;
+  },
+};
+function resSheet(r) {
+  const v = r || { title: '', body: '', category: '', files: [] };
+  const cats = [...new Set(RES_CATS.concat(Object.values(S.resources || {}).map((x) => x.category).filter(Boolean)))];
+  sheet(`${sheetHead(r ? 'Edit resource' : 'Add resource')}<form class="stack" data-form="res" data-id="${r ? r.id : ''}">
+    <label class="field"><span>Title</span><input name="title" value="${esc(v.title)}" required maxlength="150" placeholder="e.g. Total station setup guide"></label>
+    <label class="field"><span>Category</span><input name="category" list="res-cats" value="${esc(v.category)}" maxlength="40" placeholder="Pick or type a category"><datalist id="res-cats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
+    <label class="field"><span>Description</span><textarea name="body" rows="5" placeholder="What it is and when to use it…">${esc(v.body)}</textarea></label>
+    ${attachmentBox(v.files || [])}
+    <p class="small muted" style="margin:0">The first photo becomes the cover picture. Everyone in ${esc(S.company.name)} can see this.</p>
+    <div class="err-msg" data-err></div>
+    <div class="sheet-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${r ? 'Save' : 'Add resource'}</button></div></form>`, null, { wide: true });
+}
+A['res-new'] = () => resSheet(null);
+A['res-edit'] = (el) => resSheet(S.resources[el.dataset.id]);
+A['res-del'] = async (el) => { if (!(await confirmBox('Delete this resource?', 'Its attached files are deleted too.'))) return; if (await deleteItem('resources', el.dataset.id)) location.hash = '#/files'; };
+F.res = async (f, d, close) => {
+  if (f._pending) throw new Error('Wait for your files to finish uploading');
+  const item = await saveItem('resources', f.dataset.id || null, { title: d.title, category: d.category, body: d.body, files: attachedIds(f) });
+  close(); toast(f.dataset.id ? 'Saved' : 'Resource added'); location.hash = '#/resource/' + item.id;
 };

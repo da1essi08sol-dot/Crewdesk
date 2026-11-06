@@ -1768,3 +1768,30 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .mh-legend { z-index: 4; }
 .mh-modebar[hidden] { display: none !important; }
 @media (pointer: coarse), (max-width: 700px) { .mh-3dpad { display: none; } }
+/* Files: resources */
+.res-folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.res-folder { display: flex; align-items: center; gap: 12px; padding: 14px 16px; color: inherit; text-decoration: none; }
+.res-folder:hover { border-color: var(--accent); }
+.res-fic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft, #e3f3ea); color: var(--accent, #18693f); flex: none; }
+.res-tools { display: grid; gap: 8px; margin-bottom: 12px; }
+.res-cats { overflow-x: auto; flex-wrap: nowrap; max-width: 100%; scrollbar-width: none; } .res-cats::-webkit-scrollbar { display: none; }
+.res-cats button { white-space: nowrap; }
+.res-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.res-card { display: flex; flex-direction: column; padding: 0; overflow: hidden; color: inherit; text-decoration: none; transition: transform .2s, box-shadow .2s; }
+.res-card:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(0,0,0,.12); }
+.res-cover { aspect-ratio: 16 / 9; background: var(--surface-2); overflow: hidden; }
+.res-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.res-noimg { display: grid; place-items: center; color: var(--muted); }
+.res-noimg svg { width: 34px; height: 34px; opacity: .6; }
+.res-body { padding: 12px 14px 14px; display: grid; gap: 6px; }
+.res-body h3 { margin: 0; font-size: 16px; }
+.res-snip { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.res-file { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.res-hero { border: 0; padding: 0; margin: -16px -16px 4px; border-radius: inherit; overflow: hidden; max-height: 340px; cursor: zoom-in; background: none; }
+.res-hero img { width: 100%; max-height: 340px; object-fit: cover; display: block; }
+.res-folder > svg { width: 18px; height: 18px; flex: none; color: var(--muted); }
+.res-fic svg { width: 22px; height: 22px; }
+.res-folders a.res-folder { display: flex; flex-direction: row; align-items: center; } .res-grid a.res-card { display: flex; flex-direction: column; }
+.res-cover.res-noimg { aspect-ratio: auto; height: 56px; }
+@media (max-width: 600px) { .res-grid a.res-card { flex-direction: row; } .res-grid .res-cover { width: 96px; flex: none; aspect-ratio: auto; height: auto; min-height: 96px; } .res-grid .res-cover.res-noimg { height: auto; } }
+.res-body .pill { justify-self: start; }
