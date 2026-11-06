@@ -7,10 +7,10 @@
 // ---- icon library (one consistent stroke style; each has a searchable name)
 const MH_ICONS = {
   hydrant: ['Fire Hydrant', '<path d="M9 21h6M8 21V10h8v11M7 10h10M9 10V7a3 3 0 0 1 6 0v3M5 13h3M16 13h3M12 4V3"/>'],
-  tap: ['Water Tap', '<path d="M4 9h9a3 3 0 0 1 3 3v2M4 6v6M8 9V6h4M16 18c0 1.1-.9 2-2 2s-2-.9-2-2c0-1.4 2-3.5 2-3.5s2 2.1 2 3.5Z"/>'],
+  tap: ['Water Tap', '<path d="M7 3.5h6M10 3.5V7M4 7h9a4 4 0 0 1 4 4v1.5h-3V11a1 1 0 0 0-1-1H4z"/><path d="M15.5 15.5s-2 2.2-2 3.5a2 2 0 0 0 4 0c0-1.3-2-3.5-2-3.5Z"/>'],
   drop: ['Water Drop', '<path d="M12 3s6 6.4 6 11a6 6 0 0 1-12 0c0-4.6 6-11 6-11Z"/><path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5"/>'],
-  drain: ['Drain', '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 4v16M12 4v16M16 4v16"/>'],
-  pipe: ['Sewer Pipe', '<path d="M3 9h12a4 4 0 0 1 4 4v8M3 15h9a1 1 0 0 1 1 1v5M3 7v10M17 21h4"/>'],
+  drain: ['Drain', '<circle cx="12" cy="12" r="9"/><path d="M8 8.5h8M6.5 12h11M8 15.5h8"/>'],
+  pipe: ['Sewer Pipe', '<path d="M3 7h6a5 5 0 0 1 5 5M3 17h6a5 5 0 0 0 5-5h7"/><path d="M18 9l3 3-3 3"/>'],
   question: ['Question Mark', '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 0 1 5 .2c0 1.8-2.5 2.3-2.5 4"/><path d="M12 17h.01"/>'],
   valve: ['Valve', '<path d="M3 8v8l9-4-9-4ZM21 8v8l-9-4 9-4ZM12 12V5M9 5h6"/>'],
   cover: ['Manhole Cover', '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>'],
@@ -176,26 +176,24 @@ function mhGoogle(el, view) {
     if (m3) return;
     const lib = await g.importLibrary('maps3d'); const c = m.getCenter(); const phone = matchMedia('(max-width: 700px)').matches;
     m3 = new lib.Map3DElement({ center: { lat: c.lat(), lng: c.lng(), altitude: 0 }, range: Math.max(60, 591657550 / 2 ** m.getZoom() / 4), tilt: 60, heading: 0, mode: 'SATELLITE',
-      qualityMode: 'FIDELITY', maxMemoryMegabytes: phone ? 768 : 2048, gestureHandling: 'GREEDY', minTilt: 0, maxTilt: 90, minAltitude: 0, defaultUIHidden: true });
+      qualityMode: phone ? 'PERFORMANCE' : 'FIDELITY', maxMemoryMegabytes: phone ? 320 : 2048, gestureHandling: 'GREEDY', minTilt: 0, maxTilt: 90, minAltitude: 0, defaultUIHidden: true });
     m3.className = 'mh-3d'; el.appendChild(m3);
     // our own camera pad: works the same with a mouse or a thumb
     const pad = document.createElement('div'); pad.className = 'mh-3dpad';
     const B = (a, label, svg) => `<button type="button" data-cam="${a}" aria-label="${label}" title="${label}">${svg}</button>`;
-    pad.innerHTML = B('in', 'Closer', '+') + B('out', 'Further', '−') + B('left', 'Turn left', '⟲') + B('right', 'Turn right', '⟳') + B('up', 'Tilt up', '⤒') + B('down', 'Look down', '⤓') + B('orbit', 'Fly around', '◎') + B('north', 'Face north', 'N');
+    pad.innerHTML = B('in', 'Closer', '+') + B('out', 'Further', '−') + B('left', 'Turn left', '⟲') + B('right', 'Turn right', '⟳') + B('up', 'Tilt up', '⤒') + B('down', 'Look down', '⤓');
     el.appendChild(pad);
-    let orbitT = 0;
+    // Move the camera through Google's own animation so mouse/touch gestures carry on from where the buttons left it.
     const cam = (k) => {
       if (!m3) return;
-      if (k === 'orbit') { if (orbitT) { clearInterval(orbitT); orbitT = 0; return; } orbitT = setInterval(() => { if (!m3) return clearInterval(orbitT); m3.heading = ((m3.heading || 0) + 0.6) % 360; }, 30); return; }
-      if (orbitT) { clearInterval(orbitT); orbitT = 0; }
-      if (k === 'in') m3.range = Math.max(3, m3.range * 0.85); if (k === 'out') m3.range = Math.min(20000, m3.range / 0.85);
-      if (k === 'left') m3.heading = ((m3.heading || 0) - 6 + 360) % 360; if (k === 'right') m3.heading = ((m3.heading || 0) + 6) % 360;
-      if (k === 'up') m3.tilt = Math.min(90, (m3.tilt || 0) + 4); if (k === 'down') m3.tilt = Math.max(0, (m3.tilt || 0) - 4);
-      if (k === 'north') m3.heading = 0;
+      const c = m3.center; const cp = { center: { lat: c.lat, lng: c.lng, altitude: c.altitude || 0 }, range: m3.range, tilt: m3.tilt || 0, heading: m3.heading || 0 };
+      if (k === 'in') cp.range = Math.max(3, cp.range * 0.8); if (k === 'out') cp.range = Math.min(20000, cp.range / 0.8);
+      if (k === 'left') cp.heading = (cp.heading - 10 + 360) % 360; if (k === 'right') cp.heading = (cp.heading + 10) % 360;
+      if (k === 'up') cp.tilt = Math.min(90, cp.tilt + 6); if (k === 'down') cp.tilt = Math.max(0, cp.tilt - 6);
+      try { m3.flyCameraTo({ endCamera: cp, durationMillis: 140 }); } catch (_) { Object.assign(m3, { range: cp.range, heading: cp.heading, tilt: cp.tilt }); }
     };
     let hold = 0;
-    pad.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-cam]'); if (!b) return; e.preventDefault(); const k = b.dataset.cam; cam(k); clearInterval(hold); if (k !== 'orbit' && k !== 'north') hold = setInterval(() => cam(k), 60); });
-    m3.addEventListener('pointerdown', () => { if (orbitT) { clearInterval(orbitT); orbitT = 0; } });
+    pad.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-cam]'); if (!b) return; e.preventDefault(); const k = b.dataset.cam; cam(k); clearInterval(hold); hold = setInterval(() => cam(k), 150); });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => pad.addEventListener(ev, () => clearInterval(hold)));
     lib3 = lib; try { pinLib = await g.importLibrary('marker'); } catch (_) {}
     sync3d();
@@ -330,8 +328,8 @@ function mhPaintChrome() {
   const lv = MH.eng ? MH.eng.getView().layer : 'satellite'; const ll = $('#mh-root [data-layer-label]'); if (ll) ll.textContent = { satellite: 'Satellite', hybrid: 'Hybrid', roadmap: 'Map' }[lv];
   const bar = $('#mh-root .mh-modebar');
   if (MH.adding || MH.hintMode !== MH.mode) { bar.classList.remove('gone'); clearTimeout(MH.hintT); if (!MH.adding) { MH.hintMode = MH.mode; MH.hintT = setTimeout(() => bar.classList.add('gone'), 2500); } }
-  bar.innerHTML = MH.adding ? `${icSize('pin', 16)}<span>Tap the map where <b>${esc(mhNextRef())}</b> is — or</span><button data-act="mh-add-here">use my GPS position</button><button data-act="mh-add-cancel">Cancel</button>`
-    : MH.mode === 'edit' ? `${icSize('edit', 15)}<span><b>Edit mode</b> — add, drag and edit manholes</span>` : `${icSize('eye', 15)}<span><b>View mode</b> — tap a manhole to see it</span>`;
+  bar.innerHTML = MH.adding ? `${icSize('pin', 16)}<span>Tap the map where <b>${esc(mhNextRef())}</b> is — or</span><button data-act="mh-add-here">use my GPS position</button><button data-act="mh-add-cancel">Cancel</button>` : '';
+  bar.hidden = !MH.adding;
   const pr = S.mhPresets[MH.preset] || mhPresetList().find((q) => q.name === 'Unknown') || mhPresetList()[0]; if (pr) MH.preset = pr.id;
   const pb = $('#mh-root .mh-preset'); if (pb && pr) { pb.style.setProperty('--c', pr.color); pb.innerHTML = `<span class="mh-dotic">${mhIcon(pr.icon, 16)}</span><span class="ellipsis">${esc(pr.name)}</span>${icSize('down', 14)}`; }
   const f = MH.filter; const fd = $('#mh-root .mh-fdot'); if (fd) fd.hidden = !(f.status.size || f.types.size);

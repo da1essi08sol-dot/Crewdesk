@@ -1,0 +1,31 @@
+// Plotting manholes: edit mode, choosing a type, placing by tap or GPS, moving, filling in survey details and photos.
+module.exports = async (setup) => { const T = await setup('mhplot');
+  await T.card('Plotting manholes', 'Put every chamber on the map, on site or in the office'); await T.uncard();
+  await T.go('#/files', 1200);
+  await T.tap('.mh-card >> nth=0', 3200);
+  await T.cap('Switch to Edit mode to add and move manholes.', 1300);
+  await T.tap('[data-act="mh-mode"][data-m="edit"]', 1300);
+  await T.cap('Choose the type first — it sets the colour and icon.', 1300);
+  await T.tap('[data-act="mh-pick-preset"]', 1300);
+  await T.tap('.menu-pop [data-act="mh-use-preset"] >> nth=1', 1100);
+  await T.cap('Tap “Add manhole”, then tap exactly where the cover is.', 1400);
+  await T.tap('[data-act="mh-add"]', 1200);
+  const b = await T.page.locator('#mh-map').boundingBox(); await T.page.mouse.click(b.x + b.width * 0.62, b.y + b.height * 0.40); await T.w(2400);
+  await T.cap('It gets the next reference number automatically.', 2000);
+  await T.cap('Add the levels and details while you’re there.', 1200);
+  const f = async (k, v) => { const sel = `[data-mh-f="survey.${k}"]`; if (await T.page.locator(sel).count()) { await T.page.locator(sel).first().scrollIntoViewIfNeeded(); await T.type(sel, v); await T.page.keyboard.press('Tab'); await T.w(500); } };
+  await f('coverLevel', '48.62'); await f('invertLevel', '47.17'); await f('depth', '1.45');
+  await T.cap('Use “Add photo” to take pictures with your camera.', 2200);
+  await T.page.locator('.mh-pbody').evaluate((e) => e.scrollTo({ top: 0, behavior: 'smooth' })); await T.w(700);
+  await T.tap('[data-act="mh-close"]', 900);
+  await T.cap('On site? Add manhole → “use my GPS position” drops it where you stand.', 1500);
+  await T.tap('[data-act="mh-add"]', 1300);
+  await T.tap('[data-act="mh-add-here"]', 2600);
+  await T.tap('[data-act="mh-close"]', 900);
+  await T.cap('Drag any pin to move it. Everyone sees the change live.', 1200);
+  const pin = T.page.locator('.mhm >> nth=2'); const pb = await pin.boundingBox();
+  if (pb) { await T.page.mouse.move(pb.x + pb.width / 2, pb.y + pb.height / 2); await T.page.mouse.down(); for (let i = 1; i <= 12; i++) { await T.page.mouse.move(pb.x + pb.width / 2 + i * 4, pb.y + pb.height / 2 + i * 2); await T.w(35); } await T.page.mouse.up(); await T.w(1600); }
+  await T.cap('Know the coordinates? Coordinates → type them in → Add manhole here.', 1300);
+  await T.tap('[data-act="mh-coords"]', 2400); await T.page.keyboard.press('Escape'); await T.w(600);
+  await T.nocap();
+  await T.card('Plotting manholes', 'Tap, GPS or coordinates — then fill in the details', 2200); await T.done(); };
