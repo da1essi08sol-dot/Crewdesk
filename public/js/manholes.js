@@ -77,7 +77,7 @@ function loadGoogleMaps(key) {
   }));
 }
 async function mhEngine(el, view) {
-  if (S.mapsKey && !window.__cdGmFailed) { try { await loadGoogleMaps(S.mapsKey); return mhGoogle(el, view); } catch (_) { /* fall back */ } }
+  if (S.mapsKey && !window.__cdGmFailed) { try { const ok = await capi('POST', '/usage/gmaps', { kind: 'map' }).catch(() => ({ ok: true })); if (!ok.ok) throw new Error('limit'); await loadGoogleMaps(S.mapsKey); return mhGoogle(el, view); } catch (_) { /* fall back */ } }
   if (!window.maplibregl) { loadCss('/vendor/maplibre/maplibre-gl.css'); await loadScript('/vendor/maplibre/maplibre-gl-csp.js'); maplibregl.setWorkerUrl('/vendor/maplibre/maplibre-gl-csp-worker.js'); }
   return mhLibre(el, view);
 }
@@ -148,7 +148,7 @@ function mhGoogle(el, view) {
     fit(pts) { if (!pts.length) return; const b = new g.LatLngBounds(); pts.forEach((p) => b.extend(p)); m.fitBounds(b, 70); g.event.addListenerOnce(m, 'idle', () => { if (m.getZoom() > 20) m.setZoom(20); }); },
     resize() {},
     destroy() {},
-    geocode(q) { return new Promise((resolve) => new g.Geocoder().geocode({ address: q, region: 'GB' }, (res, st) => resolve(st === 'OK' ? res.slice(0, 6).map((r) => ({ name: r.formatted_address, lat: r.geometry.location.lat(), lng: r.geometry.location.lng() })) : []))); },
+    geocode(q) { capi('POST', '/usage/gmaps', { kind: 'geo' }).catch(() => {}); return new Promise((resolve) => new g.Geocoder().geocode({ address: q, region: 'GB' }, (res, st) => resolve(st === 'OK' ? res.slice(0, 6).map((r) => ({ name: r.formatted_address, lat: r.geometry.location.lat(), lng: r.geometry.location.lng() })) : []))); },
     attribution: 'Google',
   };
 }

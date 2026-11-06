@@ -76,6 +76,7 @@ const fileStore = {
   async delChunk(key) { try { fs.unlinkSync(chunkFile(key)); } catch (_) {} },
   async putFile(name, type, buf) { fs.writeFileSync(path.join(UPLOADS, path.basename(name)), buf); },
   async delFile(name) { try { fs.unlinkSync(path.join(UPLOADS, path.basename(name))); } catch (_) {} },
+  async sizes() { const o = {}; for (const n of fs.readdirSync(UPLOADS)) { try { o[n] = fs.statSync(path.join(UPLOADS, n)).size; } catch (_) {} } return o; },
   async getFile(name) {
     const f = path.join(UPLOADS, path.basename(name));
     return fs.existsSync(f) ? { type: TYPES[path.extname(f).toLowerCase()] || 'application/octet-stream', data: fs.readFileSync(f) } : null;
@@ -112,6 +113,7 @@ const pgStore = {
   async putFile(name, type, buf) { await pool.query('INSERT INTO crewdesk_files (name, type, data) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING', [name, type, buf]); },
   async getFile(name) { const r = await pool.query('SELECT type, data FROM crewdesk_files WHERE name = $1', [path.basename(name)]); return r.rows[0] || null; },
   async delFile(name) { await pool.query('DELETE FROM crewdesk_files WHERE name = $1', [path.basename(name)]); },
+  async sizes() { const r = await pool.query('SELECT name, length(data) AS n FROM crewdesk_files'); const o = {}; for (const x of r.rows) o[x.name] = Number(x.n); return o; },
   async backup(gz) {
     const client = await pool.connect();
     try {
@@ -130,6 +132,29 @@ if (r2.configured()) {
   storage.putFile = (name, type, buf) => r2.put(path.basename(name), type, buf);
   storage.getFile = async (name) => (await r2.get(path.basename(name))) || base.getFile(name);
   storage.delFile = async (name) => { await r2.del(path.basename(name)).catch((e) => console.error('R2 delete:', e.message)); await base.delFile(name).catch(() => {}); };
+}
+
+// Free-allowance guard: counts storage, R2 operations and Google Maps calls each month and refuses anything that would go past 95% of the free tier.
+const FREE = { bytes: 10e9, r2A: 1e6, r2B: 10e6, gMaps: 10000, gGeo: 10000, gStatic: 10000 };
+const LOCK_AT = 0.95;
+function usage() {
+  db.meta = db.meta || {}; const mon = new Date().toISOString().slice(0, 7);
+  const u = db.meta.usage = db.meta.usage || {}; if (u.month !== mon) Object.assign(u, { month: mon, r2A: 0, r2B: 0, gMaps: 0, gGeo: 0, gStatic: 0 });
+  db.meta.fsize = db.meta.fsize || {}; return u;
+}
+const usedBytes = () => Object.values(usage() && db.meta.fsize).reduce((a, b) => a + b, 0);
+function overFree(k, add = 1) { const u = usage(); return k === 'bytes' ? usedBytes() + add > FREE.bytes * LOCK_AT : (u[k] || 0) + add > FREE[k] * LOCK_AT; }
+function countUse(k, n = 1) { const u = usage(); u[k] = (u[k] || 0) + n; save(); }
+{
+  const s = { putFile: storage.putFile, getFile: storage.getFile, delFile: storage.delFile };
+  const viaR2 = r2.configured();
+  storage.putFile = async (name, type, buf) => {
+    if (overFree('bytes', buf.length)) throw new HttpError(507, 'Storage is nearly at the free limit, so uploads are paused. An admin can free space in More → Data.');
+    if (viaR2 && overFree('r2A')) throw new HttpError(507, 'Uploads are paused until next month to stay inside the free allowance.');
+    await s.putFile(name, type, buf); usage(); db.meta.fsize[path.basename(name)] = buf.length; if (viaR2) countUse('r2A'); save();
+  };
+  storage.getFile = async (name) => { if (viaR2) { if (overFree('r2B')) return null; countUse('r2B'); } return s.getFile(name); };
+  storage.delFile = async (name) => { usage(); delete db.meta.fsize[path.basename(name)]; save(); return s.delFile(name); };
 }
 
 // Saving: debounced (but never put off for more than 2 seconds), core plus only the pieces that changed.
@@ -462,7 +487,7 @@ function stateFor(x) {
   mhSeed(x.c.id, d); out.mhPresets = d.mhPresets; out.mhMaps = {};
   for (const mp of Object.values(d.mhMaps)) if (canSeeTask(x, mp)) out.mhMaps[mp.id] = mhPublicMap(mp);
   out.mhCounts = {}; for (const r of Object.values(d.manholes)) if (!r.deleted && out.mhMaps[r.mapId]) out.mhCounts[r.mapId] = (out.mhCounts[r.mapId] || 0) + 1;
-  out.mapsKey = process.env.GOOGLE_MAPS_KEY || '';
+  out.mapsKey = overFree('gMaps') ? '' : (process.env.GOOGLE_MAPS_KEY || '');
   out.tasks = {}; out.projectCounts = {};
   for (const t of Object.values(d.tasks)) {
     const p = d.projects[t.projectId]; if (!p || !out.projects[p.id]) continue;
@@ -1312,6 +1337,35 @@ function removeMemberData(c, id) {
 async function companyApi(req, res, url, user, cid, sub, cur) {
   const M = req.method; let m;
   const x = companyCtx(user, cid); const { c, role, d } = x;
+  if (sub === '/usage/gmaps' && M === 'POST') { const b = await readBody(req); const k = b.kind === 'geo' ? 'gGeo' : 'gMaps'; if (overFree(k)) return json(res, 200, { ok: false }); countUse(k); return json(res, 200, { ok: true }); }
+  if (sub.startsWith('/data') && !isAdmin(role)) deny('Only admins can manage data');
+  if (sub === '/data' && M === 'GET') {
+    const u = usage(); const files = {};
+    for (const [n, e] of Object.entries(db.fileIndex)) if (e.cid === cid) { const k = e.kind || 'other'; files[k] = files[k] || { n: 0, bytes: 0 }; files[k].n++; files[k].bytes += db.meta.fsize[n] || 0; }
+    const records = {}; for (const k of Object.keys(d)) { try { records[k] = Buffer.byteLength(JSON.stringify(d[k])); } catch (_) {} }
+    let dbBytes = 0; try { dbBytes = Buffer.byteLength(JSON.stringify(db)); } catch (_) {}
+    return json(res, 200, { month: u.month, lockAt: LOCK_AT, free: Object.assign({ db: 0.5e9 }, FREE), used: { bytes: usedBytes(), db: dbBytes, r2A: u.r2A, r2B: u.r2B, gMaps: u.gMaps, gGeo: u.gGeo, gStatic: u.gStatic }, r2: r2.configured(), google: !!process.env.GOOGLE_MAPS_KEY, files, records });
+  }
+  if (sub === '/data/test' && M === 'GET') {
+    const results = [];
+    if (!r2.configured()) results.push({ name: 'Cloudflare R2', ok: false, msg: 'not set up (add the R2_ variables in Render)' });
+    else { try { const k = 'crewdesk-test-' + uid(8) + '.txt'; await r2.put(k, 'text/plain', Buffer.from('ok')); const g = await r2.get(k); await r2.del(k); countUse('r2A', 2); countUse('r2B'); results.push({ name: 'Cloudflare R2', ok: !!(g && String(g.data) === 'ok'), msg: 'wrote but could not read back' }); } catch (e) { results.push({ name: 'Cloudflare R2', ok: false, msg: e.message.slice(0, 120) }); } }
+    return json(res, 200, { results });
+  }
+  if (sub === '/data/export' && M === 'GET') {
+    const out = []; const safe = (s) => String(s).replace(/[^\w.-]+/g, '_');
+    for (const k of Object.keys(d)) out.push({ name: `records/${safe(k)}.json`, data: Buffer.from(JSON.stringify(d[k], null, 1)) });
+    for (const [n, e] of Object.entries(db.fileIndex)) if (e.cid === cid) { try { const f = await storage.getFile(n); if (f) out.push({ name: `files/${safe(e.kind || 'other')}/${safe(n)}`, data: f.data }); } catch (_) {} }
+    const zip = writeZip(out); const fn = `${safe(c.name || 'company')}_data_${new Date().toISOString().slice(0, 10)}.zip`;
+    res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${fn}"`, 'Content-Length': zip.length }); return res.end(zip);
+  }
+  if (sub === '/data/clear' && M === 'POST') {
+    const b = await readBody(req); if (b.confirm !== true) bad('Confirm to clear this data');
+    if (b.area === 'chat') { for (const ch of Object.keys(d.messages)) { dropMessageFiles(d.messages[ch]); d.messages[ch] = []; touchChannel(cid, ch); broadcast(cid, () => ({ t: 'msgClear', channel: ch })); } }
+    else if (b.area === 'sheets') { for (const [k, s] of Object.entries(d.sheetUploads || {})) { dropFile('/uploads/' + s.stored); delete d.sheetUploads[k]; } save(); }
+    else bad('Pick something to clear');
+    return json(res, 200, { ok: true });
+  }
 
   if (sub === '/state' && M === 'GET') {
     const locs = {};
@@ -2139,7 +2193,8 @@ function mhFit(list, mp, W, H) {
   return { c, z };
 }
 async function mhStaticMap(list, mp) {
-  if (!STATIC_KEY || typeof fetch !== 'function') return null;
+  if (!STATIC_KEY || typeof fetch !== 'function' || overFree('gStatic')) return null;
+  countUse('gStatic');
   const { c, z } = mhFit(list, mp, 640, 640);
   const u = `https://maps.googleapis.com/maps/api/staticmap?center=${c.lat},${c.lng}&zoom=${z}&size=640x640&scale=2&maptype=satellite&format=jpg&key=${encodeURIComponent(STATIC_KEY)}`;
   const r = await fetch(u); if (!r.ok || !/jpeg/.test(r.headers.get('content-type') || '')) return null;
@@ -2822,6 +2877,7 @@ async function main() {
   }
   setInterval(sweep, 10 * 60e3).unref(); setTimeout(sweep, 5000).unref();
   setInterval(reminders, 60e3).unref();
+  setTimeout(async () => { try { const o = await storage.sizes(); usage(); for (const [k, v] of Object.entries(o)) if (!(k in db.meta.fsize)) db.meta.fsize[k] = v; save(); } catch (e) { console.error('Size check:', e.message); } }, 20e3).unref();
   setInterval(backupIfDue, 3 * 3600e3).unref(); setTimeout(backupIfDue, 30e3).unref();
   http.createServer(handler).listen(PORT, '0.0.0.0', () => {
     console.log(`\n  Crewdesk is running on port ${PORT} (storage: ${DATABASE_URL ? 'Postgres database' : 'data folder'})\n`);

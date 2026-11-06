@@ -456,6 +456,7 @@ VIEWS.more = {
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
         <a href="#/files">${ic('folder')}<span class="grow">Files</span><span class="tiny muted">Manhole maps · photos</span>${ic('right')}</a>
+        ${isAdmin() ? `<a href="#/data">${ic('download')}<span class="grow">Data & free allowance</span>${ic('right')}</a>` : ''}
         <a href="#/tutorials">${ic('play')}<span class="grow">Tutorials</span><span class="tiny muted">${TUTORIALS.length + 1} videos</span>${ic('right')}</a>
         <button data-act="demo-co">${ic('building')}<span class="grow">Demo</span><span class="tiny muted">Practice company</span>${ic('right')}</button>
       </div></div>
@@ -591,7 +592,7 @@ const TUTORIALS = [
   ['Admin dashboard', 'admin', ['See who’s working now, today’s activity and everyone’s hours.', 'Timesheets → Current shows this month and, in red, any past months that aren’t complete. People and admins are reminded every Monday.', 'Timesheets → Archive files completed months by year and month, with downloads and zips.', 'Connect Google Drive to copy timesheets there automatically.']],
   ['Manhole maps', 'manholes', ['Open a project → Maps, or More → Files, to open or create a manhole map. Only people on that project can see it.', 'Tap a pin to open its record: status, location, photos, notes, survey details and history.', 'Switch to Edit mode to add (tap “Add manhole” then the map, or use your GPS position), drag pins, change status and fill in levels.', 'Everyone sees changes live; if two people change the same thing you’ll be asked which to keep.', '⋯ → Export makes a manhole index, a labelled map, a full PDF report or an Excel register with the fields you choose. Manhole types are shared company-wide and anyone can add them.']],
   ['Spreadsheets & stats', 'sheets', ['Admins only. Money has income, expenses and a projection.', 'Hours shows hours by month and type of work, the busiest projects, weekdays and everyone’s totals.', 'Performance shows projects against plan, tasks completed, typical working days, timesheet completion and rework.']],
-  ['Settings, search & more', 'settings', ['More has your timesheet, Files, Tutorials and a private Demo company to practise in.', 'Edit your photo and details in My settings; choose light or dark and your tab bar.', 'Search finds jobs by number, people, places — and parts of the app such as “tutorials” or “holiday”.']],
+  ['Settings, search & more', 'settings', ['More has your timesheet, Files, Tutorials and a private Demo company to practise in.', 'Admins: More → Data & free allowance shows storage and Google Maps use against the free limits, downloads all company data as a zip, and clears chat or uploaded timesheets. Uploads and Google maps pause at 95% so nothing is ever charged.', 'Edit your photo and details in My settings; choose light or dark and your tab bar.', 'Search finds jobs by number, people, places — and parts of the app such as “tutorials” or “holiday”.']],
 ];
 const tutWide = () => matchMedia('(min-width: 900px)').matches;
 const tutSrc = (v) => (tutWide() ? '/tutorials/desk/' : '/tutorials/') + v;
@@ -746,3 +747,44 @@ function statsPage(tab) {
       <div class="card"><div class="section-head"><h3>Day notes written</h3><span class="tiny muted">Days with “Finish for today” notes</span></div>${byNotes.length ? hbars(byNotes.map(([id, v]) => ({ label: esc(member(id).name), v, max: 100, txt: v + '%', c: 'var(--blue)' }))) : '<div class="empty small">No day notes in this period.</div>'}</div></div>
     <p class="tiny muted">Figures come from logged time, ticked-off tasks and day notes. Use them as a conversation starter, not a verdict — survey work varies a lot from job to job.</p>`;
 }
+
+// Data & free allowance (admins): app-wide usage against the free tiers, this company's breakdown, export and clearing.
+const DATA_ROWS = [['bytes', 'Photo & file storage (R2)', 'b'], ['db', 'Database (Neon)', 'b'], ['r2A', 'Uploads this month (R2 Class A)', 'n'], ['r2B', 'File reads this month (R2 Class B)', 'n'], ['gMaps', 'Google map loads this month', 'n'], ['gGeo', 'Google place searches this month', 'n'], ['gStatic', 'Google PDF map images this month', 'n']];
+const fmtB = (b) => b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.round(b / 1e3) + ' KB';
+VIEWS.data = {
+  manual: true,
+  render() {
+    if (!isAdmin()) return '<div class="card empty"><h3>Admins only</h3></div>';
+    const D = S._data;
+    if (!D || Date.now() - (S._dataAt || 0) > 30000) { S._dataAt = Date.now(); capi('GET', '/data').then((r) => { S._data = r; scheduleRender(); }).catch((e) => toast(e.message)); if (!D) return '<div class="page-head"><h1>Data</h1></div><div class="card">Loading…</div>'; }
+    const pct = (k) => Math.min(100, (D.used[k] || 0) / D.free[k] * 100);
+    const lock = D.lockAt * 100;
+    const warn = DATA_ROWS.filter(([k]) => pct(k) >= 80);
+    const bar = ([k, label, t]) => { const p = pct(k); const col = p >= lock ? 'var(--danger,#d33)' : p >= 80 ? '#e8a020' : 'var(--accent,#1a9)';
+      return `<div style="margin:10px 0"><div class="row"><span class="grow small">${label}</span><span class="tiny muted">${t === 'b' ? fmtB(D.used[k] || 0) + ' of ' + fmtB(D.free[k]) : (D.used[k] || 0).toLocaleString() + ' of ' + D.free[k].toLocaleString()} · ${p.toFixed(1)}%</span></div>
+        <div style="height:10px;border-radius:6px;background:var(--line,#ddd);position:relative;overflow:hidden"><div style="width:${p}%;height:100%;background:${col};transition:width .6s"></div><div style="position:absolute;left:${lock}%;top:0;bottom:0;width:2px;background:#000;opacity:.4"></div></div></div>`; };
+    const comp = Object.entries(D.files).sort((a, b) => b[1].bytes - a[1].bytes);
+    const rec = Object.entries(D.records).filter(([, v]) => v > 200).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    return `<div class="page-head"><div><h1>Data</h1><div class="sub">Free allowance for ${esc(D.month)}. Anything that would go past ${lock}% is blocked, so you’re never charged.</div></div></div>
+      ${warn.length ? `<div class="card" style="border-left:4px solid #e8a020"><b>Getting close:</b> ${warn.map(([, l]) => esc(l)).join(', ')}. At ${lock}% that feature pauses until space is freed or the month resets.</div>` : ''}
+      <div class="card"><h2>Whole app (all companies)</h2>${DATA_ROWS.map(bar).join('')}
+        <p class="tiny muted">${D.r2 ? 'Cloudflare R2 is connected.' : 'Cloudflare R2 isn’t set up — files are kept in the database.'} ${D.google ? 'Google Maps key is set; at the limit maps switch to free Esri imagery.' : 'No Google Maps key — free Esri imagery is used.'}</p>
+        <button class="btn sm" data-act="data-test">${ic('check')}Test connections</button> <span id="data-test-out" class="small"></span></div>
+      <div class="card"><h2>This company’s files</h2>${comp.length ? comp.map(([k, v]) => `<div class="row small" style="margin:4px 0"><span class="grow">${esc(k)} (${v.n})</span><span>${fmtB(v.bytes)} · ${(v.bytes / D.free.bytes * 100).toFixed(2)}%</span></div>`).join('') : '<p class="small muted">No files yet.</p>'}
+        <h2 style="margin-top:14px">This company’s records</h2>${rec.map(([k, v]) => `<div class="row small" style="margin:4px 0"><span class="grow">${esc(k)}</span><span>${fmtB(v)} · ${(v / D.free.db * 100).toFixed(2)}%</span></div>`).join('')}</div>
+      <div class="card"><h2>Download & clear</h2><a class="btn" href="/api/c/${S.cid}/data/export" download>${ic('download')}<span>Download all data (zip, sorted into folders)</span></a>
+        <div class="row wrap tight" style="margin-top:10px"><button class="btn sm danger" data-act="data-clear" data-area="chat">${ic('trash')}Clear all chat history</button><button class="btn sm danger" data-act="data-clear" data-area="sheets">${ic('trash')}Clear uploaded timesheets</button></div>
+        <p class="tiny muted">Only affects this company. Archived projects can be cleared from Projects → Archive.</p></div>`;
+  },
+};
+A['data-clear'] = async (el) => {
+  const area = el.dataset.area; const what = area === 'chat' ? 'every chat’s history and attachments' : 'all uploaded timesheets';
+  if (!(await confirmBox('Clear data?', `This clears ${what} for this company and can’t be undone. Download the zip first if you need it.`, 'Clear'))) return;
+  try { await capi('POST', '/data/clear', { area, confirm: true }); toast('Cleared'); S._data = null; scheduleRender(); } catch (e) { toast(e.message); }
+};
+A['data-test'] = async () => {
+  const out = document.getElementById('data-test-out'); if (out) out.textContent = 'Testing…';
+  try { const r = await capi('GET', '/data/test');
+    if (S.mapsKey) { try { await loadGoogleMaps(S.mapsKey); r.results.push({ name: 'Google Maps', ok: !!(window.google && google.maps && !window.__cdGmFailed), msg: 'key rejected — check the website restriction' }); } catch (e) { r.results.push({ name: 'Google Maps', ok: false, msg: 'key rejected — check the website restriction' }); } } else r.results.push({ name: 'Google Maps', ok: false, msg: 'no key set (or monthly limit reached)' }); if (out) out.textContent = r.results.map((x) => `${x.name}: ${x.ok ? '✓' : '✗ ' + x.msg}`).join(' · '); } catch (e) { if (out) out.textContent = e.message; }
+};
+
