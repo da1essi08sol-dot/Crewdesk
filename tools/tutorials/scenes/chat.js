@@ -1,0 +1,11 @@
+module.exports = async (setup) => { const T = await setup('chat');
+  await T.card('Chat & attachments', 'Talk to your team on site'); await T.uncard();
+  await T.go('#/chat', 1400);
+  await T.cap('Company chat, groups and direct messages live here.', 2600);
+  await T.tap('a:has-text("Durham field crew")', 1400);
+  await T.type('textarea', 'Running 10 mins late — traffic on the A1');
+  await T.page.keyboard.press('Enter'); await T.w(1200);
+  await T.cap('Tap the paperclip to send a photo, a picture or a file.', 1600);
+  await T.tap('[data-act="attach"]', 2400); await T.page.keyboard.press('Escape'); await T.w(600);
+  await T.cap(T.desk ? 'On a computer you can just drag files into the chat.' : 'Project chats open from the project page.', 2600);
+  await T.nocap(); await T.card('Chat & attachments', 'Everyone in the loop', 2200); await T.done(); };

@@ -1,0 +1,22 @@
+module.exports = async (setup) => { const T = await setup('calendar');
+  await T.card('Calendar', 'Everything planned, at a glance'); await T.uncard();
+  await T.go('#/calendar', 1400);
+  await T.cap('The month view shows what’s on each day.', 2400);
+  if (!T.desk) { await T.tap('[data-act="cal-pick"] >> nth=12', 1400); await T.cap('Tap a day to see its events and tasks underneath.', 2400); }
+  else await T.cap('Events, tasks and project dates sit on each day.', 2400);
+  await T.cap('Switch to Week or List for more detail.', 1400);
+  await T.tap('[data-act="cal-view"][data-v="week"]', 2000);
+  await T.tap('[data-act="cal-view"][data-v="list"]', 2200);
+  await T.cap('Only want your own? Use “Just me” and the filters.', 1400);
+  await T.tap('[data-act="cal-mine"]', 2000); await T.tap('[data-act="cal-mine"]', 800);
+  await T.tap('[data-act="cal-view"][data-v="month"]', 900);
+  await T.cap('Admins can add named calendars — e.g. Gateshead and Warrington.', 1600);
+  await T.tap('[data-act="cal-manage"]', 1000);
+  await T.type('.cal-row >> nth=0 >> .input', 'Gateshead'); await T.tap('[data-act="cal-row-add"]', 400); await T.type('.cal-row >> nth=1 >> .input', 'Warrington');
+  await T.tap('[data-act="cal-save"]', 1600);
+  await T.cap('Everyone can show or hide each one.', 2200);
+  await T.cap('Tap + to add an event and pick its calendar.', 1400);
+  await T.tap('[data-act="new-event"]', 1200);
+  await T.type('.sheet input[name="title"]', 'Site visit — Durham viaduct'); await T.w(1400);
+  await T.page.keyboard.press('Escape'); await T.nocap();
+  await T.card('Calendar', 'Plan the week with your team', 2200); await T.done(); };

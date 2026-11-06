@@ -302,7 +302,7 @@ async function mhSave(id, patch, okMsg) {
   } catch (e) {
     if (e.status === 409 && e.data && e.data.item) {
       const theirs = e.data.item; S.manholes[id] = theirs; mhSyncMarkers(); if (MH.sel === id) mhPaintPanel();
-      const who = personName(theirs.updatedBy);
+      const who = member(theirs.updatedBy).name;
       const show = (k) => { const v = k.startsWith('survey.') ? (theirs.survey || {})[k.slice(7)] : theirs[k]; const mine = k.startsWith('survey.') ? (patch.survey || {})[k.slice(7)] : patch[k]; const lbl = k.replace('survey.', '').replace(/([A-Z])/g, ' $1').toLowerCase();
         const f = (x) => (k === 'status' ? (MH_ST[x] || [x])[0] : k === 'presetId' ? ((S.mhPresets[x] || {}).name || '—') : x == null || x === '' ? '—' : String(x)); return `<div class="row between small"><span class="muted">${esc(lbl)}</span><span>${esc(who)}: <b>${esc(f(v))}</b> · you: <b>${esc(f(mine))}</b></span></div>`; };
       const ok = await confirmBox('Someone else just changed this', `${who} saved a change to ${theirs.ref} while you were editing. Keep their version, or replace it with yours?`, 'Use mine', false, `<div class="stack tight" style="margin:10px 0">${e.data.conflict.map(show).join('')}</div>`);
@@ -333,7 +333,7 @@ function mhField(r, f, edit) {
 }
 function mhPaintPanel(fresh) {
   const panel = $('#mh-root .mh-panel'); const r = S.manholes[MH.sel]; if (!panel || !r) return;
-  if (r.deleted) { panel.innerHTML = `<div class="mh-ph"><button class="mh-ib" data-act="mh-close" aria-label="Close">${icSize('x', 18)}</button></div><div class="card empty small">${esc(r.ref)} was deleted by ${esc(personName(r.deleted.by))}.<button class="btn sm" style="margin-top:10px" data-act="mh-restore" data-id="${r.id}">Restore it</button></div>`; return; }
+  if (r.deleted) { panel.innerHTML = `<div class="mh-ph"><button class="mh-ib" data-act="mh-close" aria-label="Close">${icSize('x', 18)}</button></div><div class="card empty small">${esc(r.ref)} was deleted by ${personName(r.deleted.by)}.<button class="btn sm" style="margin-top:10px" data-act="mh-restore" data-id="${r.id}">Restore it</button></div>`; return; }
   // don't redraw under someone typing; just mark the change
   const typing = panel.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if (typing && !fresh) { panel.classList.add('stale'); return; }
@@ -363,11 +363,11 @@ function mhPaintPanel(fresh) {
           ${(MH.pend[r.id] || []).map((u) => `<figure class="mh-pic up"><img src="${u.preview}" alt=""><figcaption class="tiny muted">${u.failed ? 'Failed' : 'Uploading…'}</figcaption></figure>`).join('')}</div>` : `<p class="small muted">No photos yet.</p>`}</section>
       <section class="mh-sec"><h4>Survey details</h4>${edit ? `<div class="form-grid">${MH_SURVEY_FIELDS.map((f) => mhField(r, f, true)).join('')}</div>` : surveyView || '<p class="small muted">Nothing recorded yet.</p>'}</section>
       <section class="mh-sec"><h4>Notes <span class="muted">${(r.notes || []).length || ''}</span></h4>
-        ${(r.notes || []).map((n) => `<div class="mh-note">${avatar(member(n.by), 'xs')}<div class="grow"><div class="tiny muted">${esc(personName(n.by))} · ${esc(timeAgo(n.at))}</div><p class="pre small">${linkify(n.text)}</p></div>${isAdmin() || n.by === S.user.id ? `<button class="btn ghost sm icon" data-act="mh-note-del" data-n="${n.id}" aria-label="Delete note">${icSize('trash', 14)}</button>` : ''}</div>`).join('')}
+        ${(r.notes || []).map((n) => `<div class="mh-note">${avatar(member(n.by), 'xs')}<div class="grow"><div class="tiny muted">${personName(n.by)} · ${esc(timeAgo(n.at))}</div><p class="pre small">${linkify(n.text)}</p></div>${isAdmin() || n.by === S.user.id ? `<button class="btn ghost sm icon" data-act="mh-note-del" data-n="${n.id}" aria-label="Delete note">${icSize('trash', 14)}</button>` : ''}</div>`).join('')}
         <form class="mh-noteform" data-form="mh-note"><textarea name="text" rows="1" placeholder="Add a note for the team" required maxlength="2000"></textarea><button class="btn sm primary">${icSize('send', 14)}</button></form></section>
       <section class="mh-sec"><h4>Record</h4>
-        <div class="mh-kv"><span>Recorded</span><b>${esc(fmtDateTime(r.createdAt))} · ${esc(personName(r.createdBy))}</b></div>
-        <div class="mh-kv"><span>Last updated</span><b>${esc(fmtDateTime(r.updatedAt))} · ${esc(personName(r.updatedBy))}</b></div>
+        <div class="mh-kv"><span>Recorded</span><b>${esc(fmtDateTime(r.createdAt))} · ${personName(r.createdBy)}</b></div>
+        <div class="mh-kv"><span>Last updated</span><b>${esc(fmtDateTime(r.updatedAt))} · ${personName(r.updatedBy)}</b></div>
         <div class="mh-kv"><span>Edited by</span><b>${avatarStack(r.editors || [], 6)}</b></div>
         <details class="mh-hist"><summary>History (${(r.history || []).length})</summary>${(r.history || []).slice().reverse().map((h) => `<div class="mh-h"><span class="tiny muted">${esc(fmtDateTime(h.at))}</span><span class="small"><b>${esc(firstName(h.by))}</b> ${esc(h.detail)}</span></div>`).join('')}</details></section>
       ${edit ? `<button class="btn block ghost danger" data-act="mh-del" style="margin:6px 0 20px">${ic('trash')}Delete ${esc(r.ref)}</button>` : ''}
@@ -482,7 +482,7 @@ A['mh-menu'] = (el) => {
 A['mh-fit'] = () => { const l = mhOnMap(MH.id); if (l.length) MH.eng.fit(l); else toast('No manholes on this map yet'); };
 A['mh-activity'] = async () => {
   let items = []; try { items = (await capi('GET', `/mh/maps/${MH.id}/activity`)).items; } catch (e) { return toast(e.message, true); }
-  sheet(`${sheetHead('Activity history')}<div class="mh-act">${items.length ? items.map((h) => `<div class="mh-h">${avatar(member(h.by), 'xs')}<div class="grow"><span class="small"><b>${esc(personName(h.by))}</b> ${esc(h.detail)}</span><span class="tiny muted" style="display:block">${esc(fmtDateTime(h.at))}${h.mhId && S.manholes[h.mhId] && !S.manholes[h.mhId].deleted ? ` · <a href="#" data-act="mh-goto-mh" data-id="${h.mhId}" data-close>Show ${esc(h.ref)}</a>` : ''}</span></div></div>`).join('') : '<p class="small muted">Nothing yet.</p>'}</div>`, null, { wide: true });
+  sheet(`${sheetHead('Activity history')}<div class="mh-act">${items.length ? items.map((h) => `<div class="mh-h">${avatar(member(h.by), 'xs')}<div class="grow"><span class="small"><b>${personName(h.by)}</b> ${esc(h.detail)}</span><span class="tiny muted" style="display:block">${esc(fmtDateTime(h.at))}${h.mhId && S.manholes[h.mhId] && !S.manholes[h.mhId].deleted ? ` · <a href="#" data-act="mh-goto-mh" data-id="${h.mhId}" data-close>Show ${esc(h.ref)}</a>` : ''}</span></div></div>`).join('') : '<p class="small muted">Nothing yet.</p>'}</div>`, null, { wide: true });
 };
 A['mh-export'] = () => {
   const mp = S.mhMaps[MH.id]; let sel = []; try { sel = JSON.parse(store.get('cd_mhFields') || 'null') || MH_EXPORT_DEFAULT; } catch (_) { sel = MH_EXPORT_DEFAULT; }
@@ -524,7 +524,7 @@ A['mh-preset-edit'] = (el) => {
     <div class="field"><span>Icon</span><label class="search" style="margin-bottom:8px"><input class="input" type="search" placeholder="Search icons — e.g. valve, gas, tap" data-input="mhp-icon-q" autocomplete="off">${ic('search')}</label>
       <div class="mh-iconlib">${Object.entries(MH_ICONS).map(([k, [n]]) => `<label class="mh-icopt" data-name="${esc(n.toLowerCase())}"><input type="radio" name="icon" value="${k}" ${k === p.icon ? 'checked' : ''} class="sr-only" data-change="mhp-icon"><span>${mhIcon(k, 22)}<small>${esc(n)}</small></span></label>`).join('')}</div></div>
     <label class="field"><span>Description</span><textarea name="description" rows="2" maxlength="300" placeholder="Optional">${esc(p.description || '')}</textarea></label>
-    ${el.dataset.id ? `<p class="tiny muted">Made by ${esc(personName(p.createdBy))}${p.updatedBy ? ` · last changed by ${esc(personName(p.updatedBy))} ${esc(timeAgo(p.updatedAt))}` : ''}</p>` : ''}
+    ${el.dataset.id ? `<p class="tiny muted">Made by ${personName(p.createdBy)}${p.updatedBy ? ` · last changed by ${personName(p.updatedBy)} ${esc(timeAgo(p.updatedAt))}` : ''}</p>` : ''}
     <div class="err-msg" data-err></div>
     <div class="sheet-foot">${el.dataset.id ? `<button type="button" class="btn danger" data-act="mh-preset-del" data-id="${el.dataset.id}" style="margin-right:auto">Delete</button>` : ''}<button type="button" class="btn" data-act="mh-presets" data-close>Back</button><button class="btn primary">Save</button></div></form>`, null, { wide: true });
 };

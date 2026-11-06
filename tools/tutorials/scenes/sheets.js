@@ -1,0 +1,13 @@
+module.exports = async (setup) => { const T = await setup('sheets');
+  await T.card('Spreadsheets & stats', 'Money, hours and performance (admins)'); await T.uncard();
+  await T.go('#/sheets', 1600);
+  await T.cap('Money: income, expenses and a projection.', 2400);
+  await T.go('#/sheets/hours', 2600);
+  await T.cap('Hours: by month and type of work, projects and weekdays.', 2600);
+  await T.scroll(T.desk ? 600 : 900, 2000);
+  await T.cap('Everyone’s hours, overtime and field/office split.', 2400);
+  await T.go('#/sheets/performance', 2600);
+  await T.cap('Performance: projects against plan, tasks done, typical day and more.', 2600);
+  await T.scroll(T.desk ? 600 : 900, 2200);
+  await T.cap('Pick a range at the top — this month up to 12 months.', 2400);
+  await T.nocap(); await T.card('Spreadsheets & stats', 'Know how the work is going', 2200); await T.done(); };

@@ -1,0 +1,13 @@
+module.exports = async (setup) => { const T = await setup('admin');
+  await T.card('Admin dashboard', 'For owners and admins'); await T.uncard();
+  await T.go('#/admin', 1500);
+  await T.cap('See who’s working right now and on what.', 2800);
+  await T.scroll(400, 1500); await T.scroll(-400, 800);
+  await T.tap('.tabs a:has-text("People")', 1400);
+  await T.cap('People shows everyone’s hours and overtime this month.', 2600);
+  await T.tap('.tabs a:has-text("Timesheets")', 1600);
+  await T.cap('Current: this month’s timesheets, and any that aren’t complete in red.', 3000);
+  await T.tap('.seg a:has-text("Archive")', 1600);
+  await T.cap('Completed months file themselves here, by year and month.', 3000);
+  await T.cap('Unfinished ones? People and admins are reminded every Monday.', 2600);
+  await T.nocap(); await T.card('Admin dashboard', 'Your company at a glance', 2200); await T.done(); };

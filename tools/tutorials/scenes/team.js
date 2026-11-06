@@ -1,0 +1,17 @@
+module.exports = async (setup) => { const T = await setup('team');
+  await T.card('Team, teams & map', 'Who’s who, and where'); await T.uncard();
+  await T.go('#/team', 2600);
+  await T.cap('The map shows every live project site. Tap a pin for the site card.', 2400);
+  await T.page.evaluate(() => document.querySelectorAll('#map .map-msg').forEach((x) => x.remove()));
+  await T.tap('#map .mk-job >> nth=0', 2400);
+  await T.cap('“Directions from here” opens your maps app.', 2400);
+  await T.tap('.map-card-x', 600);
+  await T.cap('Tap ⤢ to make the map full screen; ✕ brings you back.', 1400);
+  await T.tap('[data-act="map-full"]', 2200); await T.tap('[data-act="map-unfull"]', 900);
+  await T.scroll(T.desk ? 500 : 640, 1200);
+  await T.cap('People is a dropdown — tap it to see everyone.', 1400);
+  await T.tap('details[data-drop="people"] > summary', 2200); await T.tap('details[data-drop="people"] > summary', 800);
+  await T.cap('Teams underneath: tap one to see who’s in it, and join or leave.', 1600);
+  await T.tap('#team-teams details > summary >> nth=0', 2600);
+  await T.cap('Admins rename a team by tapping its name, and manage members.', 2800);
+  await T.nocap(); await T.card('Team, teams & map', 'Your whole company in one place', 2200); await T.done(); };

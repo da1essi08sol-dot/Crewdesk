@@ -63,7 +63,7 @@ function signOutLocal(msg) {
 
 // ============================================================ frame
 const SIDE_NAV = [['home', 'Home', 'home'], ['projects', 'Projects', 'folder'], ['timesheet', 'My timesheet', 'timesheet'], ['calendar', 'Calendar', 'cal'], ['chat', 'Chat', 'chat'],
-  ['pings', 'Pings', 'ping'], ['team', 'Team & map', 'team'], ['clients', 'Clients', 'contacts'], ['suggest', 'Suggestions', 'bulb']];
+  ['pings', 'Pings', 'ping'], ['team', 'Team & map', 'team'], ['clients', 'Clients', 'contacts'], ['files', 'Files', 'clip'], ['suggest', 'Suggestions', 'bulb']];
 // Everything that can go in the phone's bottom tab bar; people choose up to four, and the rest live under More.
 const TAB_ITEMS = { home: ['Home', 'home'], projects: ['Projects', 'folder'], timesheet: ['Timesheet', 'timesheet'], calendar: ['Calendar', 'cal'], chat: ['Chat', 'chat'],
   pings: ['Pings', 'ping'], team: ['Team', 'team'], clients: ['Clients', 'contacts'], suggest: ['Suggest', 'bulb'], admin: ['Admin', 'admin'], sheets: ['Sheets', 'sheet'] };
@@ -88,7 +88,7 @@ function renderShell() {
       ${coButton()}
       <nav class="stack tight" style="gap:1px" aria-label="Sections">${SIDE_NAV.map((n) => navLink(n)).join('')}
       ${isAdmin() ? `<div class="label navsec">Admin</div>${navLink(['admin', 'Admin dashboard', 'admin'])}${navLink(['sheets', 'Spreadsheets', 'sheet'])}` : ''}
-      ${navLink(['settings', 'Company settings', 'settings'])}</nav>
+      ${navLink(['settings', 'Company settings', 'settings'])}${navLink(['tutorials', 'Tutorials', 'play'])}</nav>
       <div class="grow"></div>
       <button class="navbtn" data-act="me-menu" aria-haspopup="menu" id="side-me"></button>
       <nav class="foot-links" style="justify-content:flex-start;margin:8px 10px 0;gap:12px" aria-label="Legal"><a href="#/privacy">Privacy</a><a href="#/terms">Terms</a><a href="mailto:${esc(S.info.supportEmail || '')}">Support</a></nav>

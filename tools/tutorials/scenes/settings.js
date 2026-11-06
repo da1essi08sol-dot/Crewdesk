@@ -1,0 +1,14 @@
+module.exports = async (setup) => { const T = await setup('settings');
+  await T.card('Settings, search & more', 'Make Crewdesk yours'); await T.uncard();
+  await T.go('#/more', 1400);
+  await T.cap('More has your timesheet, files, tutorials and the Demo company.', 2800);
+  await T.go('#/profile', 1400);
+  await T.cap('Your profile: photo, name, job title and phone.', 2400);
+  await T.scroll(500, 1300);
+  await T.cap('Choose light or dark, and which tabs sit in your bar.', 2400);
+  await T.go('#/settings', 1400);
+  await T.cap('Company settings: invites, working day and permissions.', 2600);
+  await T.go('#/home', 900);
+  await T.cap('Search finds jobs, people — and parts of the app, like “tutorials”.', 1600);
+  await T.tap('[data-act="search"]:visible', 600); await T.page.keyboard.type('tutorials', { delay: 60 }); await T.w(2200); await T.page.keyboard.press('Escape');
+  await T.nocap(); await T.card('Settings, search & more', 'Set it up once', 2200); await T.done(); };

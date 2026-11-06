@@ -1,0 +1,14 @@
+module.exports = async (setup) => { const T = await setup('timesheet');
+  await T.card('My timesheet', 'Built for you from your logged time'); await T.uncard();
+  await T.go('#/timesheet', 1600);
+  await T.cap('Your timesheet fills itself in — and updates live as you log time.', 2800);
+  await T.cap('This month is “In progress”. Past months show Completed or Not complete.', 3000);
+  await T.scroll(420, 1300);
+  await T.cap('Tap a day to see its entries, notes and overtime.', 1500);
+  await T.tap('[data-act="ts-open"] >> nth=1', 2400);
+  await T.cap('Missed something? Tap Add time, or tap an entry to change it.', 2600);
+  await T.scroll(-900, 900);
+  await T.tap('.month-nav a.btn >> nth=0', 1600);
+  await T.cap('A finished month: tap “Review timesheet” to see the spreadsheet.', 2800);
+  await T.cap('Download the month as Excel, named with your initials. Or upload your own.', 3000);
+  await T.nocap(); await T.card('My timesheet', 'No more filling it in on Friday', 2200); await T.done(); };

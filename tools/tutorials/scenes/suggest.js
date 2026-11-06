@@ -1,0 +1,13 @@
+module.exports = async (setup) => { const T = await setup('suggest');
+  await T.card('Suggestions', 'Ideas, problems and HR questions'); await T.uncard();
+  await T.go('#/suggest', 1400);
+  await T.cap('Got an idea, spotted a bug or need HR? Send it here.', 2600);
+  await T.tap('form[data-form="suggest"] [data-act="pick-chip"] >> nth=0', 600);
+  await T.type('form[data-form="suggest"] textarea', 'Could we keep a spare base station battery in each van?');
+  await T.cap('Pick the kind of message, write it and send.', 2200);
+  await T.tap('form[data-form="suggest"] button.primary', 1500);
+  await T.cap('Admins reply, and you see the answer here.', 2400);
+  await T.go('#/admin/suggestions', 1500);
+  await T.cap('Admins see everything in Admin → Suggestions.', 2600);
+  await T.tap('[data-act="sug-filter"] >> nth=1', 1200);
+  await T.nocap(); await T.card('Suggestions', 'Every voice heard', 2200); await T.done(); };
