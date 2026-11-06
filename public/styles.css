@@ -1449,3 +1449,10 @@ label.btn { cursor: pointer; }
 .tut-vid { width: 100%; max-width: 300px; aspect-ratio: 540 / 1168; border-radius: 16px; background: #0f4f2f; display: block; margin: 0 auto; }
 .tut-vid.wide { max-width: 100%; aspect-ratio: 16 / 9; }
 @media (min-width: 760px) { .tut-body { grid-template-columns: 260px 1fr; align-items: start; } .tut-body .tut-vid { margin: 0; } }
+
+.tut-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.tut-list .tut { display: grid; gap: 12px; scroll-margin-top: 70px; }
+.tut-head { display: flex; align-items: center; gap: 10px; }
+.tut-num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: 14px; flex: none; }
+.tut-written summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+@media (min-width: 900px) { .tut-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); align-items: start; } .tut-list .tut:first-child { grid-column: 1 / -1; } .tut-list .tut:first-child .tut-vid { max-width: 820px; } }

@@ -212,7 +212,6 @@ VIEWS.settings = {
     const invites = S.invites.filter((i) => i.state === 'ok');
     const toggle = (k, title, desc) => `<label class="setting"><span><b>${title}</b><br><span class="d">${desc}</span></span><span class="switch"><input type="checkbox" data-change="co-setting" data-k="${k}" ${c.settings[k] ? 'checked' : ''} aria-label="${esc(title)}"><i></i></span></label>`;
     return `<div class="page-head"><div><h1>Company settings</h1><div class="sub">${esc(c.name)} · you’re ${S.role === 'owner' ? 'the owner' : S.role === 'admin' ? 'an admin' : 'a member'}</div></div></div>
-    <a class="card row" href="#/tutorials" style="margin-bottom:14px;justify-content:space-between;text-decoration:none;color:inherit"><span><b>Tutorials</b><br><span class="small muted">Videos and step-by-step guides for every section</span></span><span aria-hidden="true">›</span></a>
     <div class="grid halves">
       <div class="stack">
         ${admin ? `<div class="card stack" id="requests"><h2>Requests to join ${c.requests && c.requests.length ? `<span class="count">${c.requests.length}</span>` : ''}</h2>
@@ -447,6 +446,9 @@ VIEWS.more = {
         <button data-act="edit-tabs">${ic('edit')}<span class="grow">Edit tab bar</span>${ic('right')}</button>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
+        <a href="#/tutorials">${ic('play')}<span class="grow">Tutorials</span><span class="tiny muted">${TUTORIALS.length + 1} videos</span>${ic('right')}</a>
+      </div></div>
+      <div class="card section" style="padding:6px"><div class="menu">
         ${canInvite() ? `<button data-act="invite-new">${ic('userplus')}<span class="grow">Invite people</span>${ic('right')}</button>` : ''}
         <a href="#/settings">${ic('settings')}<span class="grow">Company settings</span>${ic('right')}</a>
         <a href="#/profile">${ic('user')}<span class="grow">My settings</span>${ic('right')}</a>
@@ -580,11 +582,20 @@ const TUTORIALS = [
 VIEWS.tutorials = {
   manual: true,
   render() {
-    return `<a class="back" href="#/settings">${ic('back')}Back</a>
-    <div class="page-head"><div><h1>Tutorials</h1><div class="sub">A short video and a written guide for each part of Crewdesk.</div></div></div>
-    <div class="card tut-promo"><b>Crewdesk in a minute</b><video class="tut-vid wide" src="/tutorials/promo.mp4" poster="/tutorials/promo.jpg" controls playsinline preload="none"></video></div>
-    <div class="stack">${TUTORIALS.map(([t, vid, steps], i) => `<details class="card tut"${i === 0 ? ' open' : ''}><summary><b>${esc(t)}</b></summary>
-      <div class="tut-body"><video class="tut-vid" src="/tutorials/${vid}.mp4" poster="/tutorials/${vid}.jpg" controls playsinline preload="none" aria-label="${esc(t)} video"></video>
-      <ol class="tut-steps">${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol></div></details>`).join('')}</div>`;
+    const all = [['Crewdesk in a minute', 'promo', ['A quick tour of everything Crewdesk does.']]].concat(TUTORIALS.map(([t, v, st]) => [t, v, st]));
+    return `<a class="back" href="#/more">${ic('back')}Back</a>
+    <div class="page-head"><div><h1>Tutorials</h1><div class="sub">${all.length} short videos, in order. Each one plays on to the next.</div></div></div>
+    <ol class="tut-list">${all.map(([t, v, steps], i) => `<li class="card tut" id="tut-${i}">
+      <div class="tut-head"><span class="tut-num">${i + 1}</span><b class="grow">${esc(t)}</b></div>
+      <video class="tut-vid${v === 'promo' ? ' wide' : ''}" data-tut="${i}" src="/tutorials/${v}.mp4" poster="/tutorials/${v}.jpg" controls playsinline webkit-playsinline preload="none" aria-label="${esc(t)}"></video>
+      <details class="tut-written"><summary>Written guide</summary><ol class="tut-steps">${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></details></li>`).join('')}</ol>`;
+  },
+  mount() {
+    const vids = $$('video[data-tut]');
+    vids.forEach((v, i) => {
+      v.addEventListener('play', () => vids.forEach((o) => { if (o !== v && !o.paused) o.pause(); }));
+      v.addEventListener('ended', () => { const n = vids[i + 1]; if (!n) return; n.closest('.tut').scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => n.play().catch(() => {}), 500); });
+    });
   },
 };
+
