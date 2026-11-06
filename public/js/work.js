@@ -20,7 +20,7 @@ function planHtml(plan, actual, opts = {}) {
 
 // ============================================================ PROJECTS
 function projectCard(p) {
-  const ts = projectTasks(p.id); const done = ts.filter((t) => t.done).length;
+  const ts = projectTasks(p.id); const cnt = !ts.length && S.projectCounts[p.id]; const nTasks = cnt ? cnt[0] : ts.length; const done = cnt ? cnt[1] : ts.filter((t) => t.done).length;
   const now = workingOn(p.id).map((e) => e.userId);
   const plan = projectPlanMins(p); const act = plan ? projectPlanActual(p) : projectMins(p.id);
   const people = [...new Set(ts.flatMap((t) => t.assignees || []).concat(p.visibility === 'selected' ? [p.createdBy, ...(p.members || [])] : []))];
@@ -29,7 +29,7 @@ function projectCard(p) {
     ${p.address || S.clients[p.clientId] ? `<div class="small muted ellipsis">${esc([S.clients[p.clientId] && S.clients[p.clientId].name, p.address].filter(Boolean).join(' · '))}</div>` : ''}
     <div class="row wrap tight">${lockPill(p)}${p.archived ? '<span class="pill">Archived</span>' : ''}${now.length ? `<span class="pill live">${plural(now.length, 'person', 'people')} working now</span>` : ''}${p.chat ? `<span class="pill">${icSize('chat', 12)}Chat</span>` : ''}</div>
     ${plan ? planHtml(plan, act) : ''}
-    <div class="foot"><span>${ts.length ? `${done} of ${plural(ts.length, 'task')} done` : 'No tasks yet'}${!plan && act ? ' · ' + esc(fmtDur(act)) + ' logged' : ''}</span>${avatarStack(now.length ? now : people, 5)}</div></a>`;
+    <div class="foot"><span>${nTasks ? `${done} of ${plural(nTasks, 'task')} done` : 'No tasks yet'}${!plan && act ? ' · ' + esc(fmtDur(act)) + ' logged' : ''}</span>${avatarStack(now.length ? now : people, 5)}</div></a>`;
 }
 VIEWS.projects = {
   render() {
@@ -62,7 +62,7 @@ const projLoaded = {};
 async function ensureProject(pid) {
   if (projLoaded[pid]) return;
   projLoaded[pid] = 'loading';
-  try { const r = await capi('GET', `/entries?project=${encodeURIComponent(pid)}`); for (const e of r.items) S.entries[e.id] = e; projLoaded[pid] = true; scheduleRender(); }
+  try { const r = await capi('GET', `/entries?project=${encodeURIComponent(pid)}`); for (const e of r.items) S.entries[e.id] = e; for (const t of r.tasks || []) S.tasks[t.id] = t; projLoaded[pid] = true; scheduleRender(); }
   catch (_) { delete projLoaded[pid]; }
 }
 const canEditProject = (p) => isAdmin() || p.createdBy === S.user.id || p.visibility !== 'selected' || (p.members || []).includes(S.user.id);

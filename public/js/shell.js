@@ -37,7 +37,7 @@ async function loadCompany(keepView = false) {
   catch (e) { if (e.status === 401) return; toast(e.message, true); S.cid = null; store.set('cd_cid', null); return boot(); }
   Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, tasks: st.tasks, clients: st.clients, pings: st.pings,
     photos: st.photos, projects: st.projects, events: st.events, finance: st.finance, chats: st.chats, invites: st.invites || [], favs: st.favs || { projects: [] },
-    inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg, suggestions: st.suggestions || {}, gdrive: st.gdrive || null, sheetUploads: st.sheetUploads || {} });
+    inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg, suggestions: st.suggestions || {}, gdrive: st.gdrive || null, sheetUploads: st.sheetUploads || {}, totals: st.totals || { tasks: {}, projects: {} }, projectCounts: st.projectCounts || {} });
   // Time: keep older months already fetched, and replace the recent ones with what the server just sent.
   if (!keepView) { S.entries = {}; S.days = {}; S.loaded = {}; }
   const cut = Date.now() - 62 * 864e5;
@@ -244,9 +244,12 @@ function placeTabInk(from) {
   const nav = $('#view .tabs'); if (!nav) { tabInk = null; return; }
   const on = nav.querySelector('.tab.on'); if (!on) return;
   nav.classList.add('has-ink');
-  let ink = nav.querySelector('.tab-ink');
+  let ink = nav.querySelector('.tab-ink'); const fresh = !ink;
   if (!ink) { ink = document.createElement('i'); ink.className = 'tab-ink'; ink.setAttribute('aria-hidden', 'true'); nav.appendChild(ink); }
   const to = { x: on.offsetLeft, w: on.offsetWidth };
+  if (fresh && !(from && motionOK())) { // redrawn page, same tab: put the underline straight where it belongs, no slide-in
+    ink.style.transition = 'none'; ink.style.transform = `translateX(${to.x}px)`; ink.style.width = to.w + 'px'; void ink.offsetWidth; ink.style.transition = '';
+  }
   if (from && motionOK()) { ink.style.transition = 'none'; ink.style.transform = `translateX(${from.x}px)`; ink.style.width = from.w + 'px'; void ink.offsetWidth; ink.style.transition = ''; }
   ink.style.transform = `translateX(${to.x}px)`; ink.style.width = to.w + 'px';
   if (on.offsetLeft < nav.scrollLeft || on.offsetLeft + on.offsetWidth > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = on.offsetLeft - 24;
@@ -293,6 +296,7 @@ function handleEvent(ev) {
       S.inbox.push(ev.item); if (S.inbox.length > 200) S.inbox.shift();
       alertUser(ev.item.text, ev.item.link, '', { from: ev.item.by && S.members[ev.item.by] ? ev.item.by : null, icon: 'bell', title: ev.item.by && S.members[ev.item.by] ? member(ev.item.by).name : 'Crewdesk', text: ev.item.text }); scheduleRender(); break;
     case 'typing': onTyping(ev); break;
+    case 'totals': Object.assign(S.totals.tasks, ev.tasks || {}); Object.assign(S.totals.projects, ev.projects || {}); scheduleRender(); break;
     case 'sheetUpload': if (ev.item) S.sheetUploads[ev.key] = ev.item; else delete S.sheetUploads[ev.key]; scheduleRender(); break;
     case 'presence':
       if (S.members[ev.userId]) { S.members[ev.userId].online = ev.online; S.members[ev.userId].lastSeen = ev.lastSeen; }

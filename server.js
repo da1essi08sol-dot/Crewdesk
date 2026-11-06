@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const zlib = require('zlib');
 const passwords = require('./lib/passwords');
 const mail = require('./lib/email');
 const ts = require('./lib/timesheet');
@@ -43,28 +44,45 @@ const LOCK_MAX = 365 * 864e5;
 const MAX_FAILS = 5;
 
 // ---------------------------------------------------------------- storage
-// The app state lives in memory as one object and is written out (debounced) after each change:
-// to data/db.json locally, or to a single Postgres row when DATABASE_URL is set. Uploaded files are
-// stored separately (data/uploads or the crewdesk_files table). A dated snapshot is kept every day.
+// The app state lives in memory as one object. It's saved in pieces so that a change only writes what it touched:
+//   core            everything except time entries, day notes and chat messages (small)
+//   entries|c|YYYY-MM   one month of a company's time entries
+//   days|c|YYYY-MM      one month of day notes and approvals
+//   messages|c|channel  one chat's messages
+// Locally that's data/db.json plus data/chunks/; with DATABASE_URL it's Postgres rows. Uploaded files are stored
+// separately (data/uploads or the crewdesk_files table). A compressed copy of everything is kept every day.
 let db = {};
 let pool = null;
+const CHUNKS = path.join(DATA, 'chunks');
+const chunkFile = (key) => path.join(CHUNKS, encodeURIComponent(key) + '.json');
+const BIG = ['entries', 'days', 'messages'];
+function mergeChunk(key, data) {
+  const [kind, cid] = key.split('|');
+  db.data = db.data || {}; const d = db.data[cid] = db.data[cid] || {};
+  d[kind] = d[kind] || {};
+  if (kind === 'messages') d.messages[key.split('|').slice(2).join('|')] = data; else Object.assign(d[kind], data);
+}
 
 const fileStore = {
   async init() {
-    fs.mkdirSync(UPLOADS, { recursive: true }); fs.mkdirSync(BACKUPS, { recursive: true });
+    fs.mkdirSync(UPLOADS, { recursive: true }); fs.mkdirSync(BACKUPS, { recursive: true }); fs.mkdirSync(CHUNKS, { recursive: true });
     if (fs.existsSync(DB_FILE)) db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    const keys = [];
+    for (const n of fs.readdirSync(CHUNKS)) if (n.endsWith('.json')) { const key = decodeURIComponent(n.slice(0, -5)); mergeChunk(key, JSON.parse(fs.readFileSync(path.join(CHUNKS, n), 'utf8'))); keys.push(key); }
+    return keys;
   },
   async write(json) { const tmp = DB_FILE + '.tmp'; fs.writeFileSync(tmp, json); fs.renameSync(tmp, DB_FILE); },
+  async writeChunk(key, json) { const f = chunkFile(key); fs.writeFileSync(f + '.tmp', json); fs.renameSync(f + '.tmp', f); },
+  async delChunk(key) { try { fs.unlinkSync(chunkFile(key)); } catch (_) {} },
   async putFile(name, type, buf) { fs.writeFileSync(path.join(UPLOADS, path.basename(name)), buf); },
   async delFile(name) { try { fs.unlinkSync(path.join(UPLOADS, path.basename(name))); } catch (_) {} },
   async getFile(name) {
     const f = path.join(UPLOADS, path.basename(name));
     return fs.existsSync(f) ? { type: TYPES[path.extname(f).toLowerCase()] || 'application/octet-stream', data: fs.readFileSync(f) } : null;
   },
-  async backup(json) {
-    const f = path.join(BACKUPS, `db-${new Date().toISOString().slice(0, 10)}.json`);
-    fs.writeFileSync(f, json);
-    const all = fs.readdirSync(BACKUPS).filter((n) => /^db-\d{4}-\d{2}-\d{2}\.json$/.test(n)).sort();
+  async backup(gz) {
+    fs.writeFileSync(path.join(BACKUPS, `db-${new Date().toISOString().slice(0, 10)}.json.gz`), gz);
+    const all = fs.readdirSync(BACKUPS).filter((n) => /^db-\d{4}-\d{2}-\d{2}\.json(\.gz)?$/.test(n)).sort();
     for (const n of all.slice(0, Math.max(0, all.length - 14))) fs.unlinkSync(path.join(BACKUPS, n));
   },
 };
@@ -74,23 +92,31 @@ const pgStore = {
     const local = /@(localhost|127\.0\.0\.1)[:/]/.test(DATABASE_URL);
     pool = new Pool({ connectionString: DATABASE_URL.replace(/[?&](sslmode|channel_binding)=[^&]*/g, ''), ssl: local ? false : { rejectUnauthorized: true }, max: 4 });
     await pool.query('CREATE TABLE IF NOT EXISTS crewdesk_state (id int PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now())');
+    await pool.query('CREATE TABLE IF NOT EXISTS crewdesk_chunks (key text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz DEFAULT now())');
     await pool.query('CREATE TABLE IF NOT EXISTS crewdesk_files (name text PRIMARY KEY, type text NOT NULL, data bytea NOT NULL)');
-    await pool.query('CREATE TABLE IF NOT EXISTS crewdesk_backups (id serial PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now(), data jsonb NOT NULL)');
+    await pool.query('CREATE TABLE IF NOT EXISTS crewdesk_backups (id serial PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now(), data jsonb)');
+    await pool.query('ALTER TABLE crewdesk_backups ALTER COLUMN data DROP NOT NULL');
+    await pool.query('ALTER TABLE crewdesk_backups ADD COLUMN IF NOT EXISTS gz bytea');
     await pool.query('CREATE INDEX IF NOT EXISTS crewdesk_backups_created ON crewdesk_backups (created_at)');
     const r = await pool.query('SELECT data FROM crewdesk_state WHERE id = 1');
     if (r.rows[0]) db = r.rows[0].data;
+    const c = await pool.query('SELECT key, data FROM crewdesk_chunks');
+    for (const row of c.rows) mergeChunk(row.key, row.data);
+    return c.rows.map((row) => row.key);
   },
   async write(json) {
     await pool.query('INSERT INTO crewdesk_state (id, data, updated_at) VALUES (1, $1, now()) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()', [json]);
   },
+  async writeChunk(key, json) { await pool.query('INSERT INTO crewdesk_chunks (key, data, updated_at) VALUES ($1, $2, now()) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()', [key, json]); },
+  async delChunk(key) { await pool.query('DELETE FROM crewdesk_chunks WHERE key = $1', [key]); },
   async putFile(name, type, buf) { await pool.query('INSERT INTO crewdesk_files (name, type, data) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING', [name, type, buf]); },
   async getFile(name) { const r = await pool.query('SELECT type, data FROM crewdesk_files WHERE name = $1', [path.basename(name)]); return r.rows[0] || null; },
   async delFile(name) { await pool.query('DELETE FROM crewdesk_files WHERE name = $1', [path.basename(name)]); },
-  async backup(json) {
+  async backup(gz) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('INSERT INTO crewdesk_backups (data) VALUES ($1)', [json]);
+      await client.query('INSERT INTO crewdesk_backups (gz) VALUES ($1)', [gz]);
       await client.query('DELETE FROM crewdesk_backups WHERE id NOT IN (SELECT id FROM crewdesk_backups ORDER BY created_at DESC LIMIT 14)');
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
@@ -98,23 +124,64 @@ const pgStore = {
 };
 const storage = DATABASE_URL ? pgStore : fileStore;
 
-let saveTimer = null, writing = Promise.resolve(), dirty = false;
-function save() { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(flush, 400); }
+// Saving: debounced (but never put off for more than 2 seconds), core plus only the pieces that changed.
+let saveTimer = null, firstDirty = 0, writing = Promise.resolve(), dirty = false;
+const dirtyChunks = new Set(); let allChunksDirty = false; const storedChunks = new Set();
+function save() {
+  dirty = true; clearTimeout(saveTimer);
+  if (!firstDirty) firstDirty = now();
+  saveTimer = setTimeout(flush, now() - firstDirty > 2000 ? 0 : 400);
+}
+function touch(kind, cid, sub) { dirtyChunks.add(`${kind}|${cid}|${sub}`); save(); }
+const touchEntry = (cid, e) => touch('entries', cid, entryDay(e).slice(0, 7));
+const touchDay = (cid, r) => touch('days', cid, r.date.slice(0, 7));
+const touchChannel = (cid, ch) => touch('messages', cid, ch);
+// The pieces as they are now (all of them, or just the given keys).
+function buildChunks(only) {
+  const out = new Map();
+  for (const [cid, d] of Object.entries(db.data || {})) {
+    if (!db.companies[cid]) continue;
+    const want = (k) => !only || only.has(k);
+    for (const e of Object.values(d.entries || {})) { const k = `entries|${cid}|${entryDay(e).slice(0, 7)}`; if (want(k)) { if (!out.has(k)) out.set(k, {}); out.get(k)[e.id] = e; } }
+    for (const r of Object.values(d.days || {})) { const k = `days|${cid}|${r.date.slice(0, 7)}`; if (want(k)) { if (!out.has(k)) out.set(k, {}); out.get(k)[r.id] = r; } }
+    for (const [ch, list] of Object.entries(d.messages || {})) { const k = `messages|${cid}|${ch}`; if (want(k) && list.length) out.set(k, list); }
+  }
+  return out;
+}
 function flush() {
-  clearTimeout(saveTimer); saveTimer = null;
+  clearTimeout(saveTimer); saveTimer = null; firstDirty = 0;
   if (!dirty) return writing;
   dirty = false;
-  const json = JSON.stringify(db);
-  writing = writing.then(() => storage.write(json)).catch((e) => { console.error('Save failed, will retry:', e.message); dirty = true; saveTimer = setTimeout(flush, 3000); });
+  const data = {};
+  for (const [cid, d] of Object.entries(db.data || {})) { const o = Object.assign({}, d); for (const k of BIG) delete o[k]; data[cid] = o; }
+  const core = JSON.stringify(Object.assign({}, db, { data }));
+  const all = allChunksDirty; const keys = new Set(dirtyChunks); dirtyChunks.clear(); allChunksDirty = false;
+  const chunks = buildChunks(all ? null : keys);
+  const writes = [...chunks].map(([k, v]) => [k, JSON.stringify(v)]);
+  const gone = all ? [...storedChunks].filter((k) => !chunks.has(k)) : [...keys].filter((k) => !chunks.has(k));
+  writing = writing.then(async () => {
+    for (const [k, json] of writes) { await storage.writeChunk(k, json); storedChunks.add(k); }
+    for (const k of gone) { await storage.delChunk(k); storedChunks.delete(k); }
+    await storage.write(core);
+  }).catch((e) => {
+    console.error('Save failed, will retry:', e.message);
+    dirty = true; for (const [k] of writes) dirtyChunks.add(k); for (const k of gone) dirtyChunks.add(k); if (all) allChunksDirty = true;
+    saveTimer = setTimeout(flush, 3000);
+  });
   return writing;
 }
+// A full write every 15 minutes as a safety net, in case a change ever forgot to mark its piece.
+setInterval(() => { allChunksDirty = true; save(); }, 15 * 60e3).unref();
 async function backupIfDue() {
   const today = new Date().toISOString().slice(0, 10);
   if (db.meta.lastBackup === today) return;
-  try { await flush(); await storage.backup(JSON.stringify(db)); db.meta.lastBackup = today; save(); console.log('  Daily backup saved'); }
-  catch (e) { console.error('Backup failed:', e.message); }
+  try {
+    await flush();
+    const gz = await new Promise((res, rej) => zlib.gzip(JSON.stringify(db), (e, b) => (e ? rej(e) : res(b))));
+    await storage.backup(gz); db.meta.lastBackup = today; save(); console.log(`  Daily backup saved (${(gz.length / 1e6).toFixed(1)} MB compressed)`);
+  } catch (e) { console.error('Backup failed:', e.message); }
 }
-async function shutdown() { try { await flush(); await writing; } finally { process.exit(0); } }
+async function shutdown() { try { allChunksDirty = true; dirty = true; await flush(); await writing; } finally { process.exit(0); } }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
@@ -373,26 +440,49 @@ function viewFor(coll, item, x) {
     default: return item;
   }
 }
-const RECENT = 62 * 864e5; // the app loads about two months of time entries; older ones are fetched when needed
+const RECENT = 62 * 864e5; // the app loads about two months of your own time; older time is fetched when needed
 function stateFor(x) {
-  const out = {};
-  for (const coll of ['teams', 'tasks', 'clients', 'pings', 'photos', 'projects', 'events', 'finance', 'chats', 'suggestions', 'entries', 'days']) {
-    const since = now() - RECENT; const sinceDay = new Date(since).toISOString().slice(0, 10);
-    const o = {};
-    for (const [k, v] of Object.entries(x.d[coll])) {
-      if (coll === 'entries' && v.end && v.start < since) continue;
-      if (coll === 'days' && v.date < sinceDay) continue;
-      const s = viewFor(coll, v, x); if (s) o[k] = s;
-    }
+  const out = {}; const d = x.d; const admin = isAdmin(x.role);
+  const yearAgo = new Date(now() - 365 * 864e5).toISOString().slice(0, 10);
+  for (const coll of ['teams', 'clients', 'pings', 'photos', 'projects', 'finance', 'chats', 'suggestions']) {
+    const o = {}; for (const [k, v] of Object.entries(d[coll])) { const s = viewFor(coll, v, x); if (s) o[k] = s; }
     out[coll] = o;
   }
+  // Tasks of active projects (an archived project's tasks load when you open it); events from the last year on.
+  out.tasks = {}; out.projectCounts = {};
+  for (const t of Object.values(d.tasks)) {
+    const p = d.projects[t.projectId]; if (!p || !out.projects[p.id]) continue;
+    if (!p.archived) out.tasks[t.id] = t;
+    else { const c = out.projectCounts[p.id] = out.projectCounts[p.id] || [0, 0]; c[0]++; if (t.done) c[1]++; }
+  }
+  out.events = {}; for (const e of Object.values(d.events)) if ((e.endDate || e.date) >= yearAgo && canSeeEvent(x, e)) out.events[e.id] = e;
+  // Time: your own recent time, everyone's running timers, and (admins) everyone's time today.
+  const ix = idxFor(x.c.id); out.entries = {}; out.days = {};
+  const days = []; for (let t = now() - RECENT; t <= now() + 864e5; t += 864e5) days.push(localDay(t));
+  for (const ds of new Set(days)) for (const e of userDayEntries(d, x.c.id, x.uid, ds)) out.entries[e.id] = e;
+  for (const id of ix.running) { const e = d.entries[id]; if (e && canSeeEntry(x, e)) out.entries[e.id] = e; }
+  const today = localDay(now());
+  if (admin) for (const uidv of Object.keys(x.c.members)) for (const e of userDayEntries(d, x.c.id, uidv, today)) out.entries[e.id] = e;
+  const dayFrom = new Date(now() - RECENT).toISOString().slice(0, 10), noteFrom = new Date(now() - 14 * 864e5).toISOString().slice(0, 10);
+  for (const r of Object.values(d.days)) if ((r.userId === x.uid && r.date >= dayFrom) || (admin && r.date >= noteFrom)) out.days[r.id] = r;
+  // Time logged on each task and project, worked out on the server (finished time; running timers are added on screen).
+  out.totals = { tasks: {}, projects: {} };
+  for (const [k, v] of Object.entries(ix.projects)) if (out.projects[k]) out.totals.projects[k] = Math.round(v);
+  for (const [k, v] of Object.entries(ix.tasks)) { const t = d.tasks[k]; if (t && out.projects[t.projectId]) out.totals.tasks[k] = Math.round(v); }
   return out;
 }
 
 // ---------------------------------------------------------------- realtime (Server-Sent Events)
 const streams = new Set();          // { res, userId, cid }
 const onlineCount = new Map();      // userId -> open connections
-function send(res, evt) { try { res.write(`data: ${JSON.stringify(evt)}\n\n`); } catch (_) {} }
+// A phone on a bad signal can stop reading while updates keep coming. Rather than let them pile up in memory,
+// drop that connection once 256 KB is waiting; the app reconnects by itself and reloads what it missed.
+function send(res, evt) {
+  try {
+    if (res.writableLength > 256 * 1024) { res.destroy(); return; }
+    res.write(`data: ${JSON.stringify(evt)}\n\n`);
+  } catch (_) {}
+}
 function broadcast(cid, evt, opts = {}) {
   const c = db.companies[cid]; if (!c) return;
   for (const s of streams) {
@@ -498,7 +588,7 @@ function postMessage(cid, channel, userId, text, images, system = false, files =
   const msg = { id: uid(), channel, userId, text: str(text, 4000), images: images || [], files, at: now(), system };
   arr.push(msg);
   if (arr.length > 3000) dropMessageFiles(arr.splice(0, arr.length - 3000));
-  save();
+  touchChannel(cid, channel);
   broadcast(cid, (x) => (canSeeChannel(x, channel) ? { t: 'msg', item: msg } : null));
   return msg;
 }
@@ -687,7 +777,7 @@ function afterChange(cid, coll, before, after, user) {
     notify(cid, added, `${who} added you to project ${after.name}`, '#/project/' + after.id);
     if (after.chat && !(before && before.chat)) postMessage(cid, 'project:' + after.id, user.id, `${who} opened a chat for ${after.name}`, [], true);
     // Keep the project's name on its time entries, so timesheets still read well if it's renamed or deleted later.
-    if (before && (before.name !== after.name || before.ref !== after.ref)) for (const e of Object.values(d.entries)) if (e.projectId === after.id) { e.pname = after.name; e.pref = after.ref; }
+    if (before && (before.name !== after.name || before.ref !== after.ref)) for (const e of Object.values(d.entries)) if (e.projectId === after.id) { e.pname = after.name; e.pref = after.ref; touchEntry(cid, e); }
   }
   if (coll === 'suggestions') {
     if (!before) {
@@ -1116,7 +1206,7 @@ async function api(req, res, url) {
     if (blocking.length) bad(`You own ${blocking.map((c) => c.name).join(', ')}. Make someone else the owner (Team page) or delete the company first.`);
     for (const c of Object.values(db.companies)) {
       if (!c.members[user.id]) continue;
-      if (Object.keys(c.members).length === 1) { broadcast(c.id, { t: 'kicked', cid: c.id }); dropCompanyFiles(c.id); delete db.companies[c.id]; delete db.data[c.id]; }
+      if (Object.keys(c.members).length === 1) { broadcast(c.id, { t: 'kicked', cid: c.id }); dropCompanyFiles(c.id); delete db.companies[c.id]; delete db.data[c.id]; IDX.delete(c.id); allChunksDirty = true; }
       else removeMemberData(c, user.id);
     }
     dropFile(user.avatar);
@@ -1181,7 +1271,7 @@ function removeMemberData(c, id) {
   for (const p of Object.values(d.projects)) p.members = (p.members || []).filter((x) => x !== id);
   for (const t of Object.values(d.tasks)) t.assignees = (t.assignees || []).filter((x) => x !== id);
   // Their time entries and day notes stay: they're the company's payroll records.
-  for (const e of Object.values(d.entries)) if (e.userId === id && !e.end) e.end = now();
+  for (const e of Object.values(d.entries)) if (e.userId === id && !e.end) { const before = Object.assign({}, e); e.end = now(); putEntry(c, e, before); }
   for (const ch of Object.values(d.chats)) ch.members = ch.members.filter((x) => x !== id);
   delete d.inbox[id];
   const u = db.users[id]; if (u) { delete u.favs[c.id]; delete u.reads[c.id]; }
@@ -1247,7 +1337,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     if (!(await passwords.verify(b.password, user))) bad('Password is wrong');
     broadcast(cid, { t: 'kicked', cid });
     dropCompanyFiles(cid);
-    delete db.companies[cid]; delete db.data[cid];
+    delete db.companies[cid]; delete db.data[cid]; IDX.delete(cid); allChunksDirty = true;
     for (const u of Object.values(db.users)) { if (u.favs) delete u.favs[cid]; if (u.reads) delete u.reads[cid]; }
     save();
     return json(res, 200, { ok: true, companies: companiesFor(user.id) });
@@ -1402,7 +1492,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     if (!m[2] && M === 'DELETE') {
       if (ch.kind === 'dm' || !manage) deny('Only the person who made this group, or an admin, can delete it');
       const members = ch.members.slice();
-      delete d.chats[ch.id]; dropMessageFiles(d.messages['chat:' + ch.id]); delete d.messages['chat:' + ch.id]; save();
+      delete d.chats[ch.id]; dropMessageFiles(d.messages['chat:' + ch.id]); delete d.messages['chat:' + ch.id]; touchChannel(cid, 'chat:' + ch.id);
       broadcast(cid, { t: 'remove', coll: 'chats', id: ch.id }, { only: members });
       return json(res, 200, { ok: true });
     }
@@ -1562,11 +1652,11 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
           for (const t of Object.values(d.tasks)) if (t.projectId === id) delete d.tasks[t.id];
           for (const ph of Object.values(d.photos)) if (ph.projectId === id) { delete d.photos[ph.id]; dropFile(ph.url); if (ph.thumb !== ph.url) dropFile(ph.thumb); }
           for (const e of Object.values(d.events)) if (e.projectId === id) e.projectId = '';
-          for (const e of Object.values(d.entries)) if (e.projectId === id) { e.pname = e.pname || item.name; e.pref = e.pref || item.ref || ''; }
-          dropMessageFiles(d.messages['project:' + id]); delete d.messages['project:' + id];
+          for (const e of Object.values(d.entries)) if (e.projectId === id) { e.pname = e.pname || item.name; e.pref = e.pref || item.ref || ''; touchEntry(cid, e); }
+          dropMessageFiles(d.messages['project:' + id]); delete d.messages['project:' + id]; touchChannel(cid, 'project:' + id);
           broadcast(cid, { t: 'reload' });
         }
-        if (coll === 'tasks') for (const e of Object.values(d.entries)) if (e.taskId === id) e.tname = e.tname || item.title;
+        if (coll === 'tasks') for (const e of Object.values(d.entries)) if (e.taskId === id) { e.tname = e.tname || item.title; touchEntry(cid, e); }
         if (coll === 'pings') for (const fid of (item.files || []).map((f) => f.id)) { const f = d.files[fid]; if (f) { dropFile(f.url); if (f.thumb && f.thumb !== f.url) dropFile(f.thumb); delete d.files[fid]; } }
         if (coll === 'clients') for (const p of Object.values(d.projects)) if (p.clientId === id) { p.clientId = ''; upsert(cid, 'projects', p); }
         save(); removeItem(cid, coll, id);
@@ -1581,14 +1671,61 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
 const CAT_KEYS = Object.keys(ts.CATS);
 const pad2 = (n) => String(n).padStart(2, '0');
 const localDay = (t) => ts.zoneParts(t, TZ).date;
+// An entry's day (company time zone), worked out once and kept on the entry.
+function entryDay(e) { return e.day || (e.day = ts.zoneParts(e.start, TZ).date); }
 const ukClock = (t) => new Date(t).toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
 const ukDay = (t) => new Date(t).toLocaleDateString('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' });
 const minute = (t) => Math.floor(t / 60000) * 60000;
 const personNameOf = (id) => (db.users[id] || {}).name || 'Former member';
-function runningFor(d, userId) { return Object.values(d.entries).find((e) => e.userId === userId && !e.end) || null; }
-function checkOverlap(d, e, ignoreId) {
+// Quick lookups kept alongside the data (rebuilt on start): each person's entries by day, the running timers,
+// and the time logged on each task and project (finished, paid time only — running time is added on screen).
+const IDX = new Map();
+function idxFor(cid) {
+  let x = IDX.get(cid);
+  if (!x) {
+    x = { byUserDay: new Map(), running: new Set(), tasks: {}, projects: {} };
+    IDX.set(cid, x);
+    for (const e of Object.values(cdata(cid).entries)) idxAdd(x, e);
+  }
+  return x;
+}
+const paidMins = (e) => (e && e.end && (ts.CATS[e.category] || {}).paid ? Math.max(0, (e.end - e.start) / 60000) : 0);
+function idxAdd(x, e, sign = 1) {
+  const k = e.userId + '|' + entryDay(e);
+  let set = x.byUserDay.get(k);
+  if (sign > 0) { if (!set) x.byUserDay.set(k, (set = new Set())); set.add(e.id); if (!e.end) x.running.add(e.id); else x.running.delete(e.id); }
+  else { if (set) { set.delete(e.id); if (!set.size) x.byUserDay.delete(k); } x.running.delete(e.id); }
+  const m = paidMins(e) * sign;
+  if (m && e.taskId) x.tasks[e.taskId] = Math.round(((x.tasks[e.taskId] || 0) + m) * 100) / 100;
+  if (m && e.projectId) x.projects[e.projectId] = Math.round(((x.projects[e.projectId] || 0) + m) * 100) / 100;
+}
+// Every change to a time entry goes through here: lookups, totals, saving and live updates.
+function putEntry(c, e, before) {
+  const x = idxFor(c.id); const d = cdata(c.id);
+  if (before) { idxAdd(x, before, -1); touchEntry(c.id, before); }
+  e.day = localDay(e.start);
+  d.entries[e.id] = e; idxAdd(x, e); touchEntry(c.id, e);
+  upsert(c.id, 'entries', e); sendTotals(c, [before, e]);
+}
+function delEntry(c, e) {
+  const x = idxFor(c.id); idxAdd(x, e, -1); touchEntry(c.id, e);
+  delete cdata(c.id).entries[e.id]; removeItem(c.id, 'entries', e.id); sendTotals(c, [e]);
+}
+function sendTotals(c, list) {
+  const x = idxFor(c.id); const tasks = {}, projects = {};
+  for (const e of list) { if (!e) continue; if (e.taskId) tasks[e.taskId] = x.tasks[e.taskId] || 0; if (e.projectId) projects[e.projectId] = x.projects[e.projectId] || 0; }
+  if (Object.keys(tasks).length || Object.keys(projects).length) broadcast(c.id, { t: 'totals', tasks, projects });
+}
+function userDayEntries(d, cid, userId, ds) { const set = idxFor(cid).byUserDay.get(userId + '|' + ds); return set ? [...set].map((id) => d.entries[id]).filter(Boolean) : []; }
+function runningFor(d, userId, cid) {
+  for (const id of idxFor(cid || Object.keys(db.data).find((k) => db.data[k] === d)).running) { const e = d.entries[id]; if (e && e.userId === userId && !e.end) return e; }
+  return null;
+}
+function checkOverlap(d, e, ignoreId, cid) {
   const end = e.end || now();
-  const clash = Object.values(d.entries).find((o) => o.id !== e.id && o.id !== ignoreId && o.userId === e.userId && o.start < end && (o.end || now()) > e.start);
+  const near = [];
+  for (const k of [-1, 0, 1]) near.push(...userDayEntries(d, cid, e.userId, localDay(e.start + k * 864e5)));
+  const clash = near.find((o) => o.id !== e.id && o.id !== ignoreId && o.userId === e.userId && o.start < end && (o.end || now()) > e.start);
   if (clash) bad(`That overlaps with ${(ts.CATS[clash.category] || ts.CATS.field).label.toLowerCase()} time on ${ukDay(clash.start)}, ${ukClock(clash.start)}–${clash.end ? ukClock(clash.end) : 'now'}. Change the times so they don’t overlap.`);
 }
 // Fill in an entry from a request body (only the fields given), checking everything.
@@ -1625,7 +1762,7 @@ function dayRec(d, userId, ds, create) {
 // Changing approved time takes the approval off again (unless an admin made the change).
 function unapprove(x, userId, ds) {
   const r = dayRec(x.d, userId, ds, false);
-  if (r && r.approvedBy && !isAdmin(x.role)) { Object.assign(r, { approvedBy: '', approvedById: '', approvedAt: 0, updatedAt: now() }); upsert(x.c.id, 'days', r); }
+  if (r && r.approvedBy && !isAdmin(x.role)) { Object.assign(r, { approvedBy: '', approvedById: '', approvedAt: 0, updatedAt: now() }); touchDay(x.c.id, r); upsert(x.c.id, 'days', r); }
 }
 function projectNames(d, entries) {
   const out = {};
@@ -1642,21 +1779,22 @@ async function sheetFor(c, userId, y, mo, generated = false) {
 }
 function monthFileFor(c, userId, y, mo) {
   const d = cdata(c.id); const ym = `${y}-${pad2(mo)}`;
-  const entries = Object.values(d.entries).filter((e) => e.userId === userId && localDay(e.start).slice(0, 7) === ym);
+  const entries = []; const [yy, mm] = ym.split('-').map(Number); const days = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+  for (let k = 1; k <= days; k++) entries.push(...userDayEntries(d, c.id, userId, `${ym}-${pad2(k)}`));
   const approvals = {}; for (const r of Object.values(d.days)) if (r.userId === userId && r.approvedBy && r.date.startsWith(ym)) approvals[r.date] = r.approvedBy;
   const approverList = Object.keys(c.members).filter((id) => isAdmin(c.members[id].role)).map((id) => ts.initials(personNameOf(id)));
   return ts.monthWorkbook({ person: { name: personNameOf(userId) }, year: y, month: mo, entries, projects: projectNames(d, entries), approvals, dayHours: c.settings.dayHours || 8, tz: TZ, approverList });
 }
 function yearFileFor(c, userId, y) {
   const d = cdata(c.id);
-  const entries = Object.values(d.entries).filter((e) => e.userId === userId && localDay(e.start).startsWith(y + '-'));
+  const entries = Object.values(d.entries).filter((e) => e.userId === userId && entryDay(e).startsWith(y + '-'));
   const notes = {}; for (const r of Object.values(d.days)) if (r.userId === userId && r.date.startsWith(y + '-')) notes[r.date] = r;
   return ts.yearWorkbook({ person: { name: personNameOf(userId) }, year: y, entries, projects: projectNames(d, entries), tasks: d.tasks, notes, dayHours: c.settings.dayHours || 8, tz: TZ });
 }
 // Everyone who has time logged in a month (members and people who've since left).
 function peopleInMonth(c, ym) {
   const d = cdata(c.id); const ids = new Set();
-  for (const e of Object.values(d.entries)) if (localDay(e.start).slice(0, 7) === ym) ids.add(e.userId);
+  for (const k of idxFor(c.id).byUserDay.keys()) { const [u, ds] = k.split('|'); if (ds.slice(0, 7) === ym) ids.add(u); }
   return [...ids].sort((a, b) => personNameOf(a).localeCompare(personNameOf(b)));
 }
 function sendDownload(res, name, data, type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
@@ -1703,7 +1841,7 @@ async function timeApi(req, res, url, x, sub) {
     throttle('timer:' + user.id, 200, 3600e3, 'You’ve started a lot of timers — slow down a little');
     const b = await readBody(req);
     const at = b.start ? minute(Number(b.start)) : Math.floor(now() / 1000) * 1000;
-    const run = runningFor(d, user.id);
+    const run = runningFor(d, user.id, cid);
     if (run && at <= run.start) bad(`Your current timer started at ${ukClock(run.start)} — pick a later start time`);
     let task = null;
     const e = { id: uid(), userId: user.id, projectId: '', taskId: '', category: 'field', note: '', start: at, end: 0, source: 'timer', edited: !!b.start, createdAt: now(), updatedAt: now() };
@@ -1714,9 +1852,9 @@ async function timeApi(req, res, url, x, sub) {
       d.tasks[task.id] = task; afterChange(cid, 'tasks', null, task, user); upsert(cid, 'tasks', task);
       cleanEntry({ taskId: task.id }, x, e);
     } else if (b.taskId) cleanEntry({ taskId: b.taskId }, x, e);
-    checkOverlap(d, e, run && run.id);
-    if (run) { run.end = at; run.updatedAt = now(); upsert(cid, 'entries', run); }
-    d.entries[e.id] = e; save(); upsert(cid, 'entries', e);
+    checkOverlap(d, e, run && run.id, cid);
+    if (run) { const before = Object.assign({}, run); run.end = at; run.updatedAt = now(); putEntry(c, run, before); }
+    putEntry(c, e, null);
     return json(res, 200, { item: e, stopped: run || null, task });
   }
   // Stop it (the red square). You can say what you did, change the finish time, and tick the task off.
@@ -1729,13 +1867,14 @@ async function timeApi(req, res, url, x, sub) {
     const patch = { end: b.end ? Number(b.end) : Math.max(now(), e.start + 1000) };
     for (const k of ['note', 'category', 'taskId']) if (k in b) patch[k] = b[k];
     cleanEntry(patch, x, copy, !b.end);
-    checkOverlap(d, copy);
+    checkOverlap(d, copy, null, cid);
+    const before = Object.assign({}, e);
     Object.assign(e, copy, { updatedAt: now(), edited: e.edited || !!b.end });
     if (b.taskDone && e.taskId && d.tasks[e.taskId] && !d.tasks[e.taskId].done) {
       const t = d.tasks[e.taskId]; const before = Object.assign({}, t);
       t.done = true; t.doneAt = now(); t.updatedAt = now(); afterChange(cid, 'tasks', before, t, user); upsert(cid, 'tasks', t);
     }
-    save(); upsert(cid, 'entries', e); syncSoon(c, e.userId);
+    putEntry(c, e, before); syncSoon(c, e.userId);
     return json(res, 200, { item: e });
   }
   // Add time by hand: something you forgot to log, or overtime.
@@ -1745,8 +1884,8 @@ async function timeApi(req, res, url, x, sub) {
     if (!b.start || !b.end) bad('Enter a start and finish time');
     const e = { id: uid(), userId: target, projectId: '', taskId: '', category: 'field', note: '', start: 0, end: 0, source: 'manual', edited: true, createdBy: user.id, createdAt: now(), updatedAt: now() };
     cleanEntry({ projectId: b.projectId || '', taskId: b.taskId || '', category: b.category, note: b.note, start: b.start, end: b.end }, x, e);
-    checkOverlap(d, e);
-    d.entries[e.id] = e; unapprove(x, target, localDay(e.start)); save(); upsert(cid, 'entries', e); syncSoon(c, target, [localDay(e.start).slice(0, 7)]);
+    checkOverlap(d, e, null, cid);
+    putEntry(c, e, null); unapprove(x, target, e.day); syncSoon(c, target, [e.day.slice(0, 7)]);
     if (target !== user.id) notify(cid, [target], `${who} added time to your timesheet for ${ukDay(e.start)}`, '#/timesheet/' + localDay(e.start).slice(0, 7));
     return json(res, 200, { item: e });
   }
@@ -1754,9 +1893,9 @@ async function timeApi(req, res, url, x, sub) {
   if ((m = /^\/entries\/([A-Za-z0-9]+)$/.exec(sub)) && (M === 'PATCH' || M === 'DELETE')) {
     const e = d.entries[m[1]];
     if (!e || !(e.userId === user.id || admin)) notFound('That entry was already deleted');
-    const day0 = localDay(e.start);
+    const day0 = entryDay(e);
     if (M === 'DELETE') {
-      delete d.entries[e.id]; unapprove(x, e.userId, day0); save(); removeItem(cid, 'entries', e.id); syncSoon(c, e.userId, [day0.slice(0, 7)]);
+      delEntry(c, e); unapprove(x, e.userId, day0); syncSoon(c, e.userId, [day0.slice(0, 7)]);
       return json(res, 200, { ok: true });
     }
     const b = await readBody(req);
@@ -1764,11 +1903,12 @@ async function timeApi(req, res, url, x, sub) {
     for (const k of ['projectId', 'taskId', 'category', 'note', 'start', 'end']) if (k in b) patch[k] = b[k];
     cleanEntry(patch, x, copy);
     if (e.end && !copy.end) bad('Enter a finish time');
-    checkOverlap(d, copy);
+    checkOverlap(d, copy, null, cid);
     const changed = ['start', 'end', 'category', 'projectId'].some((k) => copy[k] !== e[k]);
+    const before = Object.assign({}, e);
     Object.assign(e, copy, { updatedAt: now(), updatedBy: user.id, edited: e.edited || changed });
-    if (changed) { unapprove(x, e.userId, day0); unapprove(x, e.userId, localDay(e.start)); }
-    save(); upsert(cid, 'entries', e); syncSoon(c, e.userId, [...new Set([day0.slice(0, 7), localDay(e.start).slice(0, 7)])]);
+    putEntry(c, e, before);
+    if (changed) { unapprove(x, e.userId, day0); unapprove(x, e.userId, e.day); } syncSoon(c, e.userId, [...new Set([day0.slice(0, 7), localDay(e.start).slice(0, 7)])]);
     if (e.userId !== user.id && changed) notify(cid, [e.userId], `${who} changed your time on ${ukDay(e.start)}`, '#/timesheet/' + localDay(e.start).slice(0, 7));
     return json(res, 200, { item: e });
   }
@@ -1777,12 +1917,13 @@ async function timeApi(req, res, url, x, sub) {
     const from = date(url.searchParams.get('from')) || '2000-01-01'; const to = date(url.searchParams.get('to')) || '2999-12-31';
     const pid = url.searchParams.get('project'); const u = url.searchParams.get('user');
     let items;
-    if (pid) { const p = projectOf(x, pid); if (!p || !canSeeProject(x, p)) notFound('Project not found'); items = Object.values(d.entries).filter((e) => e.projectId === pid); }
+    let tasks;
+    if (pid) { const p = projectOf(x, pid); if (!p || !canSeeProject(x, p)) notFound('Project not found'); items = Object.values(d.entries).filter((e) => e.projectId === pid); tasks = Object.values(d.tasks).filter((t) => t.projectId === pid); }
     else if (u === 'all') { if (!admin) deny(); items = Object.values(d.entries); }
-    else { const target = forUser(u); items = Object.values(d.entries).filter((e) => e.userId === target); }
-    items = items.filter((e) => { const ds = localDay(e.start); return ds >= from && ds <= to && canSeeEntry(x, e); });
+    else { const target = forUser(u); items = []; for (let t = Date.parse(from + 'T12:00:00Z'); from !== '2000-01-01' && t <= Date.parse(to + 'T12:00:00Z') && items.length < 50000; t += 864e5) items.push(...userDayEntries(d, cid, target, new Date(t).toISOString().slice(0, 10))); if (from === '2000-01-01') items = Object.values(d.entries).filter((e) => e.userId === target); }
+    items = items.filter((e) => { const ds = entryDay(e); return ds >= from && ds <= to && canSeeEntry(x, e); });
     const days = Object.values(d.days).filter((r) => r.date >= from && r.date <= to && (admin || r.userId === user.id) && (pid || u === 'all' || r.userId === (u || user.id)));
-    return json(res, 200, { items: items.slice(0, 50000), days });
+    return json(res, 200, { items: items.slice(0, 50000), days, tasks });
   }
   // End of the day: optional notes on what went well, what went wrong and what to improve. Stops the timer.
   if ((m = /^\/days\/(\d{4}-\d{2}-\d{2})$/.exec(sub)) && M === 'PUT') {
@@ -1792,10 +1933,10 @@ async function timeApi(req, res, url, x, sub) {
     let stopped = null;
     if (b.finished) {
       r.finishedAt = now();
-      const run = runningFor(d, user.id);
-      if (run) { run.end = Math.max(run.start + 1000, Math.floor(now() / 1000) * 1000); run.updatedAt = now(); upsert(cid, 'entries', run); stopped = run; }
+      const run = runningFor(d, user.id, cid);
+      if (run) { const before = Object.assign({}, run); run.end = Math.max(run.start + 1000, Math.floor(now() / 1000) * 1000); run.updatedAt = now(); putEntry(c, run, before); stopped = run; }
     } else if (b.finished === false) r.finishedAt = 0;
-    r.updatedAt = now(); save(); upsert(cid, 'days', r); syncSoon(c, user.id, [m[1].slice(0, 7)]);
+    r.updatedAt = now(); touchDay(cid, r); upsert(cid, 'days', r); syncSoon(c, user.id, [m[1].slice(0, 7)]);
     return json(res, 200, { item: r, stopped });
   }
   // Admins approve a day's overtime; their initials go in "OT Approved By" on the timesheet.
@@ -1806,7 +1947,7 @@ async function timeApi(req, res, url, x, sub) {
     const r = dayRec(d, target, m[1], true);
     if (b.approve) Object.assign(r, { approvedBy: ts.initials(user.name), approvedById: user.id, approvedAt: now() });
     else Object.assign(r, { approvedBy: '', approvedById: '', approvedAt: 0 });
-    r.updatedAt = now(); save(); upsert(cid, 'days', r); syncSoon(c, target, [m[1].slice(0, 7)]);
+    r.updatedAt = now(); touchDay(cid, r); upsert(cid, 'days', r); syncSoon(c, target, [m[1].slice(0, 7)]);
     if (b.approve && target !== user.id) notify(cid, [target], `${who} approved your time for ${ukDay(Date.parse(m[1] + 'T12:00:00Z'))}`, '#/timesheet/' + m[1].slice(0, 7));
     return json(res, 200, { item: r });
   }
@@ -1956,14 +2097,15 @@ function reminders() {
     // Timers left running: a nudge an hour after the usual finish time; stopped automatically after 16 hours.
     const nowLocal = ts.zoneParts(t, TZ);
     const [eh, em] = String(c.settings.dayEnd || '16:30').split(':').map(Number);
-    for (const e of Object.values(d.entries)) {
-      if (e.end) continue;
+    for (const id of [...idxFor(c.id).running]) {
+      const e = d.entries[id]; if (!e || e.end) continue;
       if (t - e.start > 16 * 3600e3) {
+        const before = Object.assign({}, e);
         e.end = e.start + 16 * 3600e3; e.edited = true; e.note = (e.note ? e.note + ' ' : '') + '(Stopped automatically after 16 hours — check the finish time.)';
-        save(); upsert(c.id, 'entries', e);
+        putEntry(c, e, before);
         notify(c.id, [e.userId], 'Your timer was left running, so it was stopped after 16 hours. Please check the finish time on your timesheet.', '#/timesheet');
       } else if (!e.nudgedAt && nowLocal.date === localDay(e.start) && nowLocal.mins >= eh * 60 + em + 60) {
-        e.nudgedAt = t; save();
+        e.nudgedAt = t; touchEntry(c.id, e);
         notify(c.id, [e.userId], `Your timer is still running${e.pname ? ' on ' + e.pname : ''}. Finished for the day? Tap the red square to stop it.`, '#/home');
       }
     }
@@ -2045,8 +2187,11 @@ async function handler(req, res) {
 
 // ---------------------------------------------------------------- start
 async function main() {
-  await storage.init();
+  const loaded = await storage.init();
+  for (const k of loaded || []) storedChunks.add(k);
   migrate();
+  if (!db.meta.chunked) { db.meta.chunked = true; allChunksDirty = true; save(); console.log('  Splitting the database into pieces (one-off)'); }
+  for (const cid of Object.keys(db.companies)) idxFor(cid); // build the quick lookups now rather than on the first request
   if (!mail.configured()) console.log('  Email isn’t set up (BREVO_API_KEY or RESEND_API_KEY, plus EMAIL_FROM). Verification and reset links will be printed here instead.');
   const publicUrl = process.env.KEEP_AWAKE_URL || process.env.RENDER_EXTERNAL_URL;
   if (publicUrl && process.env.KEEP_AWAKE !== 'off' && typeof fetch === 'function') {

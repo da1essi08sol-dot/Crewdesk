@@ -165,7 +165,7 @@ const store = {
 const S = {
   cid: store.get('cd_cid'), user: null, companies: [], role: null, company: null, info: null,
   members: {}, teams: {}, tasks: {}, clients: {}, pings: {}, photos: {}, projects: {}, events: {}, finance: {}, chats: {}, entries: {}, days: {}, suggestions: {},
-  invites: [], favs: { projects: [] }, sheetUploads: {}, inbox: [], locations: {}, unread: {}, lastMsg: {}, msgs: {}, msgsMore: {}, loaded: {}, gdrive: null,
+  invites: [], favs: { projects: [] }, sheetUploads: {}, totals: { tasks: {}, projects: {} }, projectCounts: {}, inbox: [], locations: {}, unread: {}, lastMsg: {}, msgs: {}, msgsMore: {}, loaded: {}, gdrive: null,
   projFilter: 'active', projSearch: '', clientSearch: '', openDay: null, sugFilter: 'open',
   calView: ['day', 'week', 'month', 'list'].includes(store.get('cd_calView')) ? store.get('cd_calView') : 'month', calDate: todayStr(), pingTab: 'pings',
 };
@@ -395,8 +395,12 @@ const thisMonth = () => todayStr().slice(0, 7);
 function shiftMonth(ym, n) { const d = parseD(ym + '-01'); d.setMonth(d.getMonth() + n); return dstr(d).slice(0, 7); }
 const monthEnd = (ym) => { const d = parseD(ym + '-01'); d.setMonth(d.getMonth() + 1); d.setDate(0); return dstr(d); };
 // A task's logged time (everyone's), and a project's.
-function taskMins(taskId) { let m = 0; for (const e of Object.values(S.entries)) if (e.taskId === taskId && cat(e.category).paid) m += entryMins(e); return m; }
-function projectMins(pid) { let m = 0; for (const e of Object.values(S.entries)) if (e.projectId === pid && cat(e.category).paid) m += entryMins(e); return m; }
+// Totals come from the server (finished time); running timers are added on top so they tick up live.
+let runCache = null, runCacheAt = 0, runCacheN = -1;
+function runningList() { const n = Object.keys(S.entries).length; if (!runCache || Date.now() - runCacheAt > 300 || n !== runCacheN) { runCache = Object.values(S.entries).filter((e) => !e.end); runCacheAt = Date.now(); runCacheN = n; } return runCache; }
+function runningMins(field, id) { let m = 0; for (const e of runningList()) if (!e.end && e[field] === id && cat(e.category).paid) m += entryMins(e); return m; }
+function taskMins(taskId) { return ((S.totals && S.totals.tasks[taskId]) || 0) + runningMins('taskId', taskId); }
+function projectMins(pid) { return ((S.totals && S.totals.projects[pid]) || 0) + runningMins('projectId', pid); }
 const projectTasks = (pid) => Object.values(S.tasks).filter((t) => t.projectId === pid).sort((a, b) => (a.done - b.done) || ((a.order || 0) - (b.order || 0)));
 const projectPlanMins = (p) => { const t = projectTasks(p.id).reduce((a, x) => a + (x.planMins || 0), 0); return p.plannedHours ? Math.max(p.plannedHours * 60, 0) : t; };
 // Time to compare with the plan: the whole project if it has its own planned hours, otherwise just the tasks that have a plan.
