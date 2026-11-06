@@ -639,7 +639,7 @@ h2 { font-family: var(--font-display); letter-spacing: -.015em; }
 .navbtn:active { background: none; }
 .navbtn:active svg { transform: scale(.82); transition-duration: .12s; }
 .navbtn.on svg { transform: scale(1.06); }
-.navbtn .count, .sidebar .navbtn .count { animation: badge-pop .45s var(--bounce); }
+.navbtn .count.pop, .sidebar .navbtn .count.pop { animation: badge-pop .45s var(--bounce); }
 @keyframes badge-pop { from { transform: scale(.3); opacity: 0; } }
 @media (min-width: 900px) {
   .sidebar { background: var(--glass-2); -webkit-backdrop-filter: saturate(180%) blur(24px); backdrop-filter: saturate(180%) blur(24px); border-right: .5px solid var(--line); }
@@ -1065,7 +1065,7 @@ html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .w
 .pill.st-seen { background: var(--slate-soft); color: var(--slate); }
 .pill.st-doing { background: var(--amber-soft); color: var(--amber); }
 @keyframes rec { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-.count.rec { min-width: 10px; width: 10px; height: 10px; padding: 0; animation: rec 1.6s ease-in-out infinite; }
+.count.rec { min-width: 10px; width: 10px; height: 10px; padding: 0; }
 .navbtn .count.rec { top: 4px; left: calc(50% + 8px); }
 .sidebar .navbtn .count.rec { position: static; margin-left: auto; }
 
@@ -1090,7 +1090,7 @@ html, body, button, a, input, select, textarea, label, [data-act], .cal-cell, .w
 .bigbtn:focus-visible { outline: 3px solid var(--focus); outline-offset: 5px; }
 .bigbtn.running { border-radius: 34px; background: var(--red); color: #fff; box-shadow: 0 10px 28px color-mix(in srgb, var(--red) 40%, transparent), inset 0 -6px 0 rgba(0,0,0,.14); }
 .bigbtn.running svg { width: 64px; height: 64px; fill: currentColor; stroke-width: 0; }
-.bigbtn.running::after { content: ""; position: absolute; inset: -8px; border-radius: 42px; border: 2px solid var(--red); opacity: .5; animation: ring 2s ease-out infinite; }
+.bigbtn.running::after { content: ""; position: absolute; inset: -8px; border-radius: 42px; border: 2px solid var(--red); opacity: .25; }
 @keyframes ring { 0% { transform: scale(.94); opacity: .55; } 100% { transform: scale(1.12); opacity: 0; } }
 @media (max-width: 380px) { .bigbtn { --size: 140px; } .bigbtn svg { width: 62px; height: 62px; } }
 .timer-info { min-width: 0; flex: 1; max-width: 100%; }

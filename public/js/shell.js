@@ -115,7 +115,7 @@ function updateChrome() {
   $('#side-me').innerHTML = `${avatar(me, 'sm', { link: false })}<span class="ellipsis">${esc(me.name)}</span>`;
   const chatN = Object.values(S.unread).reduce((a, b) => a + (b || 0), 0);
   const pingN = unreadPings() + S.inbox.filter((n) => !n.read).length;
-  const setBadge = (k, n) => $$(`[data-badge="${k}"]`).forEach((b) => { b.textContent = n > 99 ? '99+' : n; b.classList.toggle('hidden', !n); b.setAttribute('aria-label', `${n} unread`); });
+  const setBadge = (k, n) => $$(`[data-badge="${k}"]`).forEach((b) => { const t = n > 99 ? '99+' : String(n); if (n && b.dataset.was !== undefined && b.dataset.was !== t) { b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); } b.dataset.was = t; b.textContent = t; b.classList.toggle('hidden', !n); b.setAttribute('aria-label', `${n} unread`); });
   setBadge('chat', chatN); setBadge('pings', pingN);
   const newSug = isAdmin() ? Object.values(S.suggestions).filter((x) => x.status === 'new' && x.createdBy !== S.user.id).length : 0;
   setBadge('admin', newSug);
