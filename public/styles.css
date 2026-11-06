@@ -1766,3 +1766,4 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .mh-3dpad button { width: 44px; height: 44px; border: 0; border-radius: 12px; background: rgba(255,255,255,.14); color: #fff; font: 700 20px/1 var(--font); cursor: pointer; display: grid; place-items: center; }
 .mh-3dpad button:active { background: var(--accent, #1a9d6b); }
 .mh.has-panel .mh-3dpad { display: none; }
+.mh-legend { z-index: 4; }

@@ -158,7 +158,19 @@ function mhGoogle(el, view) {
   // Google shows "For development purposes only" / "can't load Google Maps" when billing or the key is wrong.
   g.event.addListenerOnce(m, 'tilesloaded', () => setTimeout(() => { if (el.querySelector('.gm-err-container') || /development purposes only/i.test(el.innerText || '')) mhGoogleBroken('Google Maps refused the key (check billing)'); }, 1500));
   // Google Earth-style 3D: photorealistic 3D tiles drawn over the 2D map while 3D is on.
-  let m3 = null;
+  let m3 = null, lib3 = null, pinLib = null;
+  const sync3d = () => {
+    if (!m3 || !lib3) return;
+    m3.querySelectorAll('.mh-3dmk').forEach((x) => x.remove());
+    for (const r of mhOnMap(MH.id).filter(mhVisible)) {
+      const p = mhPreset(r);
+      const mk = new lib3.Marker3DInteractiveElement({ position: { lat: r.lat, lng: r.lng }, altitudeMode: 'CLAMP_TO_GROUND', extruded: true, label: r.ref + (r.status === 'completed' ? ' ✓' : '') });
+      mk.classList.add('mh-3dmk');
+      if (pinLib && pinLib.PinElement) { try { const pin = new pinLib.PinElement({ background: p.color, borderColor: MH.sel === r.id ? '#ffffff' : '#00000055', glyphColor: '#ffffff', scale: MH.sel === r.id ? 1.4 : 1.1 }); mk.append(pin); } catch (_) {} }
+      mk.addEventListener('gmp-click', (e) => { e.stopPropagation && e.stopPropagation(); if (!MH.adding) mhSelect(r.id); });
+      m3.append(mk);
+    }
+  };
   const set3d = async (on) => {
     if (!on) { if (m3) { const c = m3.center; if (c) m.setCenter({ lat: c.lat, lng: c.lng }); m3.remove(); m3 = null; } const pad = el.querySelector('.mh-3dpad'); if (pad) pad.remove(); return; }
     if (m3) return;
@@ -184,15 +196,16 @@ function mhGoogle(el, view) {
     let hold = 0;
     pad.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-cam]'); if (!b) return; e.preventDefault(); const k = b.dataset.cam; cam(k); if (k !== 'orbit' && k !== 'north') { clearInterval(hold); hold = setInterval(() => cam(k), 380); } });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => pad.addEventListener(ev, () => clearInterval(hold)));
-    for (const r of mhOnMap(MH.id).filter(mhVisible)) {
-      const mk = new lib.Marker3DInteractiveElement({ position: { lat: r.lat, lng: r.lng }, altitudeMode: 'CLAMP_TO_GROUND', extruded: true, label: r.ref });
-      mk.addEventListener('gmp-click', () => mhSelect(r.id)); m3.append(mk);
-    }
+    lib3 = lib; try { pinLib = await g.importLibrary('marker'); } catch (_) {}
+    sync3d();
+    // tap the 3D ground to add a manhole while "Add manhole" is on
+    m3.addEventListener('gmp-click', (e) => { const p = e.position; if (MH.adding && p) mhMapClick({ lat: p.lat, lng: p.lng }); });
   };
   return {
     kind: 'google',
     set3d(on) { set3d(on).catch((e) => { console.warn('3D', e); toast('Google 3D couldn’t load here', true); }); },
     is3d: () => !!m3,
+    sync3d,
     setLayer(l) { layer = l; m.setMapTypeId(TYPES[l] || 'satellite'); },
     getView: () => ({ center: { lat: m.getCenter().lat(), lng: m.getCenter().lng() }, zoom: m.getZoom(), layer }),
     onViewChange(cb) { m.addListener('idle', cb); },
@@ -338,6 +351,7 @@ function mhMarkerNode(r) {
 }
 function mhSyncMarkers() {
   if (!MH.eng) return;
+  if (MH.eng.sync3d) MH.eng.sync3d();
   const want = new Map(mhOnMap(MH.id).filter(mhVisible).map((r) => [r.id, r]));
   for (const [id, h] of MH.marks) if (!want.has(id)) { h.remove(); MH.marks.delete(id); }
   for (const [id, r] of want) {
