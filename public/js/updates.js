@@ -4,10 +4,15 @@
 'use strict';
 
 const UPDATES = [
+  { id: '3.6.1', date: '2026-11-07', title: 'Smoother Help button', icon: 'shield', color: '#c92a2a',
+    items: [
+      ['better', 'The Help button now needs just 1 second held down to raise an alert.'],
+      ['fix', 'The ring around Help fills smoothly, and a slight finger wobble no longer cancels the press.'],
+    ] },
   { id: '3.6', date: '2026-11-07', title: 'Stay safe, rebuilt — and the Android app', icon: 'shield', color: '#c92a2a',
     intro: 'Still being tested: keep using the StaySafe app alongside Crewdesk for now.',
     items: [
-      ['new', 'A round Help button you press and hold for 2 seconds, right on the Stay safe start screen, even before you start a session.'],
+      ['new', 'A round Help button you press and hold for 1 second, right on the Stay safe start screen, even before you start a session.'],
       ['new', 'Raising an alert posts a ping for everyone with your location, how to call you and directions, and shows a red pin on the team map. It stays up until you tap I’m safe.'],
       ['new', '“Alert active” shows on the person everywhere they appear: their picture, their name and their profile.'],
       ['new', 'Notifications 10 and 5 minutes before each check-in, with a Check in button right on the notification.'],
@@ -25,7 +30,7 @@ const UPDATES = [
       ['new', 'Stay safe tab: start a session before working alone. Say where you are, how often to check in, when you’ll finish and who your buddy is.'],
       ['new', 'A countdown dial to your next check-in. Your phone buzzes on the lock screen when it’s due, and one tap on I’m safe checks you in.'],
       ['new', 'Miss a check-in by 10 minutes and your buddy and admins get an urgent alert that stays on screen until they deal with it.'],
-      ['new', 'Hold the red help button for 2 seconds to raise an alert with a loud siren, or send a silent alert when noise could make things worse.'],
+      ['new', 'Hold the red help button for 1 second to raise an alert with a loud siren, or send a silent alert when noise could make things worse.'],
       ['new', 'Buddies and admins see everyone working alone, can call them, open their location on a map and tap I’m responding.'],
       ['new', 'Location is only shared from the Crewdesk Android app, never from a browser or iPhone.'],
       ['better', 'Lock-screen notifications: only the device you’re actually looking at stays quiet. Your phone still buzzes if Crewdesk is open on your computer.'],

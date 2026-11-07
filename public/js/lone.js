@@ -138,7 +138,7 @@ function loneSetup() {
 function panicButton(big) {
   return `<div class="ls-wheel ${big ? 'big' : ''}">
       <svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="54" class="ls-wheel-track"/><circle cx="60" cy="60" r="54" class="ls-wheel-fill"/></svg>
-      <button class="ls-panic" data-hold="lone-alert" aria-label="Help: press and hold for 2 seconds to raise an alert">${icSize('warn', big ? 40 : 30)}<b>Help</b><span>Hold 2 sec</span></button>
+      <button class="ls-panic" data-hold="lone-alert" aria-label="Help: press and hold for 1 second to raise an alert">${icSize('warn', big ? 40 : 30)}<b>Help</b><span>Hold 1 sec</span></button>
     </div>`;
 }
 function loneStart() {
@@ -146,7 +146,7 @@ function loneStart() {
   return `<section class="ls">
       <div class="ls-clock"><b>${loneClock(every * 60e3)}</b><span>Check in every ${everyTxt(every)} · finish by ${hm(d.finishAt)}${dayTxt(d.finishAt)}</span></div>
       ${panicButton(true)}
-      <p class="ls-hint">In trouble? Press and hold <b>Help</b> for 2 seconds.</p>
+      <p class="ls-hint">In trouble? Press and hold <b>Help</b> for 1 second.</p>
       <button class="ls-go" data-act="lone-go">${icSize('play', 20)}Start session</button>
       <button class="ls-details" data-act="lone-details">
         <span class="grow"><b>${esc(d.where || 'Where are you working?')}</b><span class="tiny muted">Finish ${hm(d.finishAt)}${dayTxt(d.finishAt)} · admins are alerted if you need help</span></span>${ic('edit')}
@@ -334,17 +334,21 @@ C['lone-every'] = async (el) => {
   try { const r = await capi('PATCH', '', { settings: { loneEvery: Number(el.value) } }); S.company = r.company; toast(`Everyone now checks in every ${everyTxt(Number(el.value))}`); renderView(false); } catch (e) { toast(e.message, true); }
 };
 
-// Hold-to-activate: press and hold for 2 seconds (the ring fills), so it can't go off in a pocket.
-let holdT = null, holdEl = null;
-const holdStop = () => { clearTimeout(holdT); holdT = null; if (holdEl) { holdEl.classList.remove('holding'); const w = holdEl.closest('.ls-wheel'); if (w) w.classList.remove('holding'); } holdEl = null; };
+// Hold-to-activate: press and hold for 1 second (the ring fills), so it can't go off in a pocket.
+// The fill is a CSS animation (starts the instant you touch, no re-render), and the finger is captured so a small wobble can't cancel it.
+const HOLD_MS = 1000;
+let holdT = null, holdEl = null, holdId = null;
+const holdStop = () => { clearTimeout(holdT); holdT = null; if (holdEl) { holdEl.classList.remove('holding'); const w = holdEl.closest('.ls-wheel'); if (w) w.classList.remove('holding'); try { if (holdId != null) holdEl.releasePointerCapture(holdId); } catch (e) {} } holdEl = null; holdId = null; };
 document.addEventListener('pointerdown', (e) => {
-  const el = e.target.closest && e.target.closest('[data-hold]'); if (!el) return;
-  e.preventDefault(); Siren.unlock(); holdEl = el; el.classList.add('holding');
+  const el = e.target.closest && e.target.closest('[data-hold]'); if (!el || holdEl) return;
+  e.preventDefault(); Siren.unlock(); holdEl = el; holdId = e.pointerId;
+  try { el.setPointerCapture(e.pointerId); } catch (x) {}
+  el.classList.add('holding');
   const w = el.closest('.ls-wheel'); if (w) w.classList.add('holding');
   if (navigator.vibrate) navigator.vibrate(15);
-  holdT = setTimeout(() => { const fn = A[el.dataset.hold]; holdStop(); if (navigator.vibrate) navigator.vibrate(80); if (fn) fn(el); }, 2000);
-});
-['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => document.addEventListener(t, (e) => { if (holdEl && (t !== 'pointerleave' || e.target === holdEl)) holdStop(); }, true));
+  holdT = setTimeout(() => { const fn = A[el.dataset.hold]; holdStop(); if (navigator.vibrate) navigator.vibrate(80); if (fn) fn(el); }, HOLD_MS);
+}, { passive: false });
+['pointerup', 'pointercancel', 'lostpointercapture'].forEach((t) => document.addEventListener(t, () => { if (holdEl) holdStop(); }, true));
 document.addEventListener('contextmenu', (e) => { if (e.target.closest && e.target.closest('[data-hold]')) e.preventDefault(); });
 
 // Live updates. Someone's alert sounds the alarm for buddies and admins with the app open; a missed check-in only sounds

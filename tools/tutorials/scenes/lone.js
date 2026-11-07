@@ -16,7 +16,7 @@ module.exports = async (setup) => { const T = await setup('lone');
   await T.cap('The dial counts down to your next check-in. Your phone buzzes when it’s due.', 2800);
   await T.tap('[data-act="lone-checkin"]', 1400);
   await T.cap('Tap I’m safe to check in. Add time, or finish when you’re done.', 2600);
-  await T.cap('In trouble? Hold the red button for 2 seconds. It alerts everyone and sounds a loud siren.', 3000);
+  await T.cap('In trouble? Hold the red button for 1 second. It alerts everyone and sounds a loud siren.', 3000);
   const b = await T.page.locator('.lone-sos').boundingBox();
   if (b) { await T.page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await T.page.mouse.down(); await T.w(2300); await T.page.mouse.up(); }
   await T.w(1400);

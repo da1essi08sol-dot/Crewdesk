@@ -1941,17 +1941,20 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .ls-wheel.big { width: min(230px, 62vw); margin: 4px 0; }
 .ls-wheel > svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
 .ls-wheel-track { fill: color-mix(in srgb, #e03131 7%, transparent); stroke: color-mix(in srgb, #e03131 18%, var(--line)); stroke-width: 5; }
-.ls-wheel-fill { fill: none; stroke: #e03131; stroke-width: 6; stroke-linecap: round; stroke-dasharray: 339.3; stroke-dashoffset: 339.3; transition: stroke-dashoffset .25s ease-out; }
-.ls-wheel.holding .ls-wheel-fill { stroke-dashoffset: 0; transition: stroke-dashoffset 2s linear; }
+.ls-wheel-fill { fill: none; stroke: #e03131; stroke-width: 6; stroke-linecap: round; stroke-dasharray: 339.3; stroke-dashoffset: 339.3; will-change: stroke-dashoffset; }
+.ls-wheel.holding .ls-wheel-fill { animation: ls-fill 1s linear forwards; }
+@keyframes ls-fill { from { stroke-dashoffset: 339.3; } to { stroke-dashoffset: 0; } }
 .ls-panic { position: absolute; inset: 14%; border: 0; border-radius: 50%; color: #fff; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   background: radial-gradient(circle at 50% 32%, #ff6b6b, #c92a2a 72%); box-shadow: 0 14px 30px -12px #e03131, inset 0 -6px 14px rgba(0,0,0,.18);
-  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: transform .15s var(--spring); }
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: transform .1s ease-out; will-change: transform; transform: translateZ(0); -webkit-tap-highlight-color: transparent; }
 .ls-panic svg { flex: none; }
 .ls-panic b { font-size: 18px; line-height: 1.1; }
 .ls-wheel.big .ls-panic b { font-size: 26px; }
 .ls-panic span { font-size: 11px; font-weight: 600; opacity: .85; }
 .ls-wheel.big .ls-panic span { font-size: 13px; }
-.ls-panic.holding { transform: scale(.94); }
+.ls-panic.holding { transform: scale(.95) translateZ(0); }
+.ls-wheel > svg { will-change: transform; }
+.lone-dial .fill { will-change: stroke-dashoffset; }
 .ls-hint { margin: -4px 0 0; font-size: 13.5px; color: var(--muted); }
 .ls-go { width: 100%; min-height: 60px; border: 0; border-radius: 18px; background: #2f9e44; color: #fff; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 19px; font-weight: 700; cursor: pointer; box-shadow: 0 10px 22px -12px #2f9e44; transition: transform .12s var(--spring); }
 .ls-go:active { transform: scale(.97); }
