@@ -115,11 +115,16 @@ function loneActive(m) {
   }
   const late = st === 'overdue' || st === 'due';
   return `<section class="lone-live ${late ? 'late' : ''}">
-      <div class="lone-dial" aria-live="polite">
+      <div class="lone-status"><span class="lone-chip ${st === 'active' ? 'ok' : st === 'due' ? 'amber' : 'red'}">${LONE_STATUS[st][0]}</span><span class="ellipsis">${esc(m.where || 'Working alone')}</span></div>
+      <button class="lone-dial lone-dial-btn" data-act="lone-checkin" aria-label="I’m safe — check in. Next check-in ${esc(loneLeft(m))}">
         <svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="88" class="track"/><circle cx="100" cy="100" r="88" class="fill" data-lone-ring style="stroke-dasharray:${RING.toFixed(1)};stroke-dashoffset:${ringOff(m)}"/></svg>
-        <div class="lone-dial-txt"><span class="k">${st === 'overdue' ? 'Check-in missed' : st === 'due' ? 'Check in now' : 'Next check-in'}</span><b data-lone-count>${loneLeft(m)}</b><span class="t">${st === 'overdue' ? 'Your buddy has been alerted' : 'at ' + hm(m.nextAt)}</span></div>
-      </div>
-      <button class="lone-check" data-act="lone-checkin">${icSize('check', 26)}<span>I’m safe<small>Check in</small></span></button>
+        <span class="lone-core">
+          ${icSize('check', 30)}
+          <b class="lone-core-big">I’m safe</b>
+          <span class="lone-core-sub">Tap to check in</span>
+          <span class="lone-core-time"><span data-lone-count>${loneLeft(m)}</span> ${st === 'overdue' ? '· buddy alerted' : st === 'due' ? '· due now' : 'left · ' + hm(m.nextAt)}</span>
+        </span>
+      </button>
       <div class="lone-row">
         <button class="btn" data-act="lone-extend" data-min="30">${ic('plus')}30 min</button>
         <button class="btn" data-act="lone-extend" data-min="60">${ic('plus')}1 hour</button>
