@@ -7,6 +7,7 @@ const UPDATES = [
   { id: '3.6.1', date: '2026-11-07', title: 'Smoother Help button', icon: 'shield', color: '#c92a2a',
     items: [
       ['better', 'The Help button now needs just 1 second held down to raise an alert.'],
+      ['better', 'Checking in feels better: a firmer press, a little buzz, a pop and ripple, and the ring now glides back to full instead of jumping.'],
       ['fix', 'The ring around Help fills smoothly, and a slight finger wobble no longer cancels the press.'],
     ] },
   { id: '3.6', date: '2026-11-07', title: 'Stay safe, rebuilt — and the Android app', icon: 'shield', color: '#c92a2a',

@@ -60,6 +60,7 @@ document.addEventListener('pointerdown', () => Siren.unlock(), { capture: true, 
 // ---------------------------------------------------------------- helpers
 const hm = (t) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 const RING = 2 * Math.PI * 88;
+let ringPrev = null, popNext = false, popNow = false; // ring offset last shown; popNext = play the check-in pop on the next render
 const ringOff = (m) => { const f = Math.min(1, Math.max(0, (m.nextAt - Date.now()) / (m.every * 60e3))); return (RING * (1 - f)).toFixed(1); };
 const loneEvery = () => { const v = S.company && S.company.settings && S.company.settings.loneEvery; return [15, 30, 45, 60, 90, 120].includes(v) ? v : 60; };
 const everyTxt = (n) => (n < 60 ? `${n} minutes` : n === 60 ? 'hour' : n === 90 ? '1½ hours' : `${n / 60} hours`);
@@ -154,6 +155,16 @@ function loneStart() {
       <button class="lone-silent" data-act="lone-alert-silent">Send a silent alert instead</button>
     </section>`;
 }
+// After a check-in the page re-draws; start the ring where it was and glide it back to full instead of jumping.
+function ringStart(m) {
+  const to = Number(ringOff(m)), from = ringPrev;
+  ringPrev = to; popNow = popNext; popNext = false;
+  if (from != null && from - to > RING * 0.04) {
+    setTimeout(() => { const r = $('[data-lone-ring]'); if (!r) return; r.getBoundingClientRect(); r.classList.add('refill'); r.style.strokeDashoffset = to.toFixed(1); setTimeout(() => r.classList.remove('refill'), 1500); }, 40);
+    return from.toFixed(1);
+  }
+  return to.toFixed(1);
+}
 function loneActive(m) {
   const st = loneStatusOf(m);
   if (m.status === 'alert') {
@@ -171,8 +182,8 @@ function loneActive(m) {
   return `<section class="lone-live ${late ? 'late' : ''}">
       <div class="lone-status"><span class="lone-chip ${st === 'active' ? 'ok' : st === 'due' ? 'amber' : 'red'}">${LONE_STATUS[st][0]}</span><span class="ellipsis">${esc(m.where || 'Working alone')}</span></div>
       <button class="lone-dial lone-dial-btn" data-act="lone-checkin" aria-label="I’m safe — check in. Next check-in ${esc(loneLeft(m))}">
-        <svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="88" class="track"/><circle cx="100" cy="100" r="88" class="fill" data-lone-ring style="stroke-dasharray:${RING.toFixed(1)};stroke-dashoffset:${ringOff(m)}"/></svg>
-        <span class="lone-core">
+        <svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="88" class="track"/><circle cx="100" cy="100" r="88" class="fill" data-lone-ring style="stroke-dasharray:${RING.toFixed(1)};stroke-dashoffset:${ringStart(m)}"/></svg>
+        <span class="lone-core${popNow ? ' pop' : ''}">
           ${icSize('check', 30)}
           <b class="lone-core-big">I’m safe</b>
           <span class="lone-core-sub">Tap to check in</span>
@@ -293,7 +304,7 @@ function loneTick() {
     if (parseHash().name !== 'lone') { clearInterval(loneTimer); return; }
     const m = S.lone && S.lone.mine; if (!m || m.status === 'alert') return;
     const el = $('[data-lone-count]'); if (el) el.textContent = loneLeft(m);
-    const ring = $('[data-lone-ring]'); if (ring) ring.style.strokeDashoffset = ringOff(m); // the green ring empties as the check-in gets closer
+    const ring = $('[data-lone-ring]'); if (ring) { ring.style.strokeDashoffset = ringOff(m); ringPrev = Number(ringOff(m)); } // the green ring empties as the check-in gets closer
     if (m.nextAt <= Date.now() && !$('.lone-live.late')) renderView(false); // just became due
   }, 1000);
 }
@@ -312,7 +323,7 @@ A['lone-test'] = async (el) => { try { await api('POST', '/api/fcm/test', { alar
 A['lone-push'] = async () => { try { await pushSubscribe(); toast('Lock-screen notifications are on'); renderView(false); } catch (e) { toast(e.message, true); } };
 A['lone-checkin'] = async () => {
   Siren.stop();
-  try { await lonePost(`/lone/${mineId()}/checkin`, locBody()); if (navigator.vibrate) navigator.vibrate(25); toast('Checked in. Stay safe.'); } catch (e) { toast(e.message, true); }
+  try { popNext = true; await lonePost(`/lone/${mineId()}/checkin`, locBody()); if (navigator.vibrate) navigator.vibrate([18, 50, 28]); toast('Checked in. Stay safe.'); } catch (e) { popNext = false; toast(e.message, true); }
 };
 A['lone-end'] = async () => {
   if (!(await confirmBox('Finish working alone?', 'Your admins won’t be alerted any more. Only finish once you’re safe.', 'I’m safe, finish'))) return;
@@ -381,3 +392,6 @@ const alertOf = (uid) => ((S.lone && S.lone.alerts) || []).find((a) => a.userId 
       ${a.phone ? `<a class="btn sm" href="tel:${esc(a.phone.replace(/[^\d+]/g, ''))}">${ic('phone')}Call</a>` : ''}${D ? `<a class="btn sm" href="${isIOS() ? D.apple : D.google}" target="_blank" rel="noopener">${ic('route')}Directions</a>` : ''}</div>` + html;
   };
 })();
+
+// A light tick the moment the check-in button is touched.
+document.addEventListener('pointerdown', (e) => { if (e.target.closest && e.target.closest('.lone-dial-btn') && navigator.vibrate) navigator.vibrate(10); }, { passive: true });

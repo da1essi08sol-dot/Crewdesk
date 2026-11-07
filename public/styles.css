@@ -1924,8 +1924,14 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .lone-dial-btn .fill { stroke-width: 14; } .lone-dial-btn .track { stroke-width: 14; }
 .lone-core { position: absolute; inset: 13%; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: #fff;
   background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--ring) 80%, #fff), var(--ring) 70%); box-shadow: 0 14px 30px -14px var(--ring), inset 0 -6px 14px rgba(0,0,0,.12);
-  transition: transform .15s var(--spring); }
-.lone-dial-btn:active .lone-core { transform: scale(.95); }
+  transition: transform .35s var(--spring), box-shadow .2s; will-change: transform; }
+.lone-dial-btn:active .lone-core { transform: scale(.92); transition-duration: .08s; box-shadow: 0 6px 14px -10px var(--ring), inset 0 -3px 10px rgba(0,0,0,.2); }
+.lone-dial .fill.refill { transition: stroke-dashoffset 1.2s cubic-bezier(.22,1,.36,1), stroke .3s; }
+.lone-core { overflow: visible; }
+.lone-core.pop { animation: lone-pop .55s cubic-bezier(.34,1.56,.64,1); }
+.lone-core.pop::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--ring); animation: lone-ripple .8s ease-out forwards; pointer-events: none; }
+@keyframes lone-pop { 0% { transform: scale(.92); } 55% { transform: scale(1.07); } 100% { transform: scale(1); } }
+@keyframes lone-ripple { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.35); } }
 .lone-core-big { font-size: 30px; line-height: 1.05; letter-spacing: -.01em; margin-top: 4px; }
 .lone-core-sub { font-size: 13px; font-weight: 600; opacity: .9; }
 .lone-core-time { margin-top: 10px; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 99px; background: rgba(0,0,0,.16); font-variant-numeric: tabular-nums; }
