@@ -113,8 +113,10 @@ function loneTestWarning() {
 // Android app: a checklist of the phone permissions Stay safe needs. In a browser: where to get the app.
 function loneSetup() {
   if (!isAndroidApp()) {
-    return /Android/i.test(navigator.userAgent)
-      ? `<div class="lone-note warn">${icSize('phoneapp', 18)}<span class="grow"><b>Get the Crewdesk Android app</b> for a full-screen siren, alerts when the app is closed, and location sharing.</span><a class="btn sm" href="${APK_URL}">Download</a></div>`
+    // Already using the web app from the Home Screen (or on a computer)? Then say nothing.
+    const webApp = matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
+    return /Android/i.test(navigator.userAgent) && !webApp
+      ? `<div class="lone-note warn">${icSize('phoneapp', 18)}<span class="grow"><b>Add Crewdesk to your Home Screen as a web app</b> so check-in reminders reach your lock screen.</span><button class="btn sm" data-act="install-show">Add</button></div>`
       : '';
   }
   const st = nativeStatus();

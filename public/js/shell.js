@@ -14,16 +14,17 @@ function installNudge() {
   const ios = isIOS();
   const n = document.createElement('div'); n.className = 'install-nudge'; n.setAttribute('role', 'dialog'); n.setAttribute('aria-label', 'Add Crewdesk to your Home Screen');
   n.innerHTML = `<button class="install-x" data-act="install-later" aria-label="Not now">${icSize('x', 18)}</button>
-    <div class="row" style="gap:12px;align-items:center"><img src="/icon-192.png" alt="" width="52" height="52" style="border-radius:12px;flex:none"><div><b>Use Crewdesk as an app</b><div class="small muted">Full screen, quicker to open, and lock-screen notifications.</div></div></div>
+    <div class="row" style="gap:12px;align-items:center"><img src="/icon-192.png" alt="" width="52" height="52" style="border-radius:12px;flex:none"><div><b>Use Crewdesk as a web app</b><div class="small muted">Full screen, quicker to open, and lock-screen notifications.</div></div></div>
     ${ios ? `<ol class="install-steps"><li>Tap <span class="install-share">${icSize('upload', 16)}</span> <b>Share</b> in Safari’s toolbar</li><li>Scroll down and tap <b>Add to Home Screen</b></li><li>Open Crewdesk from your Home Screen</li></ol>`
       : `<button class="btn primary block" data-act="install-now" ${installEvt ? '' : 'hidden'}>${icSize('download', 18)}Add to Home Screen</button>
          <p class="small muted install-manual" ${installEvt ? 'hidden' : ''}>Tap the <b>⋮</b> menu in Chrome, then <b>Add to Home screen</b> (or <b>Install app</b>).</p>
-         <a class="small" href="https://github.com/da1essi08sol-dot/Crewdesk/releases/download/android-latest/crewdesk.apk">Working alone? Get the Crewdesk Android app instead</a>`}`;
+`}`;
   document.body.appendChild(n);
   requestAnimationFrame(() => n.classList.add('on'));
 }
 window.addEventListener('beforeinstallprompt', () => { const m = document.querySelector('.install-manual'); if (m) m.hidden = true; });
 A['install-now'] = async () => { if (!installEvt) return; installEvt.prompt(); try { await installEvt.userChoice; } catch (_) {} installEvt = null; const n = document.querySelector('.install-nudge'); if (n) n.remove(); };
+A['install-show'] = () => { try { localStorage.removeItem('cd_install_snooze'); } catch (_) {} if (installEvt) return A['install-now'](); installNudge(); };
 A['install-later'] = () => { try { localStorage.setItem('cd_install_snooze', String(Date.now() + 3 * 864e5)); } catch (_) {} const n = document.querySelector('.install-nudge'); if (n) { n.classList.remove('on'); setTimeout(() => n.remove(), 300); } };
 
 // ============================================================ start-up
