@@ -2012,3 +2012,7 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .testing-bar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 12.5px; background: var(--amber-soft); color: var(--ink); border-bottom: 1px solid color-mix(in srgb, var(--amber) 30%, transparent); }
 .testing-bar svg { flex: none; color: var(--amber); }
 .testing-bar button { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px; display: grid; }
+/* "I'm safe, cancel alert": white writing, clearly a button on the red panel */
+.lone-alert-panel .btn.lone-safe-btn { background: #7a1010; color: #fff; border: 2px solid #fff; }
+.lone-alert-panel .btn.lone-safe-btn svg { color: #fff; }
+.lone-alert-panel .btn.lone-siren-btn { background: rgba(255,255,255,.18); color: #fff; }
