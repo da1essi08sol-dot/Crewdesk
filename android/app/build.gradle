@@ -1,0 +1,29 @@
+plugins { id 'com.android.application' }
+
+def ks = System.getenv('CREWDESK_KEYSTORE') // path to the signing keystore (from a GitHub secret); otherwise a debug key is used
+android {
+    namespace 'com.crewdesk.app'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.crewdesk.app'
+        minSdk 26
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv('GITHUB_RUN_NUMBER') ?: '1')
+        versionName '1.0.' + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
+        buildConfigField 'String', 'DEFAULT_URL', '"' + (project.findProperty('crewdeskUrl') ?: 'https://crewdesk.onrender.com') + '"'
+    }
+    buildFeatures { buildConfig true }
+    signingConfigs {
+        release {
+            if (ks) { storeFile file(ks); storePassword System.getenv('CREWDESK_KEYSTORE_PASSWORD'); keyAlias System.getenv('CREWDESK_KEY_ALIAS') ?: 'crewdesk'; keyPassword System.getenv('CREWDESK_KEY_PASSWORD') ?: System.getenv('CREWDESK_KEYSTORE_PASSWORD') }
+        }
+    }
+    buildTypes {
+        release { minifyEnabled false; signingConfig ks ? signingConfigs.release : signingConfigs.debug }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies {
+    implementation platform('com.google.firebase:firebase-bom:33.5.1')
+    implementation 'com.google.firebase:firebase-messaging'
+}

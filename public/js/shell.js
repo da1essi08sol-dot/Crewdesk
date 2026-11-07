@@ -1,8 +1,34 @@
 /* Starting up, the app frame (sidebar, top bar, bottom tabs), routing, live updates, notifications and search. */
 'use strict';
 
+// ============================================================ "add to Home Screen" (phones in a browser only, never computers)
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; const b = document.querySelector('[data-act="install-now"]'); if (b) b.hidden = false; });
+window.addEventListener('appinstalled', () => { installEvt = null; const n = document.querySelector('.install-nudge'); if (n) n.remove(); });
+function installNudge() {
+  const phone = isIOS() || /Android/i.test(navigator.userAgent);
+  const installed = matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
+  if (!phone || installed || window.CrewdeskAndroid || document.querySelector('.install-nudge')) return;
+  let snooze = 0; try { snooze = Number(localStorage.getItem('cd_install_snooze') || 0); } catch (_) {}
+  if (Date.now() < snooze) return;
+  const ios = isIOS();
+  const n = document.createElement('div'); n.className = 'install-nudge'; n.setAttribute('role', 'dialog'); n.setAttribute('aria-label', 'Add Crewdesk to your Home Screen');
+  n.innerHTML = `<button class="install-x" data-act="install-later" aria-label="Not now">${icSize('x', 18)}</button>
+    <div class="row" style="gap:12px;align-items:center"><img src="/icon-192.png" alt="" width="52" height="52" style="border-radius:12px;flex:none"><div><b>Use Crewdesk as an app</b><div class="small muted">Full screen, quicker to open, and lock-screen notifications.</div></div></div>
+    ${ios ? `<ol class="install-steps"><li>Tap <span class="install-share">${icSize('upload', 16)}</span> <b>Share</b> in Safari’s toolbar</li><li>Scroll down and tap <b>Add to Home Screen</b></li><li>Open Crewdesk from your Home Screen</li></ol>`
+      : `<button class="btn primary block" data-act="install-now" ${installEvt ? '' : 'hidden'}>${icSize('download', 18)}Add to Home Screen</button>
+         <p class="small muted install-manual" ${installEvt ? 'hidden' : ''}>Tap the <b>⋮</b> menu in Chrome, then <b>Add to Home screen</b> (or <b>Install app</b>).</p>
+         <a class="small" href="https://github.com/da1essi08sol-dot/Crewdesk/releases/download/android-latest/crewdesk.apk">Working alone? Get the Crewdesk Android app instead</a>`}`;
+  document.body.appendChild(n);
+  requestAnimationFrame(() => n.classList.add('on'));
+}
+window.addEventListener('beforeinstallprompt', () => { const m = document.querySelector('.install-manual'); if (m) m.hidden = true; });
+A['install-now'] = async () => { if (!installEvt) return; installEvt.prompt(); try { await installEvt.userChoice; } catch (_) {} installEvt = null; const n = document.querySelector('.install-nudge'); if (n) n.remove(); };
+A['install-later'] = () => { try { localStorage.setItem('cd_install_snooze', String(Date.now() + 3 * 864e5)); } catch (_) {} const n = document.querySelector('.install-nudge'); if (n) { n.classList.remove('on'); setTimeout(() => n.remove(), 300); } };
+
 // ============================================================ start-up
 async function boot() {
+  setTimeout(installNudge, 1800);
   store.set('cd_token', null); // sign-ins used to live in browser storage; they're now secure cookies
   if (!S.info) { try { S.info = await api('GET', '/api/info'); } catch (_) { S.info = { operator: {} }; } }
   const r0 = parseHash();
@@ -73,7 +99,7 @@ const TAB_ITEMS = { home: ['Home', 'home'], projects: ['Projects', 'folder'], ti
   pings: ['Pings', 'ping'], team: ['Team', 'team'], clients: ['Clients', 'contacts'], suggest: ['Suggest', 'bulb'], admin: ['Admin', 'admin'], sheets: ['Sheets', 'sheet'], lone: ['Safe', 'shield'] };
 const defaultTabs = () => (isAdmin() ? ['home', 'projects', 'admin', 'chat'] : ['home', 'projects', 'timesheet', 'chat']);
 const DEFAULT_TABS = ['home', 'projects', 'timesheet', 'chat'];
-const tabAllowed = (k) => !!TAB_ITEMS[k] && ((k !== 'sheets' && k !== 'admin') || isAdmin());
+const tabAllowed = (k) => !!TAB_ITEMS[k] && ((k !== 'sheets' && k !== 'admin') || isAdmin()) && !(k === 'lone' && isIOS()); // Stay safe is Android-only
 function myTabs() {
   const t = (S.user && S.user.prefs && Array.isArray(S.user.prefs.tabs) ? S.user.prefs.tabs : defaultTabs()).filter(tabAllowed).slice(0, 4);
   return t.length ? t : defaultTabs();

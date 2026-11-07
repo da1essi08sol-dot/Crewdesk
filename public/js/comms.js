@@ -460,6 +460,7 @@ VIEWS.team = {
       <div class="grow"><div class="row tight"><b class="ellipsis">${esc(m.name)}</b>${m.id === S.user.id ? '<span class="tiny muted">(you)</span>' : ''}</div>
       <div class="small muted ellipsis">${esc([m.title, m.dept, m.online ? 'Online' : 'Last seen ' + timeAgo(m.lastSeen)].filter(Boolean).join(' · '))}</div></div>
       ${S.locations[m.id] ? `<span class="muted" title="Sharing location">${icSize('pin', 16)}</span>` : ''}
+      ${loneAlarmFor(m.id) ? `<span class="mk-alert-badge" title="${loneAlarmFor(m.id).status === 'alert' ? 'Needs help' : 'Missed a check-in'}">!</span>` : ''}
       ${m.role !== 'member' ? `<span class="pill">${ROLE[m.role]}</span>` : ''}</a>`).join('')}</div>`;
   },
   teams() {
@@ -585,6 +586,13 @@ async function drawLeaflet(el) {
   } catch (_) { el.innerHTML = '<div class="map-msg">The map couldn’t load. Check your internet connection and try again.</div>'; }
 }
 function destroyMap() { if (map) { try { map.remove(); } catch (_) {} } map = null; mapMarkers = []; mapKind = ''; }
+// Stay safe: someone who raised an alert (or missed a check-in) — a pulsing red exclamation at the location saved with the alert.
+const loneAlarmFor = (uid) => { const L = S.lone || {}; return [].concat(L.watching || [], L.mine ? [L.mine] : []).find((s) => s.userId === uid && (s.status === 'alert' || s.status === 'overdue')) || null; };
+function alertMarkerEl(s) {
+  const d = document.createElement('div'); d.className = 'mk-alert' + (s.status === 'alert' ? '' : ' overdue');
+  d.setAttribute('role', 'img'); d.setAttribute('aria-label', `${member(s.userId).name} ${s.status === 'alert' ? 'needs help' : 'missed a check-in'}`);
+  d.innerHTML = '<span>!</span>'; return d;
+}
 function personMarkerEl(m) {
   const d = document.createElement('div'); d.className = 'mk-person'; d.style.background = colorFor(m.id);
   d.setAttribute('aria-label', m.name); d.setAttribute('role', 'img');
@@ -641,8 +649,13 @@ function updateMap() {
     if (p.lat == null || p.lng == null || p.archived) continue;
     add(p.lat, p.lng, jobMarkerEl(p, workingOn(p.id).length), '', 0, (el) => openMapCard(p, el));
   }
+  const alarms = [].concat((S.lone && S.lone.watching) || [], S.lone && S.lone.mine ? [S.lone.mine] : []).filter((s) => (s.status === 'alert' || s.status === 'overdue') && (s.alertLoc || s.loc));
+  for (const s of alarms) {
+    const l = s.alertLoc || s.loc; const m = member(s.userId); const D = dirLinks(l.lat, l.lng); const help = s.status === 'alert';
+    add(l.lat, l.lng, alertMarkerEl(s), `<b style="color:#c92a2a">${help ? '🚨 ' + esc(m.name) + ' needs help' : esc(m.name) + ' missed a check-in'}</b><br><span style="color:#6a6963">${esc(s.where || 'Working alone')} · location ${s.alertLoc ? 'saved with the alert' : 'last shared'} ${timeAgo(l.at)}${l.acc ? ` · ±${Math.round(l.acc)}m` : ''}</span><br>${s.phone ? `<a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">Call</a> · ` : ''}<a href="${isIOS() ? D.apple : D.google}" target="_blank" rel="noopener">Directions</a> · <a href="#/lone">Stay safe</a>`, 3000);
+  }
   for (const [id, loc] of Object.entries(S.locations)) {
-    const m = S.members[id]; if (!m) continue;
+    const m = S.members[id]; if (!m || alarms.some((s) => s.userId === id)) continue;
     add(loc.lat, loc.lng, personMarkerEl(m), `<b>${esc(m.name)}</b><br><span style="color:#6a6963">${m.online ? 'Online' : 'Offline'} · updated ${timeAgo(loc.at)}${loc.acc ? ` · ±${loc.acc}m` : ''}</span><br><a href="#/person/${m.id}">View profile</a>`, 1000);
   }
   if (!mapFitted && pts.length) {

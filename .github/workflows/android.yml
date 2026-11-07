@@ -1,0 +1,42 @@
+# Builds the Crewdesk Android app and publishes it as a direct download:
+#   https://github.com/da1essi08sol-dot/Crewdesk/releases/download/android-latest/crewdesk.apk
+# Optional signing (so updates install over the old app): add repository secrets
+#   ANDROID_KEYSTORE_B64 (base64 of a .jks keystore), ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS
+name: Android app
+on:
+  push:
+    branches: [main, timesheets-redesign]
+    paths: ['android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: android-build, cancel-in-progress: true }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Signing key
+        env: { KS: '${{ secrets.ANDROID_KEYSTORE_B64 }}' }
+        run: |
+          if [ -n "$KS" ]; then echo "$KS" | base64 -d > "$RUNNER_TEMP/crewdesk.jks"; echo "CREWDESK_KEYSTORE=$RUNNER_TEMP/crewdesk.jks" >> "$GITHUB_ENV"; else echo "No signing secret: using a temporary debug key"; fi
+      - name: Build
+        env:
+          CREWDESK_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          CREWDESK_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+      - run: cp android/app/build/outputs/apk/release/app-release.apk crewdesk.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: crewdesk-apk, path: crewdesk.apk }
+      - name: Publish download
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh release delete android-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create android-latest crewdesk.apk --prerelease --target "$GITHUB_SHA" \
+            --title "Crewdesk Android app (latest)" \
+            --notes "Built from ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}. Open this page on the Android phone and tap crewdesk.apk to install."

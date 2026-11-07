@@ -16,6 +16,7 @@ const ts = require('./lib/timesheet');
 const gdrive = require('./lib/gdrive');
 const { writeZip } = require('./lib/zip');
 const webpush = require('./lib/webpush');
+const fcm = require('./lib/fcm');
 const TZ = 'Europe/London';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -570,14 +571,26 @@ function badgeCount(userId) { // the number on the app icon: unread chats, notif
   return n;
 }
 function pushUser(cid, userId, data, force = false) {
-  const u = db.users[userId]; if (!u || !Array.isArray(u.push) || !u.push.length) return;
+  const u = db.users[userId]; if (!u) return;
+  const webSubs = Array.isArray(u.push) ? u.push : []; const appTokens = Array.isArray(u.fcm) ? u.fcm : [];
+  if (!webSubs.length && !appTokens.length) return;
   const onScreen = force ? new Set() : lookingDevices(userId); // only the device showing Crewdesk stays quiet; the in-app pop-up covers it
   const c = db.companies[cid];
   const many = Object.values(db.companies).filter((co) => co.members[userId]).length > 1;
   const payload = { title: str(data.title, 120) || 'Crewdesk', body: str(data.body, 240), link: str(data.link, 200) || '#/home', tag: str(data.tag, 60), cid, urgent: !!data.urgent,
     company: many && c ? c.name : '', badge: badgeCount(userId) };
+  // The Crewdesk Android app (Firebase): emergencies become a full-screen siren that plays until someone responds.
+  for (const d of appTokens.slice()) {
+    if (onScreen.has('fcm:' + d.token) && !data.alarm && data.kind !== 'resolved') continue;
+    fcm.send(d.token, { title: payload.title, body: payload.body, link: payload.link, tag: payload.tag, cid: cid || '', company: payload.company, badge: payload.badge,
+      kind: data.kind || (data.urgent ? 'urgent' : 'normal'), alarm: data.alarm ? '1' : '0', self: data.self ? '1' : '0', session: data.session || '' }).then((r) => {
+      if (r === 'gone') { u.fcm = (u.fcm || []).filter((x) => x.token !== d.token); save(); }
+      else if (r === 'ok') { d.lastOk = now(); d.lastErr = ''; } else { d.lastErr = r.slice(5); d.lastErrAt = now(); if (!/isn’t set up/.test(r)) console.warn('FCM:', r); }
+    });
+  }
+  if (!webSubs.length) return;
   const keys = vapid();
-  for (const s of u.push.slice()) {
+  for (const s of webSubs.slice()) {
     if (onScreen.has(s.endpoint)) continue;
     s.lastTry = now();
     webpush.send(keys, 'mailto:' + SUPPORT_EMAIL, s, payload).then((r) => {
@@ -627,6 +640,7 @@ function loneView(s, x) {
   const o = { id: s.id, userId: s.userId, status: s.status, startedAt: s.startedAt, every: s.every, nextAt: s.nextAt, endsAt: s.endsAt, buddy: s.buddy, where: s.where, note: s.note,
     lastCheck: s.lastCheck, alertAt: s.alertAt || 0, silent: !!s.silent, ackBy: s.ackBy || '', ackAt: s.ackAt || 0, endedAt: s.endedAt || 0, log: s.log.slice(-30) };
   if (s.loc) o.loc = s.loc; // only ever present when it came from the Android app
+  if (s.alertLoc && (s.status === 'alert' || s.status === 'overdue')) o.alertLoc = s.alertLoc;
   if (x.uid !== s.userId) o.phone = (db.users[s.userId] || {}).phone || '';
   return o;
 }
@@ -641,9 +655,9 @@ function loneChanged(cid, s, alarm = false) {
   save();
   broadcast(cid, (x) => (canSeeLone(x, s) ? { t: 'lone', state: loneState(x), alarm: alarm && x.uid !== s.userId ? s.id : '' } : null));
 }
-function loneUrgent(c, s, title, body) { // reaches the buddy and admins even if they're in the app, and is saved in their notifications
+function loneUrgent(c, s, title, body, extra = { alarm: true }) { // reaches the buddy and admins even if they're in the app, and is saved in their notifications
   const ids = loneWatchers(c, s);
-  for (const id of ids) pushUser(c.id, id, { title, body, link: '#/lone', tag: 'lone-' + s.id, urgent: true }, true);
+  for (const id of ids) pushUser(c.id, id, Object.assign({ title, body, link: '#/lone', tag: 'lone-' + s.id, urgent: true, session: s.id }, extra), true);
   notify(c.id, ids, `${title} — ${body}`, '#/lone');
 }
 function loneWatchdog() {
@@ -652,14 +666,25 @@ function loneWatchdog() {
     const d = cdata(c.id);
     for (const s of Object.values(d.lone)) {
       if (s.status === 'ended' || s.status === 'alert') continue;
-      if (t >= s.nextAt && !s.warnedAt) { // remind the worker first
+      if (s.status === 'active') { // heads-up 10 and 5 minutes before a check-in is due
+        const left = s.nextAt - t;
+        for (const [k, mins] of [['w10', 10], ['w5', 5]]) {
+          if (left <= mins * 60e3 && left > (mins - 4) * 60e3 && s[k] !== s.nextAt) {
+            s[k] = s.nextAt; save();
+            pushUser(c.id, s.userId, { title: `Check-in in ${mins} minutes`, body: 'Tap I’m safe now, or add more time.', link: '#/lone', tag: 'lone-soon', kind: 'checkin', session: s.id });
+          }
+        }
+      }
+      if (t >= s.nextAt && !s.warnedAt) { // due now
         s.warnedAt = t; save();
-        pushUser(c.id, s.userId, { title: 'Time to check in', body: 'Tap to confirm you’re safe. Your buddy is alerted in 10 minutes if you don’t.', link: '#/lone', tag: 'lone-due', urgent: true }, true);
+        pushUser(c.id, s.userId, { title: 'Time to check in', body: 'Tap I’m safe. If you don’t within 10 minutes, your buddy and admins are told.', link: '#/lone', tag: 'lone-due', urgent: true, kind: 'checkin', session: s.id }, true);
       }
       if (s.status === 'active' && t >= s.nextAt + LONE_GRACE) {
-        s.status = 'overdue'; loneLog(s, 'Missed a check-in');
-        loneUrgent(c, s, `${firstOf(s.userId)} missed a check-in`, `${s.where ? 'Working at ' + s.where + '. ' : ''}Last checked in ${ukTime(s.lastCheck)}. Try calling them now.`);
-        loneChanged(c.id, s, true);
+        s.status = 'overdue'; s.alertLoc = s.loc || null; loneLog(s, 'Missed a check-in');
+        // The siren goes off on the worker's own phone only; their buddy and admins get a message.
+        pushUser(c.id, s.userId, { title: 'You missed a check-in', body: 'Tap I’m safe now. Your buddy and admins have been told.', link: '#/lone', tag: 'lone-missed', alarm: true, self: true, session: s.id }, true);
+        loneUrgent(c, s, `${firstOf(s.userId)} missed a check-in`, `${s.where ? 'Working at ' + s.where + '. ' : ''}Last checked in ${ukTime(s.lastCheck)}. Try calling them.`, { kind: 'urgent' });
+        loneChanged(c.id, s, false);
       }
     }
   }
@@ -1248,6 +1273,7 @@ async function api(req, res, url) {
     if (st !== 'ok') return json(res, 200, { valid: false, reason: st });
     return json(res, 200, { valid: true, company: f.c.name, inviter: (db.users[f.inv.createdBy] || {}).name || '', email: f.inv.email || '' });
   }
+  if (p === '/api/android/config' && M === 'GET') return json(res, 200, { firebase: fcm.configured() ? fcm.clientConfig() : null }); // public values the Android app needs
   if (p === '/api/stream' && M === 'GET') return stream(req, res, url);
 
   // ---------------- signed-in only below
@@ -1342,6 +1368,28 @@ async function api(req, res, url) {
     if (!user.push || !user.push.length) bad('Lock-screen notifications aren’t on for any of your devices yet');
     const cid = Object.keys(db.companies).find((id) => db.companies[id].members[user.id]);
     pushUser(cid, user.id, { title: 'Crewdesk', body: 'Lock-screen notifications are working 👍', link: '#/profile', tag: 'test' }, true);
+    return json(res, 200, { ok: true });
+  }
+  // The Crewdesk Android app's Firebase token for this phone.
+  if (p === '/api/fcm' && M === 'POST') {
+    const b = await readBody(req, 4096); const tok = str(b.token, 400);
+    if (!/^[\w:.-]{50,400}$/.test(tok)) bad('That doesn’t look like a phone token');
+    for (const other of Object.values(db.users)) if (other.fcm && other.id !== user.id) other.fcm = other.fcm.filter((x) => x.token !== tok); // one phone, one account
+    user.fcm = (user.fcm || []).filter((x) => x.token !== tok); user.fcm.push({ token: tok, at: now(), device: str(b.device, 80) });
+    if (user.fcm.length > 5) user.fcm.splice(0, user.fcm.length - 5);
+    save(); return json(res, 200, { ok: true, firebase: fcm.configured() });
+  }
+  if (p === '/api/fcm' && M === 'DELETE') { const b = await readBody(req, 4096); user.fcm = (user.fcm || []).filter((x) => x.token !== str(b.token, 400)); save(); return json(res, 200, { ok: true }); }
+  if (p === '/api/fcm/status' && M === 'POST') {
+    const b = await readBody(req, 4096); const d = (user.fcm || []).find((x) => x.token === str(b.token, 400));
+    return json(res, 200, { firebase: fcm.configured(), registered: !!d, lastOk: d ? d.lastOk || 0 : 0, lastErr: d ? d.lastErr || '' : '', lastErrAt: d ? d.lastErrAt || 0 : 0 });
+  }
+  if (p === '/api/fcm/test' && M === 'POST') {
+    throttle('fcmtest:' + user.id, 10, 3600e3);
+    if (!fcm.configured()) bad('Firebase isn’t set up on the server yet (FIREBASE_SERVICE_ACCOUNT and FIREBASE_APP_CONFIG in Render)');
+    if (!user.fcm || !user.fcm.length) bad('This account has no Android phone signed up yet');
+    const b = await readBody(req, 1024); const cid = Object.keys(db.companies).find((id) => db.companies[id].members[user.id]);
+    pushUser(cid, user.id, b.alarm ? { title: '🚨 Test emergency alert', body: 'This is how a real alert looks. Tap Stop siren.', link: '#/lone', tag: 'test-alarm', alarm: true, session: 'test' } : { title: 'Crewdesk', body: 'Android notifications are working 👍', link: '#/profile', tag: 'test' }, true);
     return json(res, 200, { ok: true });
   }
   // Whether they're looking at the app right now (then pop-ups show in the app instead of on the lock screen).
@@ -1571,6 +1619,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     if (b.settings && typeof b.settings === 'object') {
       for (const k of ['membersSeeMoney', 'membersCreateProjects', 'membersInvite', 'membersPing', 'allowCodeJoin']) if (k in b.settings) c.settings[k] = !!b.settings[k];
       if ('currency' in b.settings) c.settings.currency = str(b.settings.currency, 3) || '£';
+      if ('loneEvery' in b.settings) { const v = Number(b.settings.loneEvery); if (![15, 30, 45, 60, 90, 120].includes(v)) bad('Pick a check-in interval'); c.settings.loneEvery = v; } // Stay safe: how often everyone checks in
       if ('dayStart' in b.settings) c.settings.dayStart = hhmm(b.settings.dayStart) || bad('Enter the usual start time, like 08:00');
       if ('dayEnd' in b.settings) c.settings.dayEnd = hhmm(b.settings.dayEnd) || bad('Enter the usual finish time, like 16:30');
       if ('calendars' in b.settings) { // named calendars, e.g. one per office: Gateshead, Warrington
@@ -3014,11 +3063,15 @@ async function loneApi(req, res, x, sub) {
   if (sub === '/lone' && M === 'POST') {
     const b = await readBody(req, 16 * 1024);
     if (Object.values(d.lone).some((s) => s.userId === me && s.status !== 'ended')) bad('You already have a session running');
-    const every = LONE_EVERY.includes(Number(b.every)) ? Number(b.every) : 60;
-    const hours = Math.min(16, Math.max(0.5, Number(b.hours) || 4));
+    const every = LONE_EVERY.includes(c.settings.loneEvery) ? c.settings.loneEvery : 60; // set by admins; one hour unless they change it
+    const t0 = now(); let finish = Math.round(Number(b.finishAt) / 300e3) * 300e3; // to the nearest 5 minutes
+    if (!Number.isFinite(finish) || !finish) finish = t0 + Math.min(16, Math.max(0.5, Number(b.hours) || 4)) * 3600e3;
+    if (finish < t0 + 5 * 60e3) bad('Pick a finish time at least 5 minutes from now');
+    if (finish > t0 + 16 * 3600e3) bad('Sessions can last up to 16 hours');
     const buddy = b.buddy && c.members[b.buddy] && b.buddy !== me ? String(b.buddy) : '';
     const t = now();
-    const s = { id: uid(), userId: me, status: 'active', startedAt: t, every, endsAt: t + hours * 3600e3, nextAt: 0, lastCheck: t, buddy, where: str(b.where, 120), note: str(b.note, 300), log: [], loc: null, trail: [] };
+    db.users[me].prefs.lone = { buddy, mins: Math.round((finish - t0) / 60e3), where: str(b.where, 120) }; // remembered for next time
+    const s = { id: uid(), userId: me, status: 'active', startedAt: t, every, endsAt: finish, nextAt: 0, lastCheck: t, buddy, where: str(b.where, 120), note: str(b.note, 300), log: [], loc: null, trail: [] };
     s.nextAt = Math.min(t + every * 60e3, s.endsAt);
     const l = locOf(b); if (l) { s.loc = l; s.trail.push(l); }
     loneLog(s, `Started working alone${s.where ? ' at ' + s.where : ''}`, me);
@@ -3026,6 +3079,19 @@ async function loneApi(req, res, x, sub) {
     for (const old of Object.values(d.lone)) if (old.status === 'ended' && t - old.endedAt > 90 * 864e5) delete d.lone[old.id]; // keep 90 days
     if (buddy) notify(c.id, [buddy], `${firstOf(me)} is working alone${s.where ? ' at ' + s.where : ''} and chose you as their buddy`, '#/lone');
     loneChanged(c.id, s); return out();
+  }
+  if (sub === '/lone/panic' && M === 'POST') { // the help button before a session has started: make one and raise the alert at once
+    const b = await readBody(req, 16 * 1024); const t = now();
+    let s = Object.values(d.lone).find((x) => x.userId === me && x.status !== 'ended');
+    if (!s) {
+      const every = LONE_EVERY.includes(c.settings.loneEvery) ? c.settings.loneEvery : 60;
+      s = { id: uid(), userId: me, status: 'active', startedAt: t, every, endsAt: t + 2 * 3600e3, nextAt: t + every * 60e3, lastCheck: t, buddy: '', where: '', note: '', log: [], loc: null, trail: [] };
+      d.lone[s.id] = s; loneLog(s, 'Pressed the help button', me);
+    }
+    const l = locOf(b); if (l) { s.loc = l; s.trail.push(l); }
+    s.status = 'alert'; s.alertAt = t; s.silent = !!b.silent; s.ackBy = ''; s.ackAt = 0; s.alertLoc = s.loc || null; loneLog(s, s.silent ? 'Raised a silent alert' : 'Raised an alert', me);
+    loneUrgent(c, s, `🚨 ${firstOf(me)} needs help`, `${s.loc ? 'Location attached. ' : ''}Call them now.`);
+    loneChanged(c.id, s, true); return out();
   }
   if (!(m = /^\/lone\/([A-Za-z0-9]+)\/(checkin|extend|end|alert|safe|ack|loc)$/.exec(sub)) || M !== 'POST') notFound();
   const s = d.lone[m[1]]; if (!s || !canSeeLone(x, s)) notFound('That session has finished or isn’t yours to see');
@@ -3039,16 +3105,16 @@ async function loneApi(req, res, x, sub) {
     const wasLate = s.status === 'overdue';
     s.status = 'active'; s.lastCheck = t; s.warnedAt = 0; s.nextAt = Math.min(t + s.every * 60e3, Math.max(s.endsAt, t + 5 * 60e3));
     loneLog(s, wasLate ? 'Checked in (late) — safe' : 'Checked in — safe', me);
-    if (wasLate) loneUrgent(c, s, `${firstOf(me)} has checked in`, 'They’re safe — no need to do anything else.');
+    if (wasLate) loneUrgent(c, s, `${firstOf(me)} has checked in`, 'They’re safe — no need to do anything else.', { kind: 'resolved' });
   } else if (act === 'extend') {
-    const mins = [15, 30, 60, 120].includes(Number(b.minutes)) ? Number(b.minutes) : 30;
+    const mins = Math.round(Number(b.minutes) / 5) * 5; if (!(mins >= 5 && mins <= 480)) bad('Add between 5 minutes and 8 hours');
     s.endsAt += mins * 60e3; s.nextAt = Math.min(Math.max(s.nextAt, t) + mins * 60e3, s.endsAt); s.warnedAt = 0;
     if (s.status === 'overdue') { s.status = 'active'; s.lastCheck = t; }
     loneLog(s, `Added ${mins} minutes`, me);
   } else if (act === 'end') {
     s.status = 'ended'; s.endedAt = t; loneLog(s, 'Finished safely', me);
   } else if (act === 'alert') {
-    s.status = 'alert'; s.alertAt = t; s.silent = !!b.silent; s.ackBy = ''; s.ackAt = 0;
+    s.status = 'alert'; s.alertAt = t; s.silent = !!b.silent; s.ackBy = ''; s.ackAt = 0; s.alertLoc = s.loc || null; // where they were when they asked for help
     loneLog(s, s.silent ? 'Raised a silent alert' : 'Raised an alert', me);
     loneUrgent(c, s, `🚨 ${firstOf(me)} needs help`, `${s.where ? 'Working at ' + s.where + '. ' : ''}${s.loc ? 'Location attached. ' : ''}Call them now.`);
     loneChanged(c.id, s, true); return out();
@@ -3056,12 +3122,12 @@ async function loneApi(req, res, x, sub) {
     if (s.status !== 'alert') bad('There’s no alert to cancel');
     s.status = 'active'; s.lastCheck = t; s.warnedAt = 0; s.nextAt = Math.min(t + s.every * 60e3, Math.max(s.endsAt, t + 5 * 60e3));
     loneLog(s, 'Cancelled the alert — safe now', me);
-    loneUrgent(c, s, `${firstOf(me)} is safe`, 'They cancelled their alert.');
+    loneUrgent(c, s, `${firstOf(me)} is safe`, 'They cancelled their alert.', { kind: 'resolved' });
   } else if (act === 'ack') {
     if (own) bad('Someone else needs to respond to your alert');
     if (s.status === 'active') bad('Nothing to respond to');
     s.ackBy = me; s.ackAt = t; loneLog(s, `${firstOf(me)} is responding`, me);
-    pushUser(c.id, s.userId, { title: `${firstOf(me)} is responding`, body: 'Help is on the way.', link: '#/lone', tag: 'lone-ack', urgent: true }, true);
+    pushUser(c.id, s.userId, { title: `${firstOf(me)} is responding`, body: 'Help is on the way.', link: '#/lone', tag: 'lone-ack', urgent: true, session: s.id }, true);
   }
   loneChanged(c.id, s); return out();
 }

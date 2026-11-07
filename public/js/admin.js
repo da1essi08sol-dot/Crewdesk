@@ -422,6 +422,11 @@ C.pref = async (el) => {
 // Lock-screen notifications: the switch, with plain help for phones that need a step first.
 function pushSettingRow(sw, perm) {
   const label = 'Lock-screen notifications';
+  if (typeof isAndroidApp === 'function' && isAndroidApp()) { // the Crewdesk Android app delivers them itself (Firebase)
+    const st = nativeStatus();
+    return `<div class="setting"><span><b>${label}</b><br><span class="d">${st.token ? '✓ On — coming through the Crewdesk Android app, even when it’s closed.' : 'Connecting… (needs Firebase set up on the server)'}</span></span></div>
+      <div class="row wrap tight" style="padding:2px 0 10px"><button class="btn sm" data-act="lone-test">${ic('bell')}Send a test</button><button class="btn sm ghost" data-act="lone-perm" data-k="notifications">Notification settings</button></div>`;
+  }
   if (!pushSupported()) {
     const why = isIOS() && !installedApp() ? 'On iPhone, first add Crewdesk to your Home Screen (Safari → Share → Add to Home Screen), then open it from there and switch this on.' : 'This browser can’t show notifications when the app is closed.';
     return sw('push', false, label, why, 'disabled');
