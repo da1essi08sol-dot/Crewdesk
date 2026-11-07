@@ -637,7 +637,7 @@ function loneWatchers(c, s) { return Object.keys(c.members).filter((id) => isAdm
 const canSeeLone = (x, s) => s.userId === x.uid || isAdmin(x.role);
 function loneLog(s, what, by) { s.log.push({ at: now(), what: str(what, 200), by: by || '' }); if (s.log.length > 200) s.log.splice(0, s.log.length - 200); }
 function loneView(s, x) {
-  const o = { id: s.id, userId: s.userId, status: s.status, startedAt: s.startedAt, every: s.every, nextAt: s.nextAt, endsAt: s.endsAt, buddy: s.buddy, where: s.where, note: s.note,
+  const o = { id: s.id, userId: s.userId, status: s.status, extendedAt: s.extendedAt || 0, startedAt: s.startedAt, every: s.every, nextAt: s.nextAt, endsAt: s.endsAt, buddy: s.buddy, where: s.where, note: s.note,
     lastCheck: s.lastCheck, alertAt: s.alertAt || 0, silent: !!s.silent, ackBy: s.ackBy || '', ackAt: s.ackAt || 0, endedAt: s.endedAt || 0, log: s.log.slice(-30) };
   if (s.loc) o.loc = s.loc; // only ever present when it came from the Android app
   if (s.alertLoc && (s.status === 'alert' || s.status === 'overdue')) o.alertLoc = s.alertLoc;
@@ -3090,7 +3090,7 @@ async function loneApi(req, res, x, sub) {
     const t0 = now(); let finish = Math.round(Number(b.finishAt) / 300e3) * 300e3; // to the nearest 5 minutes
     if (!Number.isFinite(finish) || !finish) finish = t0 + Math.min(16, Math.max(0.5, Number(b.hours) || 4)) * 3600e3;
     if (finish < t0 + 5 * 60e3) bad('Pick a finish time at least 5 minutes from now');
-    if (finish > t0 + 16 * 3600e3) bad('Sessions can last up to 16 hours');
+    if (finish > t0 + 12 * 3600e3) bad('Sessions can last up to 12 hours');
     const buddy = ''; // admins look after everyone working alone
     const t = now();
     db.users[me].prefs.lone = { mins: Math.round((finish - t0) / 60e3), where: str(b.where, 120) }; // remembered for next time
@@ -3133,9 +3133,12 @@ async function loneApi(req, res, x, sub) {
     if (wasLate) s.alertLoc = null;
     if (wasLate) loneUrgent(c, s, `${firstOf(me)} has checked in`, 'They’re safe — no need to do anything else.', { kind: 'resolved' });
   } else if (act === 'extend') {
-    const mins = Math.round(Number(b.minutes) / 5) * 5; if (!(mins >= 5 && mins <= 480)) bad('Add between 5 minutes and 8 hours');
-    s.endsAt += mins * 60e3; s.nextAt = Math.min(Math.max(s.nextAt, t) + mins * 60e3, s.endsAt); s.warnedAt = 0;
-    if (s.status === 'overdue') { s.status = 'active'; s.lastCheck = t; }
+    // Adding time only moves the finish time — never the next check-in — and only once between check-ins, so it can't be used to skip them.
+    const mins = Math.round(Number(b.minutes) / 5) * 5; if (!(mins >= 5 && mins <= 120)) bad('You can add between 5 minutes and 2 hours at a time');
+    if (s.status === 'overdue') bad('Check in first — you’ve missed a check-in');
+    if (s.extendedAt && s.extendedAt > s.lastCheck) bad('You’ve already added time. Check in first, then you can add more.');
+    if (s.endsAt + mins * 60e3 > s.startedAt + 12 * 3600e3) bad('A session can’t run longer than 12 hours. Finish this one and start a new one.');
+    s.endsAt += mins * 60e3; s.extendedAt = t;
     loneLog(s, `Added ${mins} minutes`, me);
   } else if (act === 'end') {
     s.status = 'ended'; s.endedAt = t; loneLog(s, 'Finished safely', me);

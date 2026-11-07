@@ -14,6 +14,7 @@ const UPDATES = [
       ['new', 'The Crewdesk Android app: full-screen emergency alerts with the phone’s alarm sound until someone responds, check-in buttons on the lock screen, and battery-friendly location while you work alone.'],
       ['new', 'On phones, Crewdesk offers to add itself to your Home Screen (one tap on Android, simple steps on iPhone).'],
       ['better', 'Pick your finish time in 5-minute steps with a proper time picker.'],
+      ['better', 'Add time moves only your finish time, never your next check-in: up to 2 hours at a time, once between check-ins, and sessions last up to 12 hours.'],
       ['better', 'Everyone checks in every hour unless admins change it. Admins look after everyone working alone (no more buddies).'],
       ['better', 'A missed check-in sounds the alarm on your own phone only. Admins get a message.'],
       ['better', 'Stay safe isn’t available on iPhone, because iOS doesn’t support web app alerts or live location tracking.'],

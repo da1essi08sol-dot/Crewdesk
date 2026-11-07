@@ -251,7 +251,7 @@ function dayEndToday() { const [h, mi] = String((S.company.settings && S.company
 
 A['lone-details'] = () => {
   const d = loneDraft(); const now = Date.now();
-  const min = Math.ceil((now + 10 * 60e3) / 300e3) * 300e3, max = now + 16 * 3600e3;
+  const min = Math.ceil((now + 10 * 60e3) / 300e3) * 300e3, max = now + 12 * 3600e3;
   const r5 = (t) => Math.round(t / 300e3) * 300e3;
   const chips = [['1 hour', r5(now + 3600e3)], ['2 hours', r5(now + 2 * 3600e3)], ['4 hours', r5(now + 4 * 3600e3)]];
   const de = dayEndToday(); if (de > min) chips.push([`End of day (${hm(de)})`, de]);
@@ -267,12 +267,15 @@ F['lone-details'] = async (f, d, close) => { Object.assign(loneDraft(), { where:
 
 A['lone-addtime'] = () => {
   const m = S.lone && S.lone.mine; if (!m) return;
-  const min = m.endsAt + 5 * 60e3, max = Math.min(m.endsAt + 8 * 3600e3, Date.now() + 16 * 3600e3);
+  if (m.status === 'overdue') return toast('Check in first — you’ve missed a check-in', true);
+  if (m.extendedAt && m.extendedAt > m.lastCheck) return toast('You’ve already added time. Check in first, then you can add more.', true);
+  const max = Math.min(m.endsAt + 2 * 3600e3, m.startedAt + 12 * 3600e3), min = m.endsAt + 5 * 60e3;
+  if (max < min) return toast('A session can’t run longer than 12 hours. Finish this one and start a new one.', true);
   const r5 = (t) => Math.round(t / 300e3) * 300e3;
   sheet(`${sheetHead('Add time')}
     <form class="stack" data-form="lone-addtime">
-      <p class="small muted" style="margin:0">Now finishing at <b>${hm(m.endsAt)}</b>. Pick your new finish time — your next check-in moves later too.</p>
-      <div class="field"><span>New finish time</span>${timePicker(r5(m.endsAt + 30 * 60e3), min, max, [['+15 min', r5(m.endsAt + 15 * 60e3)], ['+30 min', r5(m.endsAt + 30 * 60e3)], ['+1 hour', r5(m.endsAt + 3600e3)], ['+2 hours', r5(m.endsAt + 2 * 3600e3)]])}<input type="hidden" name="finishAt" value="${r5(m.endsAt + 30 * 60e3)}"></div>
+      <p class="small muted" style="margin:0">Now finishing at <b>${hm(m.endsAt)}</b>. Pick your new finish time (up to 2 hours more). Your check-ins stay the same, and you can add time again after your next check-in.</p>
+      <div class="field"><span>New finish time</span>${timePicker(Math.min(max, r5(m.endsAt + 30 * 60e3)), min, max, [['+15 min', r5(m.endsAt + 15 * 60e3)], ['+30 min', r5(m.endsAt + 30 * 60e3)], ['+1 hour', r5(m.endsAt + 3600e3)], ['+2 hours', r5(m.endsAt + 2 * 3600e3)]].filter(([, v]) => v <= max))}<input type="hidden" name="finishAt" value="${Math.min(max, r5(m.endsAt + 30 * 60e3))}"></div>
       <div class="sheet-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Add time</button></div>
     </form>`);
 };
