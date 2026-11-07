@@ -48,7 +48,7 @@ function renderLogin(msg = '') {
     <div class="card"><form data-form="login" class="stack" novalidate>
       ${msg ? `<div class="info-box">${msg}</div>` : ''}
       ${pendingInvite() ? inviteNote() : ''}
-      <label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" required value="${esc(S.lastEmail || '')}"></label>
+      <label class="field"><span>Email</span><input name="email" type="text" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" required value="${esc(S.lastEmail || '')}"></label>
       ${pwField('password', 'Password')}
       <div class="err-msg" data-err role="alert"></div>
       <button class="btn primary block">Sign in</button>

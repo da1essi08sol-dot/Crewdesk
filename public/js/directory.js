@@ -7,6 +7,7 @@ const coLogo = (c, size = 44) => (c.logo
 function joinButton(c) {
   if (c.isMember) return `<span class="pill st-active">${icSize('check', 12)}You’re a member</span>`;
   if (c.requested) return `<button class="btn sm" data-act="dir-cancel" data-id="${c.id}">Requested · Cancel</button>`;
+  if (S.user && S.user.siteAdmin) return `<button class="btn sm primary" data-act="dir-join-admin" data-id="${c.id}">${ic('userplus')}Join to test</button>`; // Site Administrator: no approval needed
   return `<button class="btn sm primary" data-act="dir-request" data-id="${c.id}" data-name="${esc(c.name)}">${ic('userplus')}Ask to join</button>`;
 }
 function dirCard(c) {
@@ -61,6 +62,9 @@ A['dir-request'] = (el) => sheet(`${sheetHead('Ask to join ' + el.dataset.name)}
 F['dir-request'] = async (f, d, close) => {
   const r = await api('POST', `/api/directory/${f.dataset.id}/request`, { message: d.message });
   close(); updateDirItem(r.company); toast(`Request sent to ${r.company.name}. We’ll email you when they accept.`);
+};
+A['dir-join-admin'] = async (el) => {
+  try { const r = await api('POST', `/api/directory/${el.dataset.id}/request`, {}); S.companies = r.companies; S.cid = el.dataset.id; resetCompanyState(); location.hash = '#/home'; await loadCompany(); toast(`Joined ${r.company.name} as Site Administrator`); } catch (e) { toast(e.message, true); }
 };
 A['dir-cancel'] = async (el) => {
   try { const r = await api('DELETE', `/api/directory/${el.dataset.id}/request`); updateDirItem(r.company); toast('Request cancelled'); } catch (e) { toast(e.message, true); }

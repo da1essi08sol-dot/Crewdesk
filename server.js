@@ -380,11 +380,12 @@ function buildFileIndex() {
 function isOnline(id) { return (onlineCount.get(id) || 0) > 0; }
 function publicUser(u, viewerId) {
   if (!u) return null;
+  if (u.siteAdmin) return { id: u.id, name: 'Site Administrator', email: viewerId === u.id || viewerId === undefined ? u.email : '', title: 'Testing account', dept: '', phone: '', bio: '', avatar: '', shareLocation: false, lastSeen: 0, online: isOnline(u.id), siteAdmin: true };
   const self = viewerId === undefined || viewerId === u.id;
   return { id: u.id, name: u.name, email: self || u.privacy.showEmail ? u.email : '', title: u.title || '', dept: u.dept || '', phone: self || u.privacy.showPhone ? (u.phone || '') : '',
     bio: u.bio || '', avatar: u.avatar || '', shareLocation: !!u.shareLocation, lastSeen: u.lastSeen || 0, online: isOnline(u.id) };
 }
-function meUser(u) { return Object.assign(publicUser(u), { prefs: u.prefs, privacy: u.privacy, verified: !!u.verified, createdAt: u.createdAt }); }
+function meUser(u) { return Object.assign(publicUser(u), { siteAdmin: !!u.siteAdmin, prefs: u.prefs, privacy: u.privacy, verified: !!u.verified, createdAt: u.createdAt }); }
 function memberList(c, viewerId) {
   return Object.entries(c.members).map(([id, m]) => Object.assign(publicUser(db.users[id], viewerId) || { id, name: 'Removed user' }, { role: m.role, joinedAt: m.joinedAt, companies: db.users[id] ? profileCompanies(db.users[id], viewerId) : [] }));
 }
@@ -413,6 +414,20 @@ function directoryCard(c, viewerId, full = false) {
 }
 function sharesCompany(a, b) { return Object.values(db.companies).some((c) => c.members[a] && c.members[b]); }
 // A profile as someone outside your companies sees it: never contact details, location or online status.
+// ---------------------------------------------------------------- Site Administrator (testing account)
+// Signs in with "Admin" as the email. Its first password comes from SITE_ADMIN_PASSWORD in Render (never written in the
+// code, since the code is public); after that it's stored hashed like any account and changed in My settings.
+// Anonymous: shown only as "Site Administrator", with no photo, details or clickable profile. It still appears in member
+// lists, so people know it's there. Joins public companies without waiting for approval; private ones need an invite.
+const SITE_ADMIN_ID = 'siteadmin';
+async function ensureSiteAdmin() {
+  if (db.users[SITE_ADMIN_ID] || !process.env.SITE_ADMIN_PASSWORD) return;
+  const h = await passwords.hash(process.env.SITE_ADMIN_PASSWORD);
+  db.users[SITE_ADMIN_ID] = { id: SITE_ADMIN_ID, email: 'admin', name: 'Site Administrator', siteAdmin: true, salt: h.salt, hash: h.hash, kdf: h.kdf, verified: true,
+    title: '', dept: '', phone: '', bio: '', avatar: '', shareLocation: false, reads: {}, favs: {}, prefs: { popups: true, desktop: false, sound: false },
+    privacy: { showPhone: false, showEmail: false, showCompanies: false, profilePublic: false }, createdAt: now(), lastSeen: 0, agreedAt: now(), agreedVersion: LEGAL_VERSION };
+  save(); secLog('site-admin-created', {});
+}
 function outsideProfile(u, viewerId) {
   return { id: u.id, name: u.name, avatar: u.avatar || '', title: u.title || '', dept: u.dept || '', bio: u.bio || '', companies: profileCompanies(u, viewerId), outside: true };
 }
@@ -1149,7 +1164,7 @@ function joinCompany(c, user, how) {
   c.members[user.id] = { role: 'member', joinedAt: now(), via: how };
   save();
   memberEvent(c.id, user);
-  postMessage(c.id, 'general', user.id, `${user.name} joined the company 👋`, [], true);
+  postMessage(c.id, 'general', user.id, user.siteAdmin ? 'Site Administrator joined to test features 🛠️' : `${user.name} joined the company 👋`, [], true);
   return true;
 }
 function acceptInvite(token, user) {
@@ -1237,6 +1252,7 @@ async function api(req, res, url) {
     throttle('login:' + ip, 40, 15 * 60e3);
     const b = await readBody(req);
     const email = normEmail(b.email);
+    if (email === 'admin') await ensureSiteAdmin(); // the testing account (only if SITE_ADMIN_PASSWORD is set in Render)
     const g = guardFor(email);
     if (g.until > now()) { secLog('login-while-locked', { email, ip }); throw new HttpError(423, lockMessage(g), { locked: true, until: g.until }); }
     const u = userByEmail(email);
@@ -1324,6 +1340,7 @@ async function api(req, res, url) {
     throttle('people:' + user.id, 120, 60e3);
     const u = db.users[m[1]];
     if (!u || u.deleted) notFound('That profile isn’t available');
+    if (u.siteAdmin && u.id !== user.id) notFound('The Site Administrator doesn’t have a profile');
     if (u.id === user.id || sharesCompany(user.id, u.id)) return json(res, 200, { person: Object.assign(publicUser(u, user.id), { companies: profileCompanies(u, user.id), outside: false }) });
     if (!(u.privacy && u.privacy.profilePublic)) notFound('This profile is private');
     return json(res, 200, { person: outsideProfile(u, user.id) });
@@ -1348,6 +1365,7 @@ async function api(req, res, url) {
     c.requests = c.requests || {};
     if (M === 'DELETE') { delete c.requests[user.id]; save(); broadcastAdmins(c, { t: 'reload' }); return json(res, 200, { company: directoryCard(c, user.id) }); }
     if (c.members[user.id]) bad('You’re already in this company');
+    if (user.siteAdmin) { joinCompany(c, user, 'site-admin'); secLog('site-admin-joined', { company: c.id }); return json(res, 200, { company: directoryCard(c, user.id), joined: true, companies: companiesFor(user.id) }); }
     throttle('req:' + user.id, 10, 24 * 3600e3, 'You’ve sent a lot of join requests today — try again tomorrow');
     const b = await readBody(req);
     c.requests[user.id] = { userId: user.id, at: now(), message: str(b.message, 500) };
@@ -1424,6 +1442,7 @@ async function api(req, res, url) {
   }
   if (p === '/api/me' && M === 'PUT') {
     const b = await readBody(req, 2 * 1024 * 1024);
+    if (user.siteAdmin) for (const k of ['name', 'title', 'dept', 'phone', 'bio', 'avatar', 'privacy', 'shareLocation']) delete b[k]; // stays anonymous
     if ('name' in b) user.name = str(b.name, 80) || bad('Name can’t be empty');
     for (const k of ['title', 'dept', 'phone']) if (k in b) user[k] = str(b[k], 80);
     if ('bio' in b) user.bio = str(b.bio, 500);
@@ -1478,6 +1497,7 @@ async function api(req, res, url) {
     res.writeHead(200, Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="crewdesk-my-data.json"', 'Cache-Control': 'no-store' }, SECURITY_HEADERS));
     return res.end(JSON.stringify(out, null, 2));
   }
+  if (p === '/api/me' && M === 'DELETE' && user.siteAdmin) bad('The Site Administrator account can’t be deleted');
   if (p === '/api/me' && M === 'DELETE') {
     throttle('del:' + user.id, 10, 3600e3);
     const b = await readBody(req);
