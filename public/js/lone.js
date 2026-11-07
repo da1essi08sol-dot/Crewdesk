@@ -62,7 +62,7 @@ const RING = 2 * Math.PI * 88;
 const ringOff = (m) => { const f = Math.min(1, Math.max(0, (m.nextAt - Date.now()) / (m.every * 60e3))); return (RING * (1 - f)).toFixed(1); };
 const loneEvery = () => { const v = S.company && S.company.settings && S.company.settings.loneEvery; return [15, 30, 45, 60, 90, 120].includes(v) ? v : 60; };
 const everyTxt = (n) => (n < 60 ? `${n} minutes` : n === 60 ? 'hour' : n === 90 ? '1½ hours' : `${n / 60} hours`);
-const clock = (ms) => { ms = Math.max(0, ms); const h = Math.floor(ms / 3600e3), mm = Math.floor((ms % 3600e3) / 60e3), ss = Math.floor((ms % 60e3) / 1000); return `${h}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`; };
+const loneClock = (ms) => { ms = Math.max(0, ms); const h = Math.floor(ms / 3600e3), mm = Math.floor((ms % 3600e3) / 60e3), ss = Math.floor((ms % 60e3) / 1000); return `${h}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`; };
 function loneLeft(m) {
   const ms = m.nextAt - Date.now(); if (ms <= 0) return 'Now';
   const mm = Math.floor(ms / 60000), ss = Math.floor((ms % 60000) / 1000);
@@ -132,7 +132,7 @@ function panicButton(big) {
 function loneStart() {
   const d = loneDraft(); const every = loneEvery();
   return `<section class="ls">
-      <div class="ls-clock"><b>${clock(every * 60e3)}</b><span>Check in every ${everyTxt(every)} · finish by ${hm(d.finishAt)}${dayTxt(d.finishAt)}</span></div>
+      <div class="ls-clock"><b>${loneClock(every * 60e3)}</b><span>Check in every ${everyTxt(every)} · finish by ${hm(d.finishAt)}${dayTxt(d.finishAt)}</span></div>
       ${panicButton(true)}
       <p class="ls-hint">In trouble? Press and hold <b>Help</b> for 2 seconds.</p>
       <button class="ls-go" data-act="lone-go">${icSize('play', 20)}Start session</button>
