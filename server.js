@@ -577,7 +577,7 @@ function pushUser(cid, userId, data, force = false) {
   const onScreen = force ? new Set() : lookingDevices(userId); // only the device showing Crewdesk stays quiet; the in-app pop-up covers it
   const c = db.companies[cid];
   const many = Object.values(db.companies).filter((co) => co.members[userId]).length > 1;
-  const payload = { title: str(data.title, 120) || 'Crewdesk', body: str(data.body, 240), link: str(data.link, 200) || '#/home', tag: str(data.tag, 60), cid, urgent: !!data.urgent,
+  const payload = { title: str(data.title, 120) || 'Crewdesk', body: str(data.body, 240), link: str(data.link, 200) || '#/home', tag: str(data.tag, 60), cid, urgent: !!data.urgent, kind: str(data.kind, 20), session: str(data.session, 30),
     company: many && c ? c.name : '', badge: badgeCount(userId) };
   // The Crewdesk Android app (Firebase): emergencies become a full-screen siren that plays until someone responds.
   for (const d of appTokens.slice()) {
@@ -633,8 +633,8 @@ function pushPing(cid, ping) {
 const LONE_GRACE = 10 * 60e3; // after a check-in is due, how long before others are alerted
 const LONE_EVERY = [15, 30, 45, 60, 90, 120];
 const firstOf = (id) => ((db.users[id] || {}).name || 'Someone').split(' ')[0];
-function loneWatchers(c, s) { return [...new Set(Object.keys(c.members).filter((id) => isAdmin(c.members[id].role)).concat(s.buddy ? [s.buddy] : []))].filter((id) => id !== s.userId && c.members[id]); }
-const canSeeLone = (x, s) => s.userId === x.uid || s.buddy === x.uid || isAdmin(x.role);
+function loneWatchers(c, s) { return Object.keys(c.members).filter((id) => isAdmin(c.members[id].role) && id !== s.userId); } // admins look after people working alone
+const canSeeLone = (x, s) => s.userId === x.uid || isAdmin(x.role);
 function loneLog(s, what, by) { s.log.push({ at: now(), what: str(what, 200), by: by || '' }); if (s.log.length > 200) s.log.splice(0, s.log.length - 200); }
 function loneView(s, x) {
   const o = { id: s.id, userId: s.userId, status: s.status, startedAt: s.startedAt, every: s.every, nextAt: s.nextAt, endsAt: s.endsAt, buddy: s.buddy, where: s.where, note: s.note,
@@ -649,11 +649,34 @@ function loneState(x) {
   const mine = all.find((s) => s.userId === x.uid && s.status !== 'ended') || null;
   const watching = all.filter((s) => s.status !== 'ended' && s.userId !== x.uid && canSeeLone(x, s)).sort((a, b) => (b.status !== 'active') - (a.status !== 'active') || a.nextAt - b.nextAt);
   const recent = all.filter((s) => s.status === 'ended' && canSeeLone(x, s)).sort((a, b) => b.endedAt - a.endedAt).slice(0, 15);
-  return { mine: mine && loneView(mine, x), watching: watching.map((s) => loneView(s, x)), recent: recent.map((s) => loneView(s, x)) };
+  const alerts = all.filter((s) => s.status === 'alert').map((s) => ({ userId: s.userId, session: s.id, at: s.alertAt, where: s.where, loc: s.alertLoc || null, phone: (db.users[s.userId] || {}).phone || '', ping: s.pingId || '' }));
+  return { mine: mine && loneView(mine, x), watching: watching.map((s) => loneView(s, x)), recent: recent.map((s) => loneView(s, x)), alerts };
 }
 function loneChanged(cid, s, alarm = false) {
   save();
-  broadcast(cid, (x) => (canSeeLone(x, s) ? { t: 'lone', state: loneState(x), alarm: alarm && x.uid !== s.userId ? s.id : '' } : null));
+  broadcast(cid, (x) => ({ t: 'lone', state: loneState(x), alarm: alarm && x.uid !== s.userId && canSeeLone(x, s) ? s.id : '' })); // everyone: alerts show on profiles and the map
+}
+// While an alert is active it's also a pinned ping for the whole company: where they are, how to call them, directions.
+// Only "I'm safe" removes it (and the map pin) — never the app closing or the phone dying.
+function loneAlertPing(c, s, fresh) {
+  const d = cdata(c.id); const u = db.users[s.userId] || {};
+  let p = s.pingId && d.pings[s.pingId];
+  const alert = { session: s.id, userId: s.userId, where: s.where || '', phone: u.phone || '', loc: s.alertLoc || null, at: s.alertAt, silent: !!s.silent };
+  if (!p) {
+    p = { id: uid(), title: `🚨 ${u.name || 'Someone'} has triggered an alert`, body: '', createdBy: s.userId, createdAt: now(), updatedAt: now(), readBy: { [s.userId]: now() }, files: [], pinned: true, alert };
+    d.pings[p.id] = p; s.pingId = p.id;
+  } else { p.alert = alert; p.updatedAt = now(); }
+  upsert(c.id, 'pings', p);
+  if (fresh) { // admins already get the emergency alert; everyone else gets the ping
+    const admins = loneWatchers(c, s);
+    for (const id of Object.keys(c.members)) if (id !== s.userId && !admins.includes(id)) pushUser(c.id, id, { title: p.title, body: `${s.where ? 'At ' + s.where + '. ' : ''}${alert.loc ? 'Location attached. ' : ''}Tap for how to contact them and directions.`, link: '#/ping/' + p.id, tag: 'ping-' + p.id, urgent: true });
+  }
+  save();
+}
+function loneAlertClear(c, s) {
+  const d = cdata(c.id);
+  if (s.pingId && d.pings[s.pingId]) { delete d.pings[s.pingId]; removeItem(c.id, 'pings', s.pingId); }
+  s.pingId = null; s.alertLoc = null;
 }
 function loneUrgent(c, s, title, body, extra = { alarm: true }) { // reaches the buddy and admins even if they're in the app, and is saved in their notifications
   const ids = loneWatchers(c, s);
@@ -671,18 +694,18 @@ function loneWatchdog() {
         for (const [k, mins] of [['w10', 10], ['w5', 5]]) {
           if (left <= mins * 60e3 && left > (mins - 4) * 60e3 && s[k] !== s.nextAt) {
             s[k] = s.nextAt; save();
-            pushUser(c.id, s.userId, { title: `Check-in in ${mins} minutes`, body: 'Tap I’m safe now, or add more time.', link: '#/lone', tag: 'lone-soon', kind: 'checkin', session: s.id });
+            pushUser(c.id, s.userId, { title: `You have ${mins} minutes to check in`, body: 'Tap Check in now, or open Crewdesk to add more time.', link: '#/lone/checkin', tag: 'lone-soon', kind: 'checkin', session: s.id });
           }
         }
       }
       if (t >= s.nextAt && !s.warnedAt) { // due now
         s.warnedAt = t; save();
-        pushUser(c.id, s.userId, { title: 'Time to check in', body: 'Tap I’m safe. If you don’t within 10 minutes, your buddy and admins are told.', link: '#/lone', tag: 'lone-due', urgent: true, kind: 'checkin', session: s.id }, true);
+        pushUser(c.id, s.userId, { title: 'Check in now', body: 'Your check-in is due. If you don’t check in within 10 minutes, your admins are told.', link: '#/lone/checkin', tag: 'lone-due', urgent: true, kind: 'checkin', session: s.id }, true);
       }
       if (s.status === 'active' && t >= s.nextAt + LONE_GRACE) {
         s.status = 'overdue'; s.alertLoc = s.loc || null; loneLog(s, 'Missed a check-in');
-        // The siren goes off on the worker's own phone only; their buddy and admins get a message.
-        pushUser(c.id, s.userId, { title: 'You missed a check-in', body: 'Tap I’m safe now. Your buddy and admins have been told.', link: '#/lone', tag: 'lone-missed', alarm: true, self: true, session: s.id }, true);
+        // The siren goes off on the worker's own phone only; admins get a message.
+        pushUser(c.id, s.userId, { title: 'You missed a check-in', body: 'Check in now. Your admins have been told.', link: '#/lone/checkin', tag: 'lone-missed', alarm: true, self: true, kind: 'checkin', session: s.id }, true);
         loneUrgent(c, s, `${firstOf(s.userId)} missed a check-in`, `${s.where ? 'Working at ' + s.where + '. ' : ''}Last checked in ${ukTime(s.lastCheck)}. Try calling them.`, { kind: 'urgent' });
         loneChanged(c.id, s, false);
       }
@@ -3068,16 +3091,15 @@ async function loneApi(req, res, x, sub) {
     if (!Number.isFinite(finish) || !finish) finish = t0 + Math.min(16, Math.max(0.5, Number(b.hours) || 4)) * 3600e3;
     if (finish < t0 + 5 * 60e3) bad('Pick a finish time at least 5 minutes from now');
     if (finish > t0 + 16 * 3600e3) bad('Sessions can last up to 16 hours');
-    const buddy = b.buddy && c.members[b.buddy] && b.buddy !== me ? String(b.buddy) : '';
+    const buddy = ''; // admins look after everyone working alone
     const t = now();
-    db.users[me].prefs.lone = { buddy, mins: Math.round((finish - t0) / 60e3), where: str(b.where, 120) }; // remembered for next time
+    db.users[me].prefs.lone = { mins: Math.round((finish - t0) / 60e3), where: str(b.where, 120) }; // remembered for next time
     const s = { id: uid(), userId: me, status: 'active', startedAt: t, every, endsAt: finish, nextAt: 0, lastCheck: t, buddy, where: str(b.where, 120), note: str(b.note, 300), log: [], loc: null, trail: [] };
     s.nextAt = Math.min(t + every * 60e3, s.endsAt);
     const l = locOf(b); if (l) { s.loc = l; s.trail.push(l); }
     loneLog(s, `Started working alone${s.where ? ' at ' + s.where : ''}`, me);
     d.lone[s.id] = s;
     for (const old of Object.values(d.lone)) if (old.status === 'ended' && t - old.endedAt > 90 * 864e5) delete d.lone[old.id]; // keep 90 days
-    if (buddy) notify(c.id, [buddy], `${firstOf(me)} is working alone${s.where ? ' at ' + s.where : ''} and chose you as their buddy`, '#/lone');
     loneChanged(c.id, s); return out();
   }
   if (sub === '/lone/panic' && M === 'POST') { // the help button before a session has started: make one and raise the alert at once
@@ -3091,6 +3113,7 @@ async function loneApi(req, res, x, sub) {
     const l = locOf(b); if (l) { s.loc = l; s.trail.push(l); }
     s.status = 'alert'; s.alertAt = t; s.silent = !!b.silent; s.ackBy = ''; s.ackAt = 0; s.alertLoc = s.loc || null; loneLog(s, s.silent ? 'Raised a silent alert' : 'Raised an alert', me);
     loneUrgent(c, s, `🚨 ${firstOf(me)} needs help`, `${s.loc ? 'Location attached. ' : ''}Call them now.`);
+    loneAlertPing(c, s, true);
     loneChanged(c.id, s, true); return out();
   }
   if (!(m = /^\/lone\/([A-Za-z0-9]+)\/(checkin|extend|end|alert|safe|ack|loc)$/.exec(sub)) || M !== 'POST') notFound();
@@ -3100,11 +3123,14 @@ async function loneApi(req, res, x, sub) {
   if (s.status === 'ended') bad('That session has already finished');
   if (['checkin', 'extend', 'end', 'alert', 'safe', 'loc'].includes(act) && !own) deny('Only the person working alone can do that');
   const l = locOf(b); if (l) { s.loc = l; s.trail.push(l); if (s.trail.length > 300) s.trail.splice(0, s.trail.length - 300); }
+  if (l && s.status === 'alert') { s.alertLoc = l; loneAlertPing(c, s, false); loneChanged(c.id, s); } // keep the alert's location current
   if (act === 'loc') { if (!l) bad('Location is only shared from the Crewdesk Android app'); save(); return out(); }
+  if (s.status === 'alert' && ['checkin', 'extend', 'end'].includes(act)) bad('You have an alert active. Tap I’m safe to cancel it first.');
   if (act === 'checkin') {
     const wasLate = s.status === 'overdue';
     s.status = 'active'; s.lastCheck = t; s.warnedAt = 0; s.nextAt = Math.min(t + s.every * 60e3, Math.max(s.endsAt, t + 5 * 60e3));
     loneLog(s, wasLate ? 'Checked in (late) — safe' : 'Checked in — safe', me);
+    if (wasLate) s.alertLoc = null;
     if (wasLate) loneUrgent(c, s, `${firstOf(me)} has checked in`, 'They’re safe — no need to do anything else.', { kind: 'resolved' });
   } else if (act === 'extend') {
     const mins = Math.round(Number(b.minutes) / 5) * 5; if (!(mins >= 5 && mins <= 480)) bad('Add between 5 minutes and 8 hours');
@@ -3117,11 +3143,13 @@ async function loneApi(req, res, x, sub) {
     s.status = 'alert'; s.alertAt = t; s.silent = !!b.silent; s.ackBy = ''; s.ackAt = 0; s.alertLoc = s.loc || null; // where they were when they asked for help
     loneLog(s, s.silent ? 'Raised a silent alert' : 'Raised an alert', me);
     loneUrgent(c, s, `🚨 ${firstOf(me)} needs help`, `${s.where ? 'Working at ' + s.where + '. ' : ''}${s.loc ? 'Location attached. ' : ''}Call them now.`);
+    loneAlertPing(c, s, true);
     loneChanged(c.id, s, true); return out();
   } else if (act === 'safe') {
     if (s.status !== 'alert') bad('There’s no alert to cancel');
     s.status = 'active'; s.lastCheck = t; s.warnedAt = 0; s.nextAt = Math.min(t + s.every * 60e3, Math.max(s.endsAt, t + 5 * 60e3));
     loneLog(s, 'Cancelled the alert — safe now', me);
+    loneAlertClear(c, s); // the ping and map pin go only now
     loneUrgent(c, s, `${firstOf(me)} is safe`, 'They cancelled their alert.', { kind: 'resolved' });
   } else if (act === 'ack') {
     if (own) bad('Someone else needs to respond to your alert');

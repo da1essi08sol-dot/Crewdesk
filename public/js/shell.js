@@ -131,12 +131,16 @@ function renderShell() {
         <button class="icon-btn mobile-only" data-act="search" aria-label="Search">${ic('search')}</button>
         <button class="icon-btn mobile-only" data-act="me-menu" aria-haspopup="menu" aria-label="My account" id="top-me"></button>
       </header>
+      ${testingHidden() ? '' : `<div class="testing-bar" role="note">${icSize('warn', 16)}<span>Crewdesk is still being tested. Double-check anything important — and don’t rely on Stay safe yet.</span><button data-act="testing-hide" aria-label="Hide for today">${icSize('x', 14)}</button></div>`}
       <main id="view" tabindex="-1"></main>
     </div>
     <nav class="bottomnav" aria-label="Sections">${bottomNav().map((n) => navLink(n)).join('')}</nav>
   </div>`;
   updateChrome();
 }
+// "Still being tested" notice: hideable for a day.
+function testingHidden() { try { return Number(localStorage.getItem('cd_testing_hide') || 0) > Date.now(); } catch (_) { return false; } }
+A['testing-hide'] = (el) => { try { localStorage.setItem('cd_testing_hide', String(Date.now() + 864e5)); } catch (_) {} const b = el.closest('.testing-bar'); if (b) b.remove(); };
 function updateChrome() {
   if (!$('#side-me') || !S.company) return;
   $$('[data-co-name]').forEach((e) => { e.textContent = S.company.name; });

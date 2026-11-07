@@ -65,7 +65,7 @@ public class LoneService extends Service implements LocationListener {
         return Notify.base(this, Notify.SESSION, "Working alone" + (where == null || where.isEmpty() ? "" : " · " + where),
                 "Next check-in " + t + " · finish by " + f + (hasLocation() ? " · location shared" : ""), "#/lone", 71)
             .setOngoing(true).setAutoCancel(false).setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(new Notification.Action.Builder(null, "I'm safe", okPi).build()).build();
+            .addAction(new Notification.Action.Builder(null, "✓ Check in", okPi).build()).build();
     }
 
     private boolean hasLocation() { return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED; }

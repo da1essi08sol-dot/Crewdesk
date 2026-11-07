@@ -347,6 +347,7 @@ function pingRow(p, compact = false) {
   return `<div class="ping ${p.read ? '' : 'unread'}" data-act="open-ping" data-id="${p.id}" role="link" tabindex="0" aria-label="${esc(p.title)}${p.read ? '' : ', unread'}">
     ${p.read ? '' : '<span class="dot-unread corner" title="Unread"></span>'}
     <div class="row tight">${p.pinned ? `<span class="pill st-active">${icSize('pin', 11)}Pinned</span>` : ''}<h3 class="ellipsis">${esc(p.title)}</h3></div>
+    ${pingAlertCard(p, true)}
     ${p.body ? `<div class="body ${compact ? 'clamp2' : 'clamp2'}">${esc(p.body)}</div>` : ''}
     ${attStrip(p.files, compact ? 4 : 6)}
     <div class="by">${avatar(member(p.createdBy), 'xs')}${personName(p.createdBy)}<span>·</span><time datetime="${new Date(p.createdAt).toISOString()}">${esc(fmtDateTime(p.createdAt))}</time>${canSeeReads && !compact ? `<span>·</span><span>Seen by ${p.readCount}</span>` : ''}</div>
@@ -383,6 +384,7 @@ VIEWS.ping = {
         <div class="row between top"><div class="grow"><div class="row tight">${p.pinned ? `<span class="pill st-active">${icSize('pin', 11)}Pinned</span>` : ''}</div><h1 style="margin-top:4px">${esc(p.title)}</h1></div>
           ${canEdit ? `<div class="row tight">${isAdmin() ? `<button class="btn sm" data-act="ping-pin" data-id="${p.id}">${p.pinned ? 'Unpin' : 'Pin'}</button>` : ''}<button class="btn sm icon" data-act="edit-ping" data-id="${p.id}" aria-label="Edit ping">${ic('edit')}</button><button class="btn sm icon danger" data-act="del-ping" data-id="${p.id}" aria-label="Delete ping">${ic('trash')}</button></div>` : ''}</div>
         <div class="row small muted">${avatar(member(p.createdBy), 'sm')}<span>${personName(p.createdBy)} · <time datetime="${new Date(p.createdAt).toISOString()}">${esc(fmtDateTime(p.createdAt))}</time>${p.updatedAt && p.updatedAt - p.createdAt > 60000 ? ' · edited' : ''}</span></div>
+        ${pingAlertCard(p, false)}
         ${p.body ? `<div class="pre">${linkify(p.body)}</div>` : ''}
         ${imgs.length ? `<div><div class="label" style="margin-bottom:6px">Photos (${imgs.length})</div><div class="att-grid">${imgs.map((f) => `<button type="button" data-act="att-view" data-file="${f.id}" aria-label="View ${esc(f.name)}"><img src="${esc(f.thumb || f.url)}" alt="${esc(f.name)}" loading="lazy"></button>`).join('')}</div></div>` : ''}
         ${docs.length ? `<div><div class="label" style="margin-bottom:6px">Documents (${docs.length})</div><div class="stack tight">${docs.map((f) => `<div class="att-row"><span class="att-doc" style="height:auto;border:0;padding:0"><span class="ext ${esc(f.ext)}">${esc(f.ext)}</span></span><div class="grow"><div class="ellipsis bold small">${esc(f.name)}</div><div class="tiny muted">${fileSize(f.size)}</div></div>
@@ -587,7 +589,27 @@ async function drawLeaflet(el) {
 }
 function destroyMap() { if (map) { try { map.remove(); } catch (_) {} } map = null; mapMarkers = []; mapKind = ''; }
 // Stay safe: someone who raised an alert (or missed a check-in) — a pulsing red exclamation at the location saved with the alert.
-const loneAlarmFor = (uid) => { const L = S.lone || {}; return [].concat(L.watching || [], L.mine ? [L.mine] : []).find((s) => s.userId === uid && (s.status === 'alert' || s.status === 'overdue')) || null; };
+const loneAlarmFor = (uid) => { const L = S.lone || {}; const a = (L.alerts || []).find((x) => x.userId === uid); if (a) return Object.assign({ status: 'alert' }, a); return [].concat(L.watching || [], L.mine ? [L.mine] : []).find((s) => s.userId === uid && s.status === 'overdue') || null; };
+// Pins on the team map: active alerts (everyone sees these — red) and, for admins, missed check-ins (orange).
+function loneMapAlarms() {
+  const L = S.lone || {}; const out = [];
+  for (const a of L.alerts || []) if (a.loc) out.push({ status: 'alert', userId: a.userId, where: a.where, phone: a.phone, alertLoc: a.loc, ping: a.ping });
+  for (const s of [].concat(L.watching || [], L.mine ? [L.mine] : [])) if (s.status === 'overdue' && (s.alertLoc || s.loc)) out.push(s);
+  return out;
+}
+// The alert ping: who, where (live), call and directions.
+function pingAlertCard(p, compact) {
+  const a = p.alert; if (!a) return '';
+  const m = member(a.userId); const D = a.loc ? dirLinks(a.loc.lat, a.loc.lng) : null;
+  return `<div class="ping-alert">
+    <div class="row" style="gap:10px">${avatar(m, 'sm', { link: false })}<div class="grow"><b>${esc(m.name)} needs help</b><div class="small">${a.where ? esc(a.where) + ' · ' : ''}alert raised ${timeAgo(a.at)}${a.loc ? ` · location updated ${timeAgo(a.loc.at)}` : ' · no location shared'}</div></div></div>
+    ${compact ? '' : `<div class="row wrap tight" style="margin-top:10px">
+      ${a.phone ? `<a class="btn sm danger solid" href="tel:${esc(a.phone.replace(/[^\d+]/g, ''))}">${ic('phone')}Call ${esc(firstName(a.userId))} · ${esc(a.phone)}</a>` : ''}
+      ${D ? `<a class="btn sm" href="${isIOS() ? D.apple : D.google}" target="_blank" rel="noopener">${ic('route')}Directions</a><a class="btn sm" href="${isIOS() ? D.google : D.apple}" target="_blank" rel="noopener">${isIOS() ? 'Google Maps' : 'Apple Maps'}</a><a class="btn sm ghost" href="#/team">${ic('pin')}Team map</a>` : ''}
+      <a class="btn sm ghost" href="#/chat/" data-act="message-person" data-id="${a.userId}">${ic('chat')}Message</a></div>
+      <p class="tiny muted" style="margin:8px 0 0">This ping disappears when ${esc(firstName(a.userId))} taps “I’m safe”.</p>`}
+  </div>`;
+}
 function alertMarkerEl(s) {
   const d = document.createElement('div'); d.className = 'mk-alert' + (s.status === 'alert' ? '' : ' overdue');
   d.setAttribute('role', 'img'); d.setAttribute('aria-label', `${member(s.userId).name} ${s.status === 'alert' ? 'needs help' : 'missed a check-in'}`);
@@ -649,10 +671,10 @@ function updateMap() {
     if (p.lat == null || p.lng == null || p.archived) continue;
     add(p.lat, p.lng, jobMarkerEl(p, workingOn(p.id).length), '', 0, (el) => openMapCard(p, el));
   }
-  const alarms = [].concat((S.lone && S.lone.watching) || [], S.lone && S.lone.mine ? [S.lone.mine] : []).filter((s) => (s.status === 'alert' || s.status === 'overdue') && (s.alertLoc || s.loc));
+  const alarms = loneMapAlarms();
   for (const s of alarms) {
     const l = s.alertLoc || s.loc; const m = member(s.userId); const D = dirLinks(l.lat, l.lng); const help = s.status === 'alert';
-    add(l.lat, l.lng, alertMarkerEl(s), `<b style="color:#c92a2a">${help ? '🚨 ' + esc(m.name) + ' needs help' : esc(m.name) + ' missed a check-in'}</b><br><span style="color:#6a6963">${esc(s.where || 'Working alone')} · location ${s.alertLoc ? 'saved with the alert' : 'last shared'} ${timeAgo(l.at)}${l.acc ? ` · ±${Math.round(l.acc)}m` : ''}</span><br>${s.phone ? `<a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">Call</a> · ` : ''}<a href="${isIOS() ? D.apple : D.google}" target="_blank" rel="noopener">Directions</a> · <a href="#/lone">Stay safe</a>`, 3000);
+    add(l.lat, l.lng, alertMarkerEl(s), `<b style="color:#c92a2a">${help ? '🚨 ' + esc(m.name) + ' needs help' : esc(m.name) + ' missed a check-in'}</b><br><span style="color:#6a6963">${esc(s.where || 'Working alone')} · location ${s.alertLoc ? 'saved with the alert' : 'last shared'} ${timeAgo(l.at)}${l.acc ? ` · ±${Math.round(l.acc)}m` : ''}</span><br>${s.phone ? `<a href="tel:${esc(s.phone.replace(/[^\d+]/g, ''))}">Call</a> · ` : ''}<a href="${isIOS() ? D.apple : D.google}" target="_blank" rel="noopener">Directions</a> · <a href="${s.ping ? '#/ping/' + s.ping : '#/lone'}">Details</a>`, 3000);
   }
   for (const [id, loc] of Object.entries(S.locations)) {
     const m = S.members[id]; if (!m || alarms.some((s) => s.userId === id)) continue;

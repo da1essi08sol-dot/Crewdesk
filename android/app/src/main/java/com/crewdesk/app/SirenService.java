@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
+import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -60,7 +61,7 @@ public class SirenService extends Service {
             .addAction(new Notification.Action.Builder(null, "Stop siren", stopPi).build());
         if (own && session != null && !session.isEmpty()) { // the worker's own missed check-in: one tap checks in and stops the siren
             Intent ok = new Intent(this, ActionReceiver.class).setAction(ActionReceiver.CHECKIN).putExtra("cid", cid).putExtra("session", session);
-            b.addAction(new Notification.Action.Builder(null, "I'm safe", PendingIntent.getBroadcast(this, 4, ok, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)).build());
+            b.addAction(new Notification.Action.Builder(null, "✓ Check in", PendingIntent.getBroadcast(this, 4, ok, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)).build());
         }
         if (!own && session != null && !session.isEmpty() && !"test".equals(session)) {
             Intent ack = new Intent(this, ActionReceiver.class).setAction(ActionReceiver.ACK).putExtra("cid", cid).putExtra("session", session);
@@ -82,7 +83,11 @@ public class SirenService extends Service {
         try {
             player = new MediaPlayer();
             player.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
-            player.setDataSource(this, Uri.parse("android.resource://" + getPackageName() + "/" + R.raw.siren));
+            // The phone's own stock alarm sound (what people already know as "alarm"); Crewdesk's siren only if there isn't one.
+            Uri sound = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM);
+            if (sound == null) sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+            try { player.setDataSource(this, sound != null ? sound : Uri.parse("android.resource://" + getPackageName() + "/" + R.raw.siren)); }
+            catch (Exception e) { player.reset(); player.setDataSource(this, Uri.parse("android.resource://" + getPackageName() + "/" + R.raw.siren)); }
             player.setLooping(true);
             player.prepare();
             player.start();

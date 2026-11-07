@@ -99,12 +99,14 @@ const firstName = (id) => member(id).name.split(' ')[0];
 function avatar(m, size = '', opts = {}) {
   if (!m) return '';
   const link = opts.link !== false && !m.former && m.id;
-  return `<span class="avatar ${size}" style="--c:${colorFor(m.id)}" ${link ? `data-person="${esc(m.id)}" title="${esc(m.name)}"` : ''} role="img" aria-label="${esc(m.name)}">${m.avatar ? `<img src="${esc(m.avatar)}" alt="" loading="lazy" decoding="async">` : esc(initials(m.name))}${opts.dot ? `<i class="on-dot ${m.online ? 'on' : ''}"></i>` : ''}</span>`;
+  const alarm = typeof alertOf === 'function' && m.id && alertOf(m.id); // Stay safe: their alert is active
+  return `<span class="avatar ${size} ${alarm ? 'alerting' : ''}" style="--c:${colorFor(m.id)}" ${link ? `data-person="${esc(m.id)}" title="${esc(m.name)}${alarm ? ' — alert active' : ''}"` : ''} role="img" aria-label="${esc(m.name)}${alarm ? ', alert active' : ''}">${m.avatar ? `<img src="${esc(m.avatar)}" alt="" loading="lazy" decoding="async">` : esc(initials(m.name))}${opts.dot ? `<i class="on-dot ${m.online ? 'on' : ''}"></i>` : ''}${alarm ? '<i class="alert-dot" aria-hidden="true">!</i>' : ''}</span>`;
 }
 function personName(id, short = false) {
   const m = member(id);
   const n = short ? m.name.split(' ')[0] : m.name;
-  return m.former ? `<span>${esc(n)}</span>` : `<span class="person-link" data-person="${esc(id)}" role="link" tabindex="0">${esc(n)}</span>`;
+  const alarm = typeof alertOf === 'function' && alertOf(id) ? ' <span class="alert-pill">Alert active</span>' : '';
+  return m.former ? `<span>${esc(n)}</span>` : `<span class="person-link" data-person="${esc(id)}" role="link" tabindex="0">${esc(n)}</span>${alarm}`;
 }
 function avatarStack(ids, max = 4, size = 'xs') {
   if (!ids || !ids.length) return '';

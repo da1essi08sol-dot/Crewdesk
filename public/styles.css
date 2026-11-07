@@ -1998,3 +1998,17 @@ html.mh-on, html.mh-on body { overflow: hidden; }
 .install-share { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: var(--blue-soft); color: var(--blue); vertical-align: middle; }
 .install-manual { margin: 0; }
 .install-nudge[hidden], .install-nudge [hidden] { display: none !important; }
+/* Stay safe: testing warning, Alert active badges, alert ping */
+.lone-warn { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 14px; margin-bottom: 14px; background: var(--amber-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); font-size: 13.5px; line-height: 1.45; }
+.lone-warn svg { flex: none; color: var(--amber); margin-top: 1px; }
+.avatar.alerting { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px #e03131; overflow: visible; }
+.avatar .alert-dot { position: absolute; right: -4px; top: -4px; width: 16px; height: 16px; border-radius: 50%; background: #e03131; color: #fff; font-style: normal; font-weight: 900; font-size: 11px; line-height: 16px; text-align: center; border: 2px solid var(--surface); }
+.avatar { position: relative; }
+.alert-pill { display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 99px; background: #e03131; color: #fff; font-size: 11px; font-weight: 700; vertical-align: 1px; white-space: nowrap; }
+.lone-alert-strip { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border-radius: 14px; margin-bottom: 14px; background: #e03131; color: #fff; }
+.lone-alert-strip .btn { background: rgba(255,255,255,.2); color: #fff; border: 0; }
+.ping-alert { margin: 8px 0 4px; padding: 12px; border-radius: 14px; background: color-mix(in srgb, #e03131 8%, var(--surface)); border: 1px solid color-mix(in srgb, #e03131 35%, var(--line)); }
+.ping-alert b { color: #c92a2a; }
+.testing-bar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 12.5px; background: var(--amber-soft); color: var(--ink); border-bottom: 1px solid color-mix(in srgb, var(--amber) 30%, transparent); }
+.testing-bar svg { flex: none; color: var(--amber); }
+.testing-bar button { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px; display: grid; }

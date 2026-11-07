@@ -17,8 +17,10 @@ self.addEventListener('push', (e) => {
     requireInteraction: !!d.urgent, // safety alerts stay on screen until someone deals with them
     silent: false,
     timestamp: Date.now(),
-    data: { link: d.link || '#/home', cid: d.cid || '' },
+    data: { link: d.link || '#/home', cid: d.cid || '', session: d.session || '', kind: d.kind || '' },
   };
+  // Stay safe: check in straight from the notification (Android shows these buttons, even on the lock screen).
+  if (d.kind === 'checkin' && d.session && d.cid) opts.actions = [{ action: 'checkin', title: '✓ Check in' }, { action: 'open', title: 'Open' }];
   const jobs = [self.registration.showNotification(title, opts)];
   if (typeof d.badge === 'number' && self.navigator && 'setAppBadge' in self.navigator) jobs.push(d.badge ? self.navigator.setAppBadge(d.badge).catch(() => {}) : self.navigator.clearAppBadge().catch(() => {}));
   e.waitUntil(Promise.all(jobs));
@@ -26,7 +28,19 @@ self.addEventListener('push', (e) => {
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const { link = '#/home', cid = '' } = e.notification.data || {};
+  const { link = '#/home', cid = '', session = '' } = e.notification.data || {};
+  if (e.action === 'checkin' && cid && session) {
+    e.waitUntil((async () => {
+      try {
+        const r = await fetch(`/api/c/${encodeURIComponent(cid)}/lone/${encodeURIComponent(session)}/checkin`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Crewdesk': '1' }, body: '{}' });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'failed');
+        await self.registration.showNotification('Checked in ✓', { body: 'Stay safe. Your next check-in has been set.', icon: '/icon-192.png', badge: '/favicon-32.png', tag: 'lone-ok', silent: true });
+      } catch (err) {
+        await self.registration.showNotification('Couldn’t check in', { body: 'Tap to open Crewdesk and check in.', icon: '/icon-192.png', tag: 'lone-due', requireInteraction: true, data: { link: '#/lone/checkin', cid } });
+      }
+    })());
+    return;
+  }
   e.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const w of wins) {

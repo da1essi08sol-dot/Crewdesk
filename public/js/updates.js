@@ -4,6 +4,20 @@
 'use strict';
 
 const UPDATES = [
+  { id: '3.6', date: '2026-11-07', title: 'Stay safe, rebuilt — and the Android app', icon: 'shield', color: '#c92a2a',
+    intro: 'Still being tested: keep using the StaySafe app alongside Crewdesk for now.',
+    items: [
+      ['new', 'A round Help button you press and hold for 2 seconds, right on the Stay safe start screen, even before you start a session.'],
+      ['new', 'Raising an alert posts a ping for everyone with your location, how to call you and directions, and shows a red pin on the team map. It stays up until you tap I’m safe.'],
+      ['new', '“Alert active” shows on the person everywhere they appear: their picture, their name and their profile.'],
+      ['new', 'Notifications 10 and 5 minutes before each check-in, with a Check in button right on the notification.'],
+      ['new', 'The Crewdesk Android app: full-screen emergency alerts with the phone’s alarm sound until someone responds, check-in buttons on the lock screen, and battery-friendly location while you work alone.'],
+      ['new', 'On phones, Crewdesk offers to add itself to your Home Screen (one tap on Android, simple steps on iPhone).'],
+      ['better', 'Pick your finish time in 5-minute steps with a proper time picker.'],
+      ['better', 'Everyone checks in every hour unless admins change it. Admins look after everyone working alone (no more buddies).'],
+      ['better', 'A missed check-in sounds the alarm on your own phone only. Admins get a message.'],
+      ['better', 'Stay safe isn’t available on iPhone, because iOS doesn’t support web app alerts or live location tracking.'],
+    ] },
   { id: '3.5', date: '2026-11-07', title: 'Stay safe: lone working', icon: 'shield', color: '#c92a2a',
     intro: 'Nobody works alone unseen. Check in, and get help fast if something goes wrong.',
     items: [

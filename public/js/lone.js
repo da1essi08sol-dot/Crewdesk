@@ -1,6 +1,6 @@
 /* Stay safe: lone working. Start a session, check in when asked (the green ring empties as the next check-in gets closer),
    hold the round help button to raise an alert (loud siren, or silent). Miss a check-in and your own phone sounds a siren,
-   and your buddy and admins get a message. Location is only shared from the Crewdesk Android app. Not available on iPhone. */
+   and admins get a message. Location is only shared from the Crewdesk Android app. Not available on iPhone. */
 'use strict';
 
 // ---------------------------------------------------------------- the Crewdesk Android app (native features)
@@ -33,20 +33,21 @@ const Siren = {
   start(title, body) {
     if (isAndroidApp()) { try { NA().siren(true, title || 'Alert sent', body || 'Help has been asked for'); } catch (_) {} this.label(); return; }
     this.unlock(); if (!this.ctx || this.nodes) return;
-    const c = this.ctx; const out = c.createGain(); out.gain.value = 0.95;
-    const comp = c.createDynamicsCompressor(); comp.threshold.value = -30; comp.ratio.value = 12; out.connect(comp); comp.connect(c.destination);
-    const a = c.createOscillator(), b = c.createOscillator(); a.type = 'sawtooth'; b.type = 'square'; a.frequency.value = b.frequency.value = 1050; b.detune.value = 15;
-    const lfo = c.createOscillator(); lfo.frequency.value = 1.7; const depth = c.createGain(); depth.gain.value = 480;
-    lfo.connect(depth); depth.connect(a.frequency); depth.connect(b.frequency);
-    const bg = c.createGain(); bg.gain.value = 0.4; b.connect(bg); bg.connect(out); a.connect(out);
-    a.start(); b.start(); lfo.start(); this.nodes = [a, b, lfo, out];
+    // A standard alarm: four quick beeps, a short pause, repeat — like a phone's stock alarm.
+    const c = this.ctx; const out = c.createGain(); out.gain.value = 0.9;
+    const comp = c.createDynamicsCompressor(); comp.threshold.value = -24; comp.ratio.value = 10; out.connect(comp); comp.connect(c.destination);
+    const osc = c.createOscillator(); osc.type = 'square'; osc.frequency.value = 1000;
+    const env = c.createGain(); env.gain.value = 0; osc.connect(env); env.connect(out); osc.start();
+    const burst = () => { const t = c.currentTime + 0.02; for (let i = 0; i < 4; i++) { const s0 = t + i * 0.16; env.gain.setValueAtTime(1, s0); env.gain.setValueAtTime(0, s0 + 0.1); } };
+    burst(); const timer = setInterval(burst, 1000);
+    this.nodes = { osc, out, timer };
     if (navigator.vibrate) { const v = () => navigator.vibrate([700, 300]); v(); this.vib = setInterval(v, 1000); }
     try { if ('wakeLock' in navigator) navigator.wakeLock.request('screen').then((w) => { this.wl = w; }).catch(() => {}); } catch (_) {}
     this.label();
   },
   stop() {
     if (isAndroidApp()) { try { NA().siren(false, '', ''); } catch (_) {} setTimeout(() => this.label(), 300); return; }
-    if (this.nodes) { for (const n of this.nodes.slice(0, 3)) try { n.stop(); } catch (_) {} try { this.nodes[3].disconnect(); } catch (_) {} this.nodes = null; }
+    if (this.nodes) { clearInterval(this.nodes.timer); try { this.nodes.osc.stop(); } catch (_) {} try { this.nodes.out.disconnect(); } catch (_) {} this.nodes = null; }
     clearInterval(this.vib); this.vib = null; if (navigator.vibrate) try { navigator.vibrate(0); } catch (_) {}
     if (this.wl) { this.wl.release().catch(() => {}); this.wl = null; }
     this.label();
@@ -82,7 +83,7 @@ function loneDraft() {
   if (!S.loneDraft) {
     const p = (S.user.prefs && S.user.prefs.lone) || {};
     const step = 5 * 60e3; const want = Math.round((Date.now() + (p.mins || 240) * 60e3) / step) * step;
-    S.loneDraft = { where: p.where || '', buddy: p.buddy && S.members[p.buddy] ? p.buddy : '', note: '', finishAt: want };
+    S.loneDraft = { where: p.where || '', note: '', finishAt: want };
   }
   const min = Math.ceil((Date.now() + 10 * 60e3) / 300e3) * 300e3;
   if (S.loneDraft.finishAt < min) S.loneDraft.finishAt = min;
@@ -95,10 +96,19 @@ VIEWS.lone = {
     if (isIOS()) return `<div class="lone-page"><section class="lone-hero"><div class="lone-hero-ico">${icSize('shield', 30)}</div><div><h1>Stay safe</h1><p>Stay safe isn’t available on iPhone. iOS does not support web app alerts or live location tracking, while Android does.</p></div></section>
       <div class="card stack"><b>Use an Android phone for lone working</b><span class="small muted">Install the Crewdesk Android app on a company Android phone to start sessions, check in, raise alerts and share your location.</span></div></div>`;
     const L = S.lone || {};
-    return `<div class="lone-page">${loneSetup()}${L.mine ? loneActive(L.mine) : loneStart()}${loneWatching(L.watching || [])}${loneAdmin()}${loneHistory(L.recent || [])}</div>`;
+    return `<div class="lone-page">${loneTestWarning()}${loneSetup()}${L.mine ? loneActive(L.mine) : loneStart()}${loneWatching(L.watching || [])}${loneAdmin()}${loneHistory(L.recent || [])}</div>`;
   },
-  mount() { loneTick(); },
+  mount(arg) {
+    loneTick();
+    if (arg === 'checkin') { // opened from a "check in" notification: check in straight away
+      history.replaceState(null, '', '#/lone');
+      const m = S.lone && S.lone.mine; if (m && m.status !== 'alert') A['lone-checkin']();
+    }
+  },
 };
+function loneTestWarning() {
+  return `<div class="lone-warn" role="note">${icSize('warn', 20)}<div><b>Stay safe is being tested — don’t rely on it.</b><br>Keep using the StaySafe app alongside Crewdesk to make sure you’re fully protected, until further testing is done and safety standards are met.</div></div>`;
+}
 
 // Android app: a checklist of the phone permissions Stay safe needs. In a browser: where to get the app.
 function loneSetup() {
@@ -137,7 +147,7 @@ function loneStart() {
       <p class="ls-hint">In trouble? Press and hold <b>Help</b> for 2 seconds.</p>
       <button class="ls-go" data-act="lone-go">${icSize('play', 20)}Start session</button>
       <button class="ls-details" data-act="lone-details">
-        <span class="grow"><b>${esc(d.where || 'Where are you working?')}</b><span class="tiny muted">Finish ${hm(d.finishAt)}${dayTxt(d.finishAt)} · ${d.buddy ? 'Buddy: ' + esc(member(d.buddy).name) : 'No buddy (admins only)'}</span></span>${ic('edit')}
+        <span class="grow"><b>${esc(d.where || 'Where are you working?')}</b><span class="tiny muted">Finish ${hm(d.finishAt)}${dayTxt(d.finishAt)} · admins are alerted if you need help</span></span>${ic('edit')}
       </button>
       <button class="lone-silent" data-act="lone-alert-silent">Send a silent alert instead</button>
     </section>`;
@@ -148,7 +158,7 @@ function loneActive(m) {
     return `<section class="lone-alert-panel">
       <div class="lone-alert-ico">${icSize('warn', 34)}</div>
       <h1>${m.silent ? 'Silent alert sent' : 'Alert sent'}</h1>
-      <p>${m.ackBy ? `<b>${esc(firstName(m.ackBy))} is responding.</b> Help is on the way.` : 'Your buddy and admins have been alerted and asked to call you.'}</p>
+      <p>${m.ackBy ? `<b>${esc(firstName(m.ackBy))} is responding.</b> Help is on the way.` : 'Your admins have been alerted and asked to call you. A ping with your location is up for everyone until you tap I’m safe.'}</p>
       <div class="lone-alert-acts">
         <button class="btn lone-siren-btn" data-act="lone-siren">${icSize('bell', 18)}<span data-siren-label>${Siren.on ? 'Stop siren' : 'Sound siren'}</span></button>
         <button class="btn lone-safe-btn" data-act="lone-safe">${icSize('check', 18)}I’m safe, cancel alert</button>
@@ -164,7 +174,7 @@ function loneActive(m) {
           ${icSize('check', 30)}
           <b class="lone-core-big">I’m safe</b>
           <span class="lone-core-sub">Tap to check in</span>
-          <span class="lone-core-time"><span data-lone-count>${loneLeft(m)}</span> ${st === 'overdue' ? '· buddy told' : st === 'due' ? '· due now' : 'left · ' + hm(m.nextAt)}</span>
+          <span class="lone-core-time"><span data-lone-count>${loneLeft(m)}</span> ${st === 'overdue' ? '· admins told' : st === 'due' ? '· due now' : 'left · ' + hm(m.nextAt)}</span>
         </span>
       </button>
       <div class="ls-trio">
@@ -177,7 +187,7 @@ function loneActive(m) {
 }
 function loneDetails(m) {
   const rows = [
-    ['pin', 'Where', m.where || 'Not given'], ['user', 'Buddy', m.buddy ? member(m.buddy).name : 'Admins only'],
+    ['pin', 'Where', m.where || 'Not given'],
     ['clock', 'Checking in', `Every ${everyTxt(m.every)}`], ['flag', 'Finish by', hm(m.endsAt)],
   ].concat(m.loc ? [['locate', 'Location', `Shared · updated ${timeAgo(m.loc.at)}`]] : []);
   return `<div class="card lone-details">${rows.map(([i, k, v]) => `<div class="lone-kv">${icSize(i, 16)}<span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}
@@ -245,17 +255,15 @@ A['lone-details'] = () => {
   const r5 = (t) => Math.round(t / 300e3) * 300e3;
   const chips = [['1 hour', r5(now + 3600e3)], ['2 hours', r5(now + 2 * 3600e3)], ['4 hours', r5(now + 4 * 3600e3)]];
   const de = dayEndToday(); if (de > min) chips.push([`End of day (${hm(de)})`, de]);
-  const people = Object.values(S.members).filter((m) => m.id !== S.user.id).sort((a, b) => a.name.localeCompare(b.name));
   sheet(`${sheetHead('Session details')}
     <form class="stack" data-form="lone-details">
       <label class="field"><span>Where are you working?</span><input name="where" maxlength="120" value="${esc(d.where)}" placeholder="e.g. Manhole survey, Tyne Street" autocomplete="off"></label>
       <div class="field"><span>Finish by</span>${timePicker(Math.min(max, Math.max(min, d.finishAt)), min, max, chips)}<input type="hidden" name="finishAt" value="${Math.min(max, Math.max(min, d.finishAt))}"></div>
-      <label class="field"><span>Buddy</span><select name="buddy"><option value="">No buddy (admins only)</option>${people.map((m) => `<option value="${m.id}" ${m.id === d.buddy ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>
       <label class="field"><span>Anything that would help someone find you <span class="muted">(optional)</span></span><textarea name="note" rows="2" maxlength="300" placeholder="Van reg, access code, which entrance…">${esc(d.note)}</textarea></label>
       <div class="sheet-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Done</button></div>
     </form>`);
 };
-F['lone-details'] = async (f, d, close) => { Object.assign(loneDraft(), { where: d.where.trim(), buddy: d.buddy, note: d.note.trim(), finishAt: Number(d.finishAt) }); close(); renderView(false); };
+F['lone-details'] = async (f, d, close) => { Object.assign(loneDraft(), { where: d.where.trim(), note: d.note.trim(), finishAt: Number(d.finishAt) }); close(); renderView(false); };
 
 A['lone-addtime'] = () => {
   const m = S.lone && S.lone.mine; if (!m) return;
@@ -289,8 +297,8 @@ function loneTick() {
 A['lone-go'] = async (el) => {
   const d = loneDraft(); el.disabled = true;
   try {
-    S.user.prefs = Object.assign({}, S.user.prefs, { lone: { buddy: d.buddy, mins: Math.round((d.finishAt - Date.now()) / 60e3), where: d.where } });
-    setLone(await capi('POST', '/lone', locBody({ where: d.where, finishAt: d.finishAt, buddy: d.buddy, note: d.note })));
+    S.user.prefs = Object.assign({}, S.user.prefs, { lone: { mins: Math.round((d.finishAt - Date.now()) / 60e3), where: d.where } });
+    setLone(await capi('POST', '/lone', locBody({ where: d.where, finishAt: d.finishAt, note: d.note })));
     S.loneDraft = null; toast('Session started. Stay safe.');
   } catch (e) { toast(e.message, true); el.disabled = false; }
 };
@@ -302,15 +310,15 @@ A['lone-checkin'] = async () => {
   try { await lonePost(`/lone/${mineId()}/checkin`, locBody()); if (navigator.vibrate) navigator.vibrate(25); toast('Checked in. Stay safe.'); } catch (e) { toast(e.message, true); }
 };
 A['lone-end'] = async () => {
-  if (!(await confirmBox('Finish working alone?', 'Your buddy and admins won’t be alerted any more. Only finish once you’re safe.', 'I’m safe, finish'))) return;
+  if (!(await confirmBox('Finish working alone?', 'Your admins won’t be alerted any more. Only finish once you’re safe.', 'I’m safe, finish'))) return;
   try { await lonePost(`/lone/${mineId()}/end`, locBody()); Siren.stop(); toast('Session finished. Glad you’re safe.'); } catch (e) { toast(e.message, true); }
 };
 A['lone-alert'] = async () => {
-  Siren.start('Alert sent', 'Your buddy and admins have been asked to call you');
+  Siren.start('Alert sent', 'Your admins have been asked to call you');
   try { await lonePost(mineId() ? `/lone/${mineId()}/alert` : '/lone/panic', locBody()); } catch (e) { toast(e.message, true); }
 };
 A['lone-alert-silent'] = async () => {
-  if (!(await confirmBox('Send a silent alert?', 'Your buddy and admins are alerted straight away. Your phone makes no sound.', 'Send silent alert'))) return;
+  if (!(await confirmBox('Send a silent alert?', 'Your admins are alerted straight away and a ping with your location goes up. Your phone makes no sound.', 'Send silent alert'))) return;
   try { await lonePost(mineId() ? `/lone/${mineId()}/alert` : '/lone/panic', locBody({ silent: true })); } catch (e) { toast(e.message, true); }
 };
 A['lone-safe'] = async () => { Siren.stop(); try { await lonePost(`/lone/${mineId()}/safe`, locBody()); toast('Alert cancelled. Everyone has been told you’re safe.'); } catch (e) { toast(e.message, true); } };
@@ -351,3 +359,16 @@ function loneEvent(ev) {
   if (typeof updateMap === 'function') updateMap(); // red exclamation on the team map
   scheduleRender();
 }
+
+// Everywhere a person shows: is their alert active? (everyone in the company can see this — it's also a ping)
+const alertOf = (uid) => ((S.lone && S.lone.alerts) || []).find((a) => a.userId === uid) || null;
+(function () {
+  const render = VIEWS.person.render;
+  VIEWS.person.render = function (id) {
+    const a = alertOf(id); const html = render.apply(this, arguments);
+    if (!a) return html;
+    const D = a.loc ? dirLinks(a.loc.lat, a.loc.lng) : null;
+    return `<div class="lone-alert-strip">${icSize('warn', 20)}<div class="grow"><b>Alert active</b><br><span class="small">${esc(member(id).name)} triggered an alert ${timeAgo(a.at)}${a.where ? ' · ' + esc(a.where) : ''}</span></div>
+      ${a.phone ? `<a class="btn sm" href="tel:${esc(a.phone.replace(/[^\d+]/g, ''))}">${ic('phone')}Call</a>` : ''}${D ? `<a class="btn sm" href="${isIOS() ? D.apple : D.google}" target="_blank" rel="noopener">${ic('route')}Directions</a>` : ''}</div>` + html;
+  };
+})();

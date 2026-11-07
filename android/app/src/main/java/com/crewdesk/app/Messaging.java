@@ -31,7 +31,7 @@ public class Messaging extends FirebaseMessagingService {
             Intent ok = new Intent(this, ActionReceiver.class).setAction(ActionReceiver.CHECKIN).putExtra("cid", cid).putExtra("session", session).putExtra("notif", id);
             PendingIntent okPi = PendingIntent.getBroadcast(this, id, ok, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
             Notification n = Notify.base(this, Notify.CHECKIN, title, body, link, id).setCategory(Notification.CATEGORY_REMINDER)
-                .addAction(new Notification.Action.Builder(null, "I'm safe", okPi).build()).build();
+                .addAction(new Notification.Action.Builder(null, "✓ Check in", okPi).build()).build();
             Notify.show(this, id, n);
             return;
         }
