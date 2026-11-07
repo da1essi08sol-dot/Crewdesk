@@ -132,7 +132,6 @@ function renderShell() {
         <button class="icon-btn mobile-only" data-act="search" aria-label="Search">${ic('search')}</button>
         <button class="icon-btn mobile-only" data-act="me-menu" aria-haspopup="menu" aria-label="My account" id="top-me"></button>
       </header>
-      ${testingHidden() ? '' : `<div class="testing-bar" role="note">${icSize('warn', 16)}<span>Crewdesk is still being tested. Double-check anything important — and don’t rely on Stay safe yet.</span><button data-act="testing-hide" aria-label="Hide for today">${icSize('x', 14)}</button></div>`}
       <main id="view" tabindex="-1"></main>
     </div>
     <nav class="bottomnav" aria-label="Sections">${bottomNav().map((n) => navLink(n)).join('')}</nav>
