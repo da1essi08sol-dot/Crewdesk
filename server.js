@@ -261,6 +261,7 @@ function cdata(cid) {
   d.messages = d.messages || {};
   d.inbox = d.inbox || {};
   d.sheetUploads = d.sheetUploads || {}; // userId_YYYY-MM -> a timesheet the person uploaded themselves
+  d.lone = d.lone || {}; // lone-working (Stay safe) sessions
   return d;
 }
 const DEFAULT_SETTINGS = { membersSeeMoney: false, membersCreateProjects: true, membersInvite: false, membersPing: true, allowCodeJoin: true, currency: '£',
@@ -555,7 +556,8 @@ function notify(cid, userIds, text, link) {
 
 // ---------------------------------------------------------------- lock-screen (push) notifications
 // Phones that switched on "Lock-screen notifications" get a real notification (and a buzz) when the app isn't on screen.
-const looking = new Map(); // userId -> time until which they're looking at the app (so no push needed)
+const looking = new Map(); // userId -> Map(device endpoint or 'web' -> time until which that device has Crewdesk on screen)
+function lookingDevices(userId) { const m = looking.get(userId); const out = new Set(); if (m) for (const [k, until] of m) { if (until > now()) out.add(k); else m.delete(k); } return out; }
 function vapid() { db.meta = db.meta || {}; if (!db.meta.vapid) { db.meta.vapid = webpush.makeKeys(); save(); } return db.meta.vapid; }
 function badgeCount(userId) { // the number on the app icon: unread chats, notifications and pings across their companies
   let n = 0;
@@ -569,16 +571,19 @@ function badgeCount(userId) { // the number on the app icon: unread chats, notif
 }
 function pushUser(cid, userId, data, force = false) {
   const u = db.users[userId]; if (!u || !Array.isArray(u.push) || !u.push.length) return;
-  if (!force && (looking.get(userId) || 0) > now()) return; // they're in the app; the in-app pop-up covers it
+  const onScreen = force ? new Set() : lookingDevices(userId); // only the device showing Crewdesk stays quiet; the in-app pop-up covers it
   const c = db.companies[cid];
   const many = Object.values(db.companies).filter((co) => co.members[userId]).length > 1;
-  const payload = { title: str(data.title, 120) || 'Crewdesk', body: str(data.body, 240), link: str(data.link, 200) || '#/home', tag: str(data.tag, 60), cid,
+  const payload = { title: str(data.title, 120) || 'Crewdesk', body: str(data.body, 240), link: str(data.link, 200) || '#/home', tag: str(data.tag, 60), cid, urgent: !!data.urgent,
     company: many && c ? c.name : '', badge: badgeCount(userId) };
   const keys = vapid();
   for (const s of u.push.slice()) {
+    if (onScreen.has(s.endpoint)) continue;
+    s.lastTry = now();
     webpush.send(keys, 'mailto:' + SUPPORT_EMAIL, s, payload).then((r) => {
       if (r === 'gone') { u.push = (u.push || []).filter((x) => x.endpoint !== s.endpoint); save(); }
-      else if (r === 'ok') s.lastOk = now();
+      else if (r === 'ok') { s.lastOk = now(); s.lastErr = ''; }
+      else { s.lastErr = r.slice(5); s.lastErrAt = now(); }
     });
   }
 }
@@ -606,6 +611,57 @@ function pushPing(cid, ping) {
     if (id === ping.createdBy) continue;
     const x = ctxFor(c, id); if (!x || !viewFor('pings', ping, x)) continue;
     pushUser(cid, id, { title: `New ping from ${from}`, body: ping.title + (ping.body ? ' — ' + ping.body : ''), link: '#/ping/' + ping.id, tag: 'ping-' + ping.id });
+  }
+}
+
+// ---------------------------------------------------------------- lone working (Stay safe)
+// Someone working alone starts a session, checks in every so often, and can raise an alert. Miss a check-in and their
+// buddy and the company's admins are alerted. Location is only ever sent from the Crewdesk Android app.
+const LONE_GRACE = 10 * 60e3; // after a check-in is due, how long before others are alerted
+const LONE_EVERY = [15, 30, 45, 60, 90, 120];
+const firstOf = (id) => ((db.users[id] || {}).name || 'Someone').split(' ')[0];
+function loneWatchers(c, s) { return [...new Set(Object.keys(c.members).filter((id) => isAdmin(c.members[id].role)).concat(s.buddy ? [s.buddy] : []))].filter((id) => id !== s.userId && c.members[id]); }
+const canSeeLone = (x, s) => s.userId === x.uid || s.buddy === x.uid || isAdmin(x.role);
+function loneLog(s, what, by) { s.log.push({ at: now(), what: str(what, 200), by: by || '' }); if (s.log.length > 200) s.log.splice(0, s.log.length - 200); }
+function loneView(s, x) {
+  const o = { id: s.id, userId: s.userId, status: s.status, startedAt: s.startedAt, every: s.every, nextAt: s.nextAt, endsAt: s.endsAt, buddy: s.buddy, where: s.where, note: s.note,
+    lastCheck: s.lastCheck, alertAt: s.alertAt || 0, silent: !!s.silent, ackBy: s.ackBy || '', ackAt: s.ackAt || 0, endedAt: s.endedAt || 0, log: s.log.slice(-30) };
+  if (s.loc) o.loc = s.loc; // only ever present when it came from the Android app
+  if (x.uid !== s.userId) o.phone = (db.users[s.userId] || {}).phone || '';
+  return o;
+}
+function loneState(x) {
+  const all = Object.values(x.d.lone || {});
+  const mine = all.find((s) => s.userId === x.uid && s.status !== 'ended') || null;
+  const watching = all.filter((s) => s.status !== 'ended' && s.userId !== x.uid && canSeeLone(x, s)).sort((a, b) => (b.status !== 'active') - (a.status !== 'active') || a.nextAt - b.nextAt);
+  const recent = all.filter((s) => s.status === 'ended' && canSeeLone(x, s)).sort((a, b) => b.endedAt - a.endedAt).slice(0, 15);
+  return { mine: mine && loneView(mine, x), watching: watching.map((s) => loneView(s, x)), recent: recent.map((s) => loneView(s, x)) };
+}
+function loneChanged(cid, s, alarm = false) {
+  save();
+  broadcast(cid, (x) => (canSeeLone(x, s) ? { t: 'lone', state: loneState(x), alarm: alarm && x.uid !== s.userId ? s.id : '' } : null));
+}
+function loneUrgent(c, s, title, body) { // reaches the buddy and admins even if they're in the app, and is saved in their notifications
+  const ids = loneWatchers(c, s);
+  for (const id of ids) pushUser(c.id, id, { title, body, link: '#/lone', tag: 'lone-' + s.id, urgent: true }, true);
+  notify(c.id, ids, `${title} — ${body}`, '#/lone');
+}
+function loneWatchdog() {
+  const t = now();
+  for (const c of Object.values(db.companies)) {
+    const d = cdata(c.id);
+    for (const s of Object.values(d.lone)) {
+      if (s.status === 'ended' || s.status === 'alert') continue;
+      if (t >= s.nextAt && !s.warnedAt) { // remind the worker first
+        s.warnedAt = t; save();
+        pushUser(c.id, s.userId, { title: 'Time to check in', body: 'Tap to confirm you’re safe. Your buddy is alerted in 10 minutes if you don’t.', link: '#/lone', tag: 'lone-due', urgent: true }, true);
+      }
+      if (s.status === 'active' && t >= s.nextAt + LONE_GRACE) {
+        s.status = 'overdue'; loneLog(s, 'Missed a check-in');
+        loneUrgent(c, s, `${firstOf(s.userId)} missed a check-in`, `${s.where ? 'Working at ' + s.where + '. ' : ''}Last checked in ${ukTime(s.lastCheck)}. Try calling them now.`);
+        loneChanged(c.id, s, true);
+      }
+    }
   }
 }
 setInterval(() => { for (const s of streams) { try { s.res.write(': ping\n\n'); } catch (_) {} } }, 25000);
@@ -1275,6 +1331,12 @@ async function api(req, res, url) {
     user.push = (user.push || []).filter((x) => x.endpoint !== str(b.endpoint, 1000)); save();
     return json(res, 200, { ok: true });
   }
+  // Is this device signed up, and did its last notification arrive? (shown under the switch in My settings)
+  if (p === '/api/push/status' && M === 'POST') {
+    const b = await readBody(req, 4096); const mine = (user.push || []).find((x) => x.endpoint === str(b.endpoint, 1000));
+    const other = !mine && b.endpoint && Object.values(db.users).some((o) => o.id !== user.id && (o.push || []).some((x) => x.endpoint === b.endpoint));
+    return json(res, 200, { registered: !!mine, otherAccount: !!other, devices: (user.push || []).length, lastOk: mine ? mine.lastOk || 0 : 0, lastTry: mine ? mine.lastTry || 0 : 0, lastErr: mine ? mine.lastErr || '' : '', lastErrAt: mine ? mine.lastErrAt || 0 : 0 });
+  }
   if (p === '/api/push/test' && M === 'POST') {
     throttle('pushtest:' + user.id, 10, 3600e3);
     if (!user.push || !user.push.length) bad('Lock-screen notifications aren’t on for any of your devices yet');
@@ -1284,8 +1346,9 @@ async function api(req, res, url) {
   }
   // Whether they're looking at the app right now (then pop-ups show in the app instead of on the lock screen).
   if (p === '/api/looking' && M === 'POST') {
-    const b = await readBody(req, 1024);
-    if (b.on) looking.set(user.id, now() + 70e3); else looking.delete(user.id);
+    const b = await readBody(req, 2048);
+    const key = str(b.endpoint, 1000) || 'web'; const m = looking.get(user.id) || new Map(); looking.set(user.id, m);
+    if (b.on) m.set(key, now() + 45e3); else m.delete(key);
     return json(res, 200, { ok: true });
   }
   if (p === '/api/me' && M === 'PUT') {
@@ -1301,7 +1364,7 @@ async function api(req, res, url) {
     if (b.prefs && typeof b.prefs === 'object') for (const k of ['popups', 'desktop', 'sound']) if (k in b.prefs) user.prefs[k] = !!b.prefs[k];
     if (b.prefs && typeof b.prefs.seenUpdate === 'string') user.prefs.seenUpdate = str(b.prefs.seenUpdate, 20); // the newest What's new entry they've opened
     if (b.prefs && Array.isArray(b.prefs.tabs)) { // the phone's bottom tab bar, as the person arranged it
-      const ok = ['home', 'projects', 'timesheet', 'calendar', 'chat', 'pings', 'team', 'clients', 'suggest', 'admin', 'sheets'];
+      const ok = ['home', 'projects', 'timesheet', 'calendar', 'chat', 'pings', 'team', 'clients', 'suggest', 'admin', 'sheets', 'lone'];
       const tabs = [...new Set(b.prefs.tabs.map(String))].filter((k) => ok.includes(k)).slice(0, 4);
       if (!tabs.length) bad('Keep at least one tab');
       user.prefs.tabs = tabs;
@@ -1443,6 +1506,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
   const M = req.method; let m;
   const x = companyCtx(user, cid); const { c, role, d } = x;
   if (sub === '/usage/gmaps' && M === 'POST') { const b = await readBody(req); const k = b.kind === 'geo' ? 'gGeo' : 'gMaps'; if (overFree(k)) return json(res, 200, { ok: false }); countUse(k); return json(res, 200, { ok: true }); }
+  if (sub.startsWith('/lone')) return loneApi(req, res, x, sub);
   if (sub.startsWith('/data') && !isAdmin(role)) deny('Only admins can manage data');
   if (sub === '/data' && M === 'GET') {
     const u = usage(); const files = {};
@@ -1477,7 +1541,7 @@ async function companyApi(req, res, url, user, cid, sub, cur) {
     for (const id of Object.keys(c.members)) if (db.users[id] && db.users[id].shareLocation && db.locations[id] && now() - db.locations[id].at < LOCATION_MAX_AGE) locs[id] = db.locations[id];
     const invites = isAdmin(role) || c.settings.membersInvite
       ? Object.values(c.invites).filter((i) => isAdmin(role) || i.createdBy === user.id).sort((a, b) => b.createdAt - a.createdAt).slice(0, 50).map((i) => publicInvite(i, c)) : [];
-    return json(res, 200, Object.assign({ company: publicCompany(c, role), role, me: meUser(user), members: memberList(c, user.id), locations: locs,
+    return json(res, 200, Object.assign({ lone: loneState(x), company: publicCompany(c, role), role, me: meUser(user), members: memberList(c, user.id), locations: locs,
       sheetUploads: Object.fromEntries(Object.entries(d.sheetUploads).filter(([, u]) => isAdmin(role) || u.userId === user.id).map(([k, u]) => [k, publicSheet(u)])),
       favs: user.favs[cid] || { projects: [] }, inbox: (d.inbox[user.id] || []).slice(-100), invites, gdrive: isAdmin(role) ? gdrive.status(c) : null }, stateFor(x), unreadFor(x)));
   }
@@ -2938,6 +3002,70 @@ function reminders() {
   }
 }
 
+async function loneApi(req, res, x, sub) {
+  const M = req.method; const { c, d } = x; const me = x.uid; let m;
+  const out = () => json(res, 200, loneState(x));
+  const locOf = (b) => { // accepted only from the Android app; the browser and iPhone never send location
+    const l = b && b.loc; if (!l || b.platform !== 'android') return null;
+    const lat = coord(l.lat, 90), lng = coord(l.lng, 180); if (lat === null || lng === null) return null;
+    return { lat, lng, acc: Math.min(99999, Math.max(0, Math.round(Number(l.acc) || 0))), at: now() };
+  };
+  if (sub === '/lone' && M === 'GET') return out();
+  if (sub === '/lone' && M === 'POST') {
+    const b = await readBody(req, 16 * 1024);
+    if (Object.values(d.lone).some((s) => s.userId === me && s.status !== 'ended')) bad('You already have a session running');
+    const every = LONE_EVERY.includes(Number(b.every)) ? Number(b.every) : 60;
+    const hours = Math.min(16, Math.max(0.5, Number(b.hours) || 4));
+    const buddy = b.buddy && c.members[b.buddy] && b.buddy !== me ? String(b.buddy) : '';
+    const t = now();
+    const s = { id: uid(), userId: me, status: 'active', startedAt: t, every, endsAt: t + hours * 3600e3, nextAt: 0, lastCheck: t, buddy, where: str(b.where, 120), note: str(b.note, 300), log: [], loc: null, trail: [] };
+    s.nextAt = Math.min(t + every * 60e3, s.endsAt);
+    const l = locOf(b); if (l) { s.loc = l; s.trail.push(l); }
+    loneLog(s, `Started working alone${s.where ? ' at ' + s.where : ''}`, me);
+    d.lone[s.id] = s;
+    for (const old of Object.values(d.lone)) if (old.status === 'ended' && t - old.endedAt > 90 * 864e5) delete d.lone[old.id]; // keep 90 days
+    if (buddy) notify(c.id, [buddy], `${firstOf(me)} is working alone${s.where ? ' at ' + s.where : ''} and chose you as their buddy`, '#/lone');
+    loneChanged(c.id, s); return out();
+  }
+  if (!(m = /^\/lone\/([A-Za-z0-9]+)\/(checkin|extend|end|alert|safe|ack|loc)$/.exec(sub)) || M !== 'POST') notFound();
+  const s = d.lone[m[1]]; if (!s || !canSeeLone(x, s)) notFound('That session has finished or isn’t yours to see');
+  const act = m[2]; const b = await readBody(req, 16 * 1024); const t = now();
+  const own = s.userId === me;
+  if (s.status === 'ended') bad('That session has already finished');
+  if (['checkin', 'extend', 'end', 'alert', 'safe', 'loc'].includes(act) && !own) deny('Only the person working alone can do that');
+  const l = locOf(b); if (l) { s.loc = l; s.trail.push(l); if (s.trail.length > 300) s.trail.splice(0, s.trail.length - 300); }
+  if (act === 'loc') { if (!l) bad('Location is only shared from the Crewdesk Android app'); save(); return out(); }
+  if (act === 'checkin') {
+    const wasLate = s.status === 'overdue';
+    s.status = 'active'; s.lastCheck = t; s.warnedAt = 0; s.nextAt = Math.min(t + s.every * 60e3, Math.max(s.endsAt, t + 5 * 60e3));
+    loneLog(s, wasLate ? 'Checked in (late) — safe' : 'Checked in — safe', me);
+    if (wasLate) loneUrgent(c, s, `${firstOf(me)} has checked in`, 'They’re safe — no need to do anything else.');
+  } else if (act === 'extend') {
+    const mins = [15, 30, 60, 120].includes(Number(b.minutes)) ? Number(b.minutes) : 30;
+    s.endsAt += mins * 60e3; s.nextAt = Math.min(Math.max(s.nextAt, t) + mins * 60e3, s.endsAt); s.warnedAt = 0;
+    if (s.status === 'overdue') { s.status = 'active'; s.lastCheck = t; }
+    loneLog(s, `Added ${mins} minutes`, me);
+  } else if (act === 'end') {
+    s.status = 'ended'; s.endedAt = t; loneLog(s, 'Finished safely', me);
+  } else if (act === 'alert') {
+    s.status = 'alert'; s.alertAt = t; s.silent = !!b.silent; s.ackBy = ''; s.ackAt = 0;
+    loneLog(s, s.silent ? 'Raised a silent alert' : 'Raised an alert', me);
+    loneUrgent(c, s, `🚨 ${firstOf(me)} needs help`, `${s.where ? 'Working at ' + s.where + '. ' : ''}${s.loc ? 'Location attached. ' : ''}Call them now.`);
+    loneChanged(c.id, s, true); return out();
+  } else if (act === 'safe') {
+    if (s.status !== 'alert') bad('There’s no alert to cancel');
+    s.status = 'active'; s.lastCheck = t; s.warnedAt = 0; s.nextAt = Math.min(t + s.every * 60e3, Math.max(s.endsAt, t + 5 * 60e3));
+    loneLog(s, 'Cancelled the alert — safe now', me);
+    loneUrgent(c, s, `${firstOf(me)} is safe`, 'They cancelled their alert.');
+  } else if (act === 'ack') {
+    if (own) bad('Someone else needs to respond to your alert');
+    if (s.status === 'active') bad('Nothing to respond to');
+    s.ackBy = me; s.ackAt = t; loneLog(s, `${firstOf(me)} is responding`, me);
+    pushUser(c.id, s.userId, { title: `${firstOf(me)} is responding`, body: 'Help is on the way.', link: '#/lone', tag: 'lone-ack', urgent: true }, true);
+  }
+  loneChanged(c.id, s); return out();
+}
+
 // ---------------------------------------------------------------- static files & security headers
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.jpg': 'image/jpeg', '.gif': 'image/gif',
@@ -3040,6 +3168,7 @@ async function main() {
   }
   setInterval(sweep, 10 * 60e3).unref(); setTimeout(sweep, 5000).unref();
   setInterval(reminders, 60e3).unref();
+  setInterval(loneWatchdog, 30e3).unref();
   setTimeout(async () => { try { const o = await storage.sizes(); usage(); for (const [k, v] of Object.entries(o)) if (!(k in db.meta.fsize)) db.meta.fsize[k] = v; save(); } catch (e) { console.error('Size check:', e.message); } }, 20e3).unref();
   setInterval(backupIfDue, 3 * 3600e3).unref(); setTimeout(backupIfDue, 30e3).unref();
   http.createServer(handler).listen(PORT, '0.0.0.0', () => {

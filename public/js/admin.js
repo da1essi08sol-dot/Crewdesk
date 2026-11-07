@@ -354,6 +354,7 @@ A['leave-company'] = async () => { if (!(await confirmBox(`Leave ${S.company.nam
 // ============================================================ MY PROFILE & SETTINGS
 VIEWS.profile = {
   manual: true,
+  mount() { pushStatusPaint(); },
   render() {
     const u = Object.assign({}, S.user, S.members[S.user.id] || {}, { prefs: S.user.prefs || {}, privacy: S.user.privacy || {} });
     const theme = store.get('cd_theme') || 'auto';
@@ -427,7 +428,7 @@ function pushSettingRow(sw, perm) {
   }
   if (perm === 'denied') return sw('push', false, label, isIOS() ? 'Blocked — turn them on in iPhone Settings → Notifications → Crewdesk' : 'Blocked — allow notifications for this site in your browser or phone settings', 'disabled');
   return sw('push', !!S.pushOn, label, 'Messages, pings and things for you appear on this device’s lock screen and make it buzz, even when Crewdesk is closed.', 'data-change="push"') +
-    (S.pushOn ? `<div class="row between wrap" style="padding:2px 0 10px;gap:8px"><span class="tiny muted">${isIOS() ? 'No buzz? iPhone Settings → Notifications → Crewdesk → turn on Sounds and Lock Screen.' : 'Switch this on for each phone or computer you use.'}</span><button class="btn sm" data-act="push-test">${ic('bell')}Send a test</button></div>` : '');
+    (S.pushOn ? `<div class="tiny" data-push-status style="padding:2px 0 6px"></div><div class="row between wrap" style="padding:2px 0 10px;gap:8px"><span class="tiny muted">${isIOS() ? 'No buzz? iPhone Settings → Notifications → Crewdesk → turn on Sounds and Lock Screen.' : 'Switch this on for each phone or computer you use.'}</span><button class="btn sm" data-act="push-test">${ic('bell')}Send a test</button></div>` : '');
 }
 C.push = async (el) => {
   el.disabled = true;
@@ -437,7 +438,21 @@ C.push = async (el) => {
   } catch (e) { el.checked = !!S.pushOn; toast(e.message, true); }
   el.disabled = false; renderView(false);
 };
+// What the server knows about this device: signed up? last notification delivered? any error from Apple/Google?
+async function pushStatusPaint() {
+  const el = $('[data-push-status]'); if (!el || !S.pushEndpoint) return;
+  try {
+    const r = await api('POST', '/api/push/status', { endpoint: S.pushEndpoint });
+    let t, bad = false;
+    if (!r.registered) { bad = true; t = r.otherAccount ? 'This device is getting notifications for a different account (whoever signed in here last). Switch off and on again to take them back.' : 'This device isn’t signed up on the server. Switch it off and on again.'; }
+    else if (r.lastErr && r.lastErrAt > r.lastOk) { bad = true; t = 'The last notification couldn’t be delivered (' + r.lastErr + '). Switch off and on again.'; }
+    else if (r.lastOk) t = '✓ Signed up. Last notification delivered ' + timeAgo(r.lastOk) + '.';
+    else t = '✓ Signed up. Nothing sent yet. Tap Send a test, then lock your phone.';
+    el.textContent = t; el.style.color = bad ? 'var(--red)' : 'var(--ok)';
+  } catch (_) {}
+}
 A['push-test'] = async () => {
+  setTimeout(pushStatusPaint, 4000);
   try { await api('POST', '/api/push/test'); toast(isIOS() || /Android/.test(navigator.userAgent) ? 'Sent — lock your phone to see it arrive' : 'Sent — it should appear in a moment'); } catch (e) { toast(e.message, true); }
 };
 C.privacy = async (el) => { try { const r = await api('PUT', '/api/me', { privacy: { [el.dataset.k]: el.checked } }); S.user = r.user; toast('Saved'); } catch (e) { toast(e.message, true); el.checked = !el.checked; } };
@@ -473,7 +488,7 @@ VIEWS.more = {
   render() {
     return `<h1 style="margin-bottom:14px">More</h1>
       <div class="card" style="padding:6px"><div class="menu">
-        ${moreTabs().map((k) => `<a href="#/${k}">${ic(TAB_ITEMS[k][1])}<span class="grow">${({ sheets: 'Spreadsheets', team: 'Team &amp; map', admin: 'Admin dashboard', suggest: 'Suggestions', timesheet: 'My timesheet' })[k] || TAB_ITEMS[k][0]}</span>${k === 'sheets' || k === 'admin' ? '<span class="tiny muted">Admins</span>' : ''}${['chat', 'pings', 'admin', 'home'].includes(k) ? `<span class="count hidden" data-badge="${k}"></span>` : ''}${ic('right')}</a>`).join('')}
+        ${moreTabs().map((k) => `<a href="#/${k}">${ic(TAB_ITEMS[k][1])}<span class="grow">${({ sheets: 'Spreadsheets', team: 'Team &amp; map', admin: 'Admin dashboard', suggest: 'Suggestions', timesheet: 'My timesheet', lone: 'Stay safe · lone working' })[k] || TAB_ITEMS[k][0]}</span>${k === 'sheets' || k === 'admin' ? '<span class="tiny muted">Admins</span>' : ''}${['chat', 'pings', 'admin', 'home', 'lone'].includes(k) ? `<span class="count hidden" data-badge="${k}"></span>` : ''}${ic('right')}</a>`).join('')}
         <button data-act="edit-tabs">${ic('edit')}<span class="grow">Edit tab bar</span>${ic('right')}</button>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
@@ -618,6 +633,7 @@ const TUTORIALS = [
   ['Plotting manholes', 'mhplot', ['Open the map and switch to Edit mode.', 'Pick the type for new manholes (bottom left) — it sets the colour and icon.', 'Tap “Add manhole”, then tap exactly where the cover is; it gets the next reference automatically. In 3D, tap the ground the same way.', 'On site, use “use my GPS position” instead; or Coordinates → type the lat/lng → Add manhole here.', 'Fill in cover and invert levels, depth, material and condition, and add photos with your camera.', 'Drag a pin to move it. Everyone on the project sees changes live.']],
   ['Manhole maps', 'manholes', ['Open a project → Maps, or More → Files, to open or create a manhole map. Only people on that project can see it.', 'Tap a pin to open its record: status, location, photos, notes, survey details and history.', 'Switch to Edit mode to add (tap “Add manhole” then the map, or use your GPS position), drag pins, change status and fill in levels.', 'Tap 3D for a Google Earth-style 3D view (or 3D building shapes on the free map); drag to move, two fingers (or right-drag) to turn and tilt; on a computer the side buttons also move closer, turn and tilt. Tap a pin to open it. Tap 3D again to go back to 2D.', 'Everyone sees changes live; if two people change the same thing you’ll be asked which to keep.', '⋯ → Export makes a manhole index, a labelled map on satellite imagery with a scale bar, grid and corner coordinates, a full PDF report or an Excel register. Manhole types are shared company-wide and anyone can add them.']],
   ['Spreadsheets & stats', 'sheets', ['Admins only. Money has income, expenses and a projection.', 'Hours shows hours by month and type of work, the busiest projects, weekdays and everyone’s totals.', 'Performance shows projects against plan, tasks completed, typical working days, timesheet completion and rework.']],
+  ['Stay safe (lone working)', 'lone', ['Working on your own? Open Stay safe, say where you are, how often to check in, when you’ll finish and who your buddy is, then tap Start session.', 'When a check-in is due your phone buzzes on the lock screen. Tap I’m safe. If you miss it by 10 minutes, your buddy and admins get an urgent alert and are asked to call you.', 'Need help? Press and hold the red Hold for help button for 2 seconds. It alerts everyone and plays a loud siren (turn your volume up). Use Send a silent alert when noise could make things worse.', 'Buddies and admins see everyone working alone, can call them, open their location on a map and tap I’m responding.', 'Location is only shared from the Crewdesk Android app, never from a browser or iPhone.']],
   ['Settings, search & more', 'settings', ['More has your timesheet, Files, Tutorials, What’s new (the update log) and a private Demo company to practise in. Anything you’ve moved off the tab bar shows its red count in More, and the More tab adds them up.', 'Lock-screen notifications: My settings → Notifications → switch on Lock-screen notifications, then tap Send a test. On iPhone, add Crewdesk to your Home Screen first and open it from there. Your phone stays quiet while you’re looking at Crewdesk on any device.', 'Admins: More → Data & free allowance shows storage and Google Maps use against the free limits, downloads all company data as a zip, and clears chat or uploaded timesheets. Uploads and Google maps pause at 95% so nothing is ever charged.', 'Edit your photo and details in My settings; choose light or dark and your tab bar.', 'Search finds jobs by number, people, places — and parts of the app such as “tutorials” or “holiday”.']],
 ];
 const tutWide = () => matchMedia('(min-width: 900px)').matches;

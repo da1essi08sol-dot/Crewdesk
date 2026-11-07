@@ -4,6 +4,19 @@
 'use strict';
 
 const UPDATES = [
+  { id: '3.5', date: '2026-11-07', title: 'Stay safe: lone working', icon: 'shield', color: '#c92a2a',
+    intro: 'Nobody works alone unseen. Check in, and get help fast if something goes wrong.',
+    items: [
+      ['new', 'Stay safe tab: start a session before working alone. Say where you are, how often to check in, when you’ll finish and who your buddy is.'],
+      ['new', 'A countdown dial to your next check-in. Your phone buzzes on the lock screen when it’s due, and one tap on I’m safe checks you in.'],
+      ['new', 'Miss a check-in by 10 minutes and your buddy and admins get an urgent alert that stays on screen until they deal with it.'],
+      ['new', 'Hold the red help button for 2 seconds to raise an alert with a loud siren, or send a silent alert when noise could make things worse.'],
+      ['new', 'Buddies and admins see everyone working alone, can call them, open their location on a map and tap I’m responding.'],
+      ['new', 'Location is only shared from the Crewdesk Android app, never from a browser or iPhone.'],
+      ['better', 'Lock-screen notifications: only the device you’re actually looking at stays quiet. Your phone still buzzes if Crewdesk is open on your computer.'],
+      ['better', 'My settings shows whether this phone is signed up for notifications and when the last one arrived, with a clear fix if not.'],
+      ['fix', 'The “is typing” bubble in chat now lines up with the messages above it.'],
+    ] },
   { id: '3.4', date: '2026-11-07', title: 'Lock-screen notifications', icon: 'bell', color: '#e8590c',
     intro: 'Crewdesk can now reach you when it’s closed — on your lock screen, with a buzz.',
     items: [

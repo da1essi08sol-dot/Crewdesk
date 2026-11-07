@@ -13,7 +13,9 @@ self.addEventListener('push', (e) => {
     badge: '/favicon-32.png',
     tag: d.tag || undefined,
     renotify: !!d.tag, // a new message in the same chat still buzzes
-    vibrate: [180, 80, 180], // Android; iPhones buzz by your Settings → Notifications → Crewdesk choices
+    vibrate: d.urgent ? [600, 200, 600, 200, 600, 200, 1200] : [180, 80, 180], // Android; iPhones buzz by your Settings → Notifications → Crewdesk choices
+    requireInteraction: !!d.urgent, // safety alerts stay on screen until someone deals with them
+    silent: false,
     timestamp: Date.now(),
     data: { link: d.link || '#/home', cid: d.cid || '' },
   };

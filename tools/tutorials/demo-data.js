@@ -102,6 +102,14 @@ const pick = (a) => a[Math.floor(rnd() * a.length)];
   }
   // Two office teams.
   d.teams = {};
+  // Stay safe: two people working alone right now (one has missed a check-in), with Android locations.
+  d.lone = {};
+  [[3, 'Manhole survey, Tyne Street', 'active', 25, 54.9677, -1.6041], [6, 'Drainage check, Ouseburn culvert', 'overdue', 75, 54.9752, -1.5899]].forEach(([ix, where, status, ago, lat, lng]) => {
+    const s = id(); const t0 = now - ago * 60e3;
+    d.lone[s] = { id: s, userId: U[ix], status, startedAt: t0 - 3600e3, every: 60, endsAt: now + 3 * 3600e3, nextAt: status === 'overdue' ? now - 15 * 60e3 : now + 35 * 60e3, lastCheck: t0, buddy: U[0], where, note: 'Silver van, NG24 SRV', warnedAt: status === 'overdue' ? now - 15 * 60e3 : 0,
+      log: [{ at: t0 - 3600e3, what: 'Started working alone at ' + where, by: U[ix] }, { at: t0, what: 'Checked in — safe', by: U[ix] }].concat(status === 'overdue' ? [{ at: now - 5 * 60e3, what: 'Missed a check-in', by: '' }] : []),
+      loc: { lat, lng, acc: 8, at: now - 4 * 60e3 }, trail: [] };
+  });
   [['Gateshead office', '#1f57a4', [0, 1, 2, 3, 6, 7, 11]], ['Warrington office', '#b0284f', [4, 5, 8, 9, 10, 12, 13]]].forEach(([name, color, ix]) => { const tid = id(); d.teams[tid] = { id: tid, name, color, members: ix.map((i) => U[i]), createdBy: U[0], createdAt: now - 200 * day, updatedAt: now - 200 * day }; });
   // Realistic plans: most projects on track, one a little over.
   const act = {}, tact = {}; for (const e of Object.values(d.entries)) if (e.projectId && e.category !== 'lunch') { const m = ((e.end || now) - e.start) / 60000; act[e.projectId] = (act[e.projectId] || 0) + m; tact[e.taskId] = (tact[e.taskId] || 0) + m; }

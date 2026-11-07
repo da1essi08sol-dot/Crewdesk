@@ -41,6 +41,7 @@ async function loadCompany(keepView = false) {
   Object.assign(S, { company: st.company, role: st.role, user: st.me, teams: st.teams, tasks: st.tasks, clients: st.clients, pings: st.pings, resources: st.resources || {},
     photos: st.photos, projects: st.projects, events: st.events, finance: st.finance, chats: st.chats, invites: st.invites || [], favs: st.favs || { projects: [] },
     inbox: st.inbox || [], locations: st.locations, unread: st.unread, lastMsg: st.lastMsg, suggestions: st.suggestions || {}, gdrive: st.gdrive || null, sheetUploads: st.sheetUploads || {}, totals: st.totals || { tasks: {}, projects: {} }, projectCounts: st.projectCounts || {} });
+  S.lone = st.lone || { mine: null, watching: [], recent: [] }; loneTrack(!!S.lone.mine);
   S.mhPresets = st.mhPresets || {}; S.mhMaps = st.mhMaps || {}; S.mhCounts = st.mhCounts || {}; S.mapsKey = st.mapsKey || ''; if (!keepView) S.manholes = {};
   // Time: keep older months already fetched, and replace the recent ones with what the server just sent.
   if (!keepView) { S.entries = {}; S.days = {}; S.loaded = {}; }
@@ -66,10 +67,10 @@ function signOutLocal(msg) {
 
 // ============================================================ frame
 const SIDE_NAV = [['home', 'Home', 'home'], ['projects', 'Projects', 'folder'], ['timesheet', 'My timesheet', 'timesheet'], ['calendar', 'Calendar', 'cal'], ['chat', 'Chat', 'chat'],
-  ['pings', 'Pings', 'ping'], ['team', 'Team & map', 'team'], ['clients', 'Clients', 'contacts'], ['files', 'Files', 'clip'], ['suggest', 'Suggestions', 'bulb']];
+  ['pings', 'Pings', 'ping'], ['lone', 'Stay safe', 'shield'], ['team', 'Team & map', 'team'], ['clients', 'Clients', 'contacts'], ['files', 'Files', 'clip'], ['suggest', 'Suggestions', 'bulb']];
 // Everything that can go in the phone's bottom tab bar; people choose up to four, and the rest live under More.
 const TAB_ITEMS = { home: ['Home', 'home'], projects: ['Projects', 'folder'], timesheet: ['Timesheet', 'timesheet'], calendar: ['Calendar', 'cal'], chat: ['Chat', 'chat'],
-  pings: ['Pings', 'ping'], team: ['Team', 'team'], clients: ['Clients', 'contacts'], suggest: ['Suggest', 'bulb'], admin: ['Admin', 'admin'], sheets: ['Sheets', 'sheet'] };
+  pings: ['Pings', 'ping'], team: ['Team', 'team'], clients: ['Clients', 'contacts'], suggest: ['Suggest', 'bulb'], admin: ['Admin', 'admin'], sheets: ['Sheets', 'sheet'], lone: ['Safe', 'shield'] };
 const defaultTabs = () => (isAdmin() ? ['home', 'projects', 'admin', 'chat'] : ['home', 'projects', 'timesheet', 'chat']);
 const DEFAULT_TABS = ['home', 'projects', 'timesheet', 'chat'];
 const tabAllowed = (k) => !!TAB_ITEMS[k] && ((k !== 'sheets' && k !== 'admin') || isAdmin());
@@ -80,7 +81,7 @@ function myTabs() {
 const moreTabs = () => Object.keys(TAB_ITEMS).filter((k) => tabAllowed(k) && !myTabs().includes(k));
 const bottomNav = () => myTabs().map((k) => [k, TAB_ITEMS[k][0], TAB_ITEMS[k][1]]).concat([['more', 'More', 'more']]);
 function navLink([k, l, i], extra = '') {
-  return `<a class="navbtn" data-nav="${k}" href="#/${k}" ${extra}>${ic(i)}<span>${l}</span>${['chat', 'pings', 'more', 'admin', 'home', 'updates'].includes(k) ? `<span class="count hidden" data-badge="${k}"></span>` : ''}</a>`;
+  return `<a class="navbtn" data-nav="${k}" href="#/${k}" ${extra}>${ic(i)}<span>${l}</span>${['chat', 'pings', 'more', 'admin', 'home', 'updates', 'lone'].includes(k) ? `<span class="count hidden" data-badge="${k}"></span>` : ''}</a>`;
 }
 function coButton(cls = '') {
   return `<button class="co-btn ${cls}" data-act="co-menu" aria-haspopup="menu" aria-label="Company menu: ${esc(S.company.name)}">${S.company.logo ? coLogo(S.company, 30) : brand()}<span class="name ellipsis" data-co-name>${esc(S.company.name)}</span>${icSize('down', 15, 'flex:none;color:var(--muted)')}</button>`;
@@ -125,7 +126,8 @@ function updateChrome() {
   setBadge('admin', newSug);
   $$('[data-badge="home"]').forEach((b) => { const on = !!myRunning(); b.classList.toggle('hidden', !on); b.classList.toggle('rec', on); b.textContent = ''; b.setAttribute('aria-label', on ? 'Timer running' : ''); });
   // Anything tucked away under More shows its own count there, and the More tab adds them up.
-  const counts = { chat: chatN, pings: pingN, admin: newSug };
+  const loneN = loneNeeds(); setBadge('lone', loneN);
+  const counts = { chat: chatN, pings: pingN, admin: newSug, lone: loneN };
   const updN = unseenUpdates(); setBadge('updates', updN);
   const hiddenN = moreTabs().reduce((a, k) => a + (counts[k] || 0), 0) + updN;
   setBadge('more', hiddenN);
@@ -329,6 +331,7 @@ function handleEvent(ev) {
       if (ev.loc) S.locations[ev.userId] = ev.loc; else delete S.locations[ev.userId];
       updateMap(); break;
     case 'reload': loadCompany(true); break;
+    case 'lone': loneEvent(ev); break;
     case 'kicked':
       if (ev.cid === S.cid) { toast('This company is no longer available', true); S.cid = null; stopAll(); api('GET', '/api/me').then((r) => { S.companies = r.companies; enterApp(); }).catch(() => {}); }
       break;
@@ -358,20 +361,20 @@ async function pushSubscribe() {
   }
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
   await api('POST', '/api/push', Object.assign(sub.toJSON(), { device: deviceName() }));
-  S.pushOn = true;
+  S.pushOn = true; S.pushEndpoint = sub.endpoint;
   if (S.user.prefs && S.user.prefs.desktop) api('PUT', '/api/me', { prefs: { desktop: false } }).then((r) => { S.user = r.user; }).catch(() => {});
 }
 async function pushUnsubscribe() {
   const reg = await swReady(); const sub = reg && (await reg.pushManager.getSubscription());
   if (sub) { await api('DELETE', '/api/push', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
-  S.pushOn = false;
+  S.pushOn = false; S.pushEndpoint = '';
 }
 // On start: register the worker, and if this device already has notifications on, make sure they go to whoever is signed in now.
 async function pushStart() {
   try {
     const reg = await swReady(); if (!reg || !reg.pushManager) return;
     const sub = await reg.pushManager.getSubscription();
-    S.pushOn = !!sub && Notification.permission === 'granted';
+    S.pushOn = !!sub && Notification.permission === 'granted'; S.pushEndpoint = sub ? sub.endpoint : '';
     if (S.pushOn) api('POST', '/api/push', Object.assign(sub.toJSON(), { device: deviceName() })).catch(() => {});
   } catch (_) {}
 }
@@ -383,7 +386,7 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('mess
 // Tell the server when someone is looking at the app, so their phone doesn't buzz for things they can already see.
 function looking(on) {
   if (!S.user) return;
-  try { fetch('/api/looking', { method: 'POST', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Crewdesk': '1' }, body: JSON.stringify({ on }) }).catch(() => {}); } catch (_) {}
+  try { fetch('/api/looking', { method: 'POST', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Crewdesk': '1' }, body: JSON.stringify({ on, endpoint: S.pushEndpoint || '' }) }).catch(() => {}); } catch (_) {}
 }
 setInterval(() => { if (!document.hidden) looking(true); }, 30e3);
 document.addEventListener('visibilitychange', () => looking(!document.hidden));
@@ -451,7 +454,7 @@ function searchAll(q) {
     ['Chat', 'chat', '#/chat', 'messages group dm talk'], ['Pings', 'ping', '#/pings', 'announcements notices'], ['My timesheet', 'timesheet', '#/timesheet', 'hours overtime holiday xlsx download upload month year review'],
     ['Team & map', 'team', '#/team', 'people staff colleagues map locations'], ['Clients', 'contacts', '#/clients', 'customers contacts'], ['Suggestions', 'bulb', '#/suggest', 'ideas bugs hr question feedback'],
     ['Files', 'folder', '#/files', 'resources training documents guides forms attachments'], ['Maps', 'pin', '#/maps', 'manhole maps photos'], ['Manhole maps', 'pin', '#/maps', 'manhole drainage sewer utility survey map satellite'],
-    ['Tutorials', 'play', '#/tutorials', 'help videos guide how to learn tour promo'], ['What’s new', 'sparkle', '#/updates', 'updates update log changelog changes new features release version'], ['My settings', 'user', '#/profile', 'profile photo name theme dark light tabs password notifications'],
+    ['Tutorials', 'play', '#/tutorials', 'help videos guide how to learn tour promo'], ['Stay safe', 'shield', '#/lone', 'lone working alone check in safety panic alarm siren help buddy sos'], ['What’s new', 'sparkle', '#/updates', 'updates update log changelog changes new features release version'], ['My settings', 'user', '#/profile', 'profile photo name theme dark light tabs password notifications'],
     ['Spreadsheets', 'sheet', '#/sheets', 'finance money invoices excel'], ['Privacy', 'lock', '#/privacy', 'data policy'], ['Terms', 'help', '#/terms', 'conditions']];
   if (isAdmin()) PAGES.push(['Admin dashboard', 'admin', '#/admin', 'working now people overview'], ['Timesheets (admin)', 'timesheet', '#/admin/timesheets', 'everyone zip incomplete google drive'],
     ['Timesheet archive', 'archive', '#/admin/timesheets/archive', 'completed months years folders'], ['Company settings', 'settings', '#/settings', 'invite working day hours permissions logo']);
