@@ -1,6 +1,6 @@
 {
   "name": "crewdesk",
-  "version": "3.0.0",
+  "version": "3.4.0",
   "description": "Time tracking, timesheets, projects, calendar and team chat for small companies",
   "main": "server.js",
   "scripts": { "start": "node server.js" },

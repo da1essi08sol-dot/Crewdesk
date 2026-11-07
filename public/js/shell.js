@@ -10,6 +10,9 @@ async function boot() {
   try { me = await api('GET', '/api/me'); } catch (_) {}
   if (!me) { S.user = null; return publicRoute(r0); }
   S.user = me.user; S.companies = me.companies; S.myRequests = me.requests || [];
+  const askedCo = new URLSearchParams(location.search).get('cid'); // opened from a notification for another company
+  if (askedCo) { S.cid = askedCo; history.replaceState(null, '', '/' + location.hash); }
+  pushStart(); looking(true);
   if (r0.name === 'verify') history.replaceState(null, '', '/#/home');
   if (r0.name === 'invite' && r0.args[0]) setPendingInvite(r0.args[0]);
   await enterApp();
@@ -77,7 +80,7 @@ function myTabs() {
 const moreTabs = () => Object.keys(TAB_ITEMS).filter((k) => tabAllowed(k) && !myTabs().includes(k));
 const bottomNav = () => myTabs().map((k) => [k, TAB_ITEMS[k][0], TAB_ITEMS[k][1]]).concat([['more', 'More', 'more']]);
 function navLink([k, l, i], extra = '') {
-  return `<a class="navbtn" data-nav="${k}" href="#/${k}" ${extra}>${ic(i)}<span>${l}</span>${['chat', 'pings', 'more', 'admin', 'home'].includes(k) ? `<span class="count hidden" data-badge="${k}"></span>` : ''}</a>`;
+  return `<a class="navbtn" data-nav="${k}" href="#/${k}" ${extra}>${ic(i)}<span>${l}</span>${['chat', 'pings', 'more', 'admin', 'home', 'updates'].includes(k) ? `<span class="count hidden" data-badge="${k}"></span>` : ''}</a>`;
 }
 function coButton(cls = '') {
   return `<button class="co-btn ${cls}" data-act="co-menu" aria-haspopup="menu" aria-label="Company menu: ${esc(S.company.name)}">${S.company.logo ? coLogo(S.company, 30) : brand()}<span class="name ellipsis" data-co-name>${esc(S.company.name)}</span>${icSize('down', 15, 'flex:none;color:var(--muted)')}</button>`;
@@ -88,7 +91,7 @@ function renderShell() {
       ${coButton()}
       <nav class="stack tight" style="gap:1px" aria-label="Sections">${SIDE_NAV.map((n) => navLink(n)).join('')}
       ${isAdmin() ? `<div class="label navsec">Admin</div>${navLink(['admin', 'Admin dashboard', 'admin'])}${navLink(['sheets', 'Spreadsheets', 'sheet'])}` : ''}
-      ${navLink(['settings', 'Company settings', 'settings'])}${navLink(['tutorials', 'Tutorials', 'play'])}</nav>
+      ${navLink(['settings', 'Company settings', 'settings'])}${navLink(['tutorials', 'Tutorials', 'play'])}${navLink(['updates', 'What’s new', 'sparkle'])}</nav>
       <div class="grow"></div>
       <button class="navbtn" data-act="me-menu" aria-haspopup="menu" id="side-me"></button>
       <nav class="foot-links" style="justify-content:flex-start;margin:8px 10px 0;gap:12px" aria-label="Legal"><a href="#/privacy">Privacy</a><a href="#/terms">Terms</a><a href="mailto:${esc(S.info.supportEmail || '')}">Support</a></nav>
@@ -121,7 +124,13 @@ function updateChrome() {
   const newSug = isAdmin() ? Object.values(S.suggestions).filter((x) => x.status === 'new' && x.createdBy !== S.user.id).length : 0;
   setBadge('admin', newSug);
   $$('[data-badge="home"]').forEach((b) => { const on = !!myRunning(); b.classList.toggle('hidden', !on); b.classList.toggle('rec', on); b.textContent = ''; b.setAttribute('aria-label', on ? 'Timer running' : ''); });
-  const hiddenTabs = moreTabs(); setBadge('more', hiddenTabs.includes('admin') ? newSug : 0);
+  // Anything tucked away under More shows its own count there, and the More tab adds them up.
+  const counts = { chat: chatN, pings: pingN, admin: newSug };
+  const updN = unseenUpdates(); setBadge('updates', updN);
+  const hiddenN = moreTabs().reduce((a, k) => a + (counts[k] || 0), 0) + updN;
+  setBadge('more', hiddenN);
+  $$('[data-badge="more"]').forEach((b) => { if (!hiddenN && moreTabs().includes('home') && myRunning()) { b.classList.remove('hidden'); b.classList.add('rec'); b.textContent = ''; b.setAttribute('aria-label', 'Timer running'); } else b.classList.remove('rec'); });
+  if ('setAppBadge' in navigator) { const total = chatN + pingN; try { (total ? navigator.setAppBadge(total) : navigator.clearAppBadge()).catch(() => {}); } catch (_) {} }
   document.title = (chatN + pingN ? `(${chatN + pingN}) ` : '') + 'Crewdesk';
   const r = parseHash();
   const map = { project: 'projects', client: 'clients', person: 'team', ping: 'pings', company: 'companies', maps: 'files', resource: 'files', mhmap: 'files' };
@@ -326,12 +335,67 @@ function handleEvent(ev) {
     case 'signedOut': signOutLocal('You were signed out because your password changed'); break;
   }
 }
+// ============================================================ lock-screen notifications (Web Push)
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
+let swReg = null;
+async function swReady() {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return null;
+  if (!swReg) swReg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  return swReg;
+}
+const keyBytes = (k) => { const raw = atob((k + '='.repeat((4 - (k.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (c) => c.charCodeAt(0)); };
+const deviceName = () => (isIOS() ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android phone' : /Mac/.test(navigator.platform) ? 'Mac' : /Win/.test(navigator.platform) ? 'Windows computer' : 'Browser');
+async function pushSubscribe() {
+  if (!pushSupported()) throw new Error(isIOS() ? 'Add Crewdesk to your Home Screen first, then open it from there' : 'This browser can’t do lock-screen notifications');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error(perm === 'denied' ? 'Notifications are blocked — allow them in your phone or browser settings' : 'Notifications weren’t allowed');
+  const reg = await swReady(); await navigator.serviceWorker.ready;
+  const { key } = await api('GET', '/api/push/key');
+  let sub = await reg.pushManager.getSubscription();
+  if (sub && sub.options && sub.options.applicationServerKey) { // made with an old server key? start again
+    const a = new Uint8Array(sub.options.applicationServerKey); const b = keyBytes(key);
+    if (a.length !== b.length || a.some((v, i) => v !== b[i])) { await sub.unsubscribe(); sub = null; }
+  }
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+  await api('POST', '/api/push', Object.assign(sub.toJSON(), { device: deviceName() }));
+  S.pushOn = true;
+  if (S.user.prefs && S.user.prefs.desktop) api('PUT', '/api/me', { prefs: { desktop: false } }).then((r) => { S.user = r.user; }).catch(() => {});
+}
+async function pushUnsubscribe() {
+  const reg = await swReady(); const sub = reg && (await reg.pushManager.getSubscription());
+  if (sub) { await api('DELETE', '/api/push', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
+  S.pushOn = false;
+}
+// On start: register the worker, and if this device already has notifications on, make sure they go to whoever is signed in now.
+async function pushStart() {
+  try {
+    const reg = await swReady(); if (!reg || !reg.pushManager) return;
+    const sub = await reg.pushManager.getSubscription();
+    S.pushOn = !!sub && Notification.permission === 'granted';
+    if (S.pushOn) api('POST', '/api/push', Object.assign(sub.toJSON(), { device: deviceName() })).catch(() => {});
+  } catch (_) {}
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (e) => { // a notification was tapped
+  const d = e.data || {}; if (d.type !== 'open' || !d.link) return;
+  if (d.cid && d.cid !== S.cid && S.companies.some((c) => c.id === d.cid)) { S.cid = d.cid; resetCompanyState(); location.hash = d.link; loadCompany(); }
+  else location.hash = d.link;
+});
+// Tell the server when someone is looking at the app, so their phone doesn't buzz for things they can already see.
+function looking(on) {
+  if (!S.user) return;
+  try { fetch('/api/looking', { method: 'POST', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Crewdesk': '1' }, body: JSON.stringify({ on }) }).catch(() => {}); } catch (_) {}
+}
+setInterval(() => { if (!document.hidden) looking(true); }, 30e3);
+document.addEventListener('visibilitychange', () => looking(!document.hidden));
+window.addEventListener('pagehide', () => looking(false));
+window.addEventListener('focus', () => looking(true));
+
 // A notification: pop-up (if switched on), desktop alert when the app is in the background, optional sound.
 function alertUser(text, link, body = '', rich = null) {
   const p = S.user.prefs || {};
   if (p.popups !== false) { if (rich) banner(Object.assign({ link }, rich)); else toast(text.slice(0, 140), false, link); }
   if (p.sound) beep();
-  if (p.desktop && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+  if (p.desktop && !S.pushOn && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
     try { const n = new Notification(text.slice(0, 120), { body, icon: '/icon-192.png', tag: link }); n.onclick = () => { window.focus(); location.hash = link; n.close(); }; } catch {}
   }
 }
@@ -387,7 +451,7 @@ function searchAll(q) {
     ['Chat', 'chat', '#/chat', 'messages group dm talk'], ['Pings', 'ping', '#/pings', 'announcements notices'], ['My timesheet', 'timesheet', '#/timesheet', 'hours overtime holiday xlsx download upload month year review'],
     ['Team & map', 'team', '#/team', 'people staff colleagues map locations'], ['Clients', 'contacts', '#/clients', 'customers contacts'], ['Suggestions', 'bulb', '#/suggest', 'ideas bugs hr question feedback'],
     ['Files', 'folder', '#/files', 'resources training documents guides forms attachments'], ['Maps', 'pin', '#/maps', 'manhole maps photos'], ['Manhole maps', 'pin', '#/maps', 'manhole drainage sewer utility survey map satellite'],
-    ['Tutorials', 'play', '#/tutorials', 'help videos guide how to learn tour promo'], ['My settings', 'user', '#/profile', 'profile photo name theme dark light tabs password notifications'],
+    ['Tutorials', 'play', '#/tutorials', 'help videos guide how to learn tour promo'], ['What’s new', 'sparkle', '#/updates', 'updates update log changelog changes new features release version'], ['My settings', 'user', '#/profile', 'profile photo name theme dark light tabs password notifications'],
     ['Spreadsheets', 'sheet', '#/sheets', 'finance money invoices excel'], ['Privacy', 'lock', '#/privacy', 'data policy'], ['Terms', 'help', '#/terms', 'conditions']];
   if (isAdmin()) PAGES.push(['Admin dashboard', 'admin', '#/admin', 'working now people overview'], ['Timesheets (admin)', 'timesheet', '#/admin/timesheets', 'everyone zip incomplete google drive'],
     ['Timesheet archive', 'archive', '#/admin/timesheets/archive', 'completed months years folders'], ['Company settings', 'settings', '#/settings', 'invite working day hours permissions logo']);

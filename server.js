@@ -15,6 +15,7 @@ const mail = require('./lib/email');
 const ts = require('./lib/timesheet');
 const gdrive = require('./lib/gdrive');
 const { writeZip } = require('./lib/zip');
+const webpush = require('./lib/webpush');
 const TZ = 'Europe/London';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -547,8 +548,65 @@ function notify(cid, userIds, text, link) {
     const item = { id: uid(), text: str(text, 300), link: str(link, 200), at: now(), read: false };
     box.push(item); if (box.length > 200) box.splice(0, box.length - 200);
     broadcast(cid, { t: 'inbox', item }, { only: [id] });
+    pushUser(cid, id, { title: 'Crewdesk', body: item.text, link: item.link, tag: 'note-' + item.id });
   }
   if (ids.length) save();
+}
+
+// ---------------------------------------------------------------- lock-screen (push) notifications
+// Phones that switched on "Lock-screen notifications" get a real notification (and a buzz) when the app isn't on screen.
+const looking = new Map(); // userId -> time until which they're looking at the app (so no push needed)
+function vapid() { db.meta = db.meta || {}; if (!db.meta.vapid) { db.meta.vapid = webpush.makeKeys(); save(); } return db.meta.vapid; }
+function badgeCount(userId) { // the number on the app icon: unread chats, notifications and pings across their companies
+  let n = 0;
+  for (const c of Object.values(db.companies)) {
+    const x = ctxFor(c, userId); if (!x) continue;
+    try { n += Object.values(unreadFor(x).unread).reduce((a, b) => a + b, 0); } catch (_) {}
+    n += (x.d.inbox[userId] || []).filter((i) => !i.read).length;
+    n += Object.values(x.d.pings || {}).filter((p) => p.createdBy !== userId && !(p.readBy && p.readBy[userId]) && viewFor('pings', p, x)).length;
+  }
+  return n;
+}
+function pushUser(cid, userId, data, force = false) {
+  const u = db.users[userId]; if (!u || !Array.isArray(u.push) || !u.push.length) return;
+  if (!force && (looking.get(userId) || 0) > now()) return; // they're in the app; the in-app pop-up covers it
+  const c = db.companies[cid];
+  const many = Object.values(db.companies).filter((co) => co.members[userId]).length > 1;
+  const payload = { title: str(data.title, 120) || 'Crewdesk', body: str(data.body, 240), link: str(data.link, 200) || '#/home', tag: str(data.tag, 60), cid,
+    company: many && c ? c.name : '', badge: badgeCount(userId) };
+  const keys = vapid();
+  for (const s of u.push.slice()) {
+    webpush.send(keys, 'mailto:' + SUPPORT_EMAIL, s, payload).then((r) => {
+      if (r === 'gone') { u.push = (u.push || []).filter((x) => x.endpoint !== s.endpoint); save(); }
+      else if (r === 'ok') s.lastOk = now();
+    });
+  }
+}
+function channelTitle(cid, channel) {
+  const c = db.companies[cid]; const d = cdata(cid);
+  if (channel === 'general') return { name: (c ? c.name : 'Company') + ' chat', dm: false };
+  let m = /^project:(.+)$/.exec(channel); if (m) return { name: (d.projects[m[1]] || {}).name || 'Project chat', dm: false };
+  m = /^chat:(.+)$/.exec(channel); const ch = m && d.chats[m[1]];
+  return ch && ch.kind === 'dm' ? { name: '', dm: true } : { name: (ch && ch.name) || 'Group chat', dm: false };
+}
+function pushMessage(cid, msg) {
+  const c = db.companies[cid]; if (!c || msg.system) return;
+  const from = ((db.users[msg.userId] || {}).name || 'Someone').split(' ')[0];
+  const t = channelTitle(cid, msg.channel);
+  for (const id of Object.keys(c.members)) {
+    if (id === msg.userId) continue;
+    const x = ctxFor(c, id); if (!x || !canSeeChannel(x, msg.channel)) continue;
+    pushUser(cid, id, { title: t.dm ? from : `${from} · ${t.name}`, body: msgPreview(msg), link: '#/chat/' + msg.channel, tag: 'chat-' + msg.channel });
+  }
+}
+function pushPing(cid, ping) {
+  const c = db.companies[cid]; if (!c) return;
+  const from = ((db.users[ping.createdBy] || {}).name || 'Someone').split(' ')[0];
+  for (const id of Object.keys(c.members)) {
+    if (id === ping.createdBy) continue;
+    const x = ctxFor(c, id); if (!x || !viewFor('pings', ping, x)) continue;
+    pushUser(cid, id, { title: `New ping from ${from}`, body: ping.title + (ping.body ? ' — ' + ping.body : ''), link: '#/ping/' + ping.id, tag: 'ping-' + ping.id });
+  }
 }
 setInterval(() => { for (const s of streams) { try { s.res.write(': ping\n\n'); } catch (_) {} } }, 25000);
 
@@ -630,6 +688,7 @@ function postMessage(cid, channel, userId, text, images, system = false, files =
   if (arr.length > 3000) dropMessageFiles(arr.splice(0, arr.length - 3000));
   touchChannel(cid, channel);
   broadcast(cid, (x) => (canSeeChannel(x, channel) ? { t: 'msg', item: msg } : null));
+  if (!system) pushMessage(cid, msg);
   return msg;
 }
 function unreadFor(x) {
@@ -845,9 +904,7 @@ function afterChange(cid, coll, before, after, user) {
     notify(cid, added, `${who} added you to “${after.title}” on ${after.date}${after.allDay || !after.start ? '' : ' at ' + after.start}`, '#/calendar/' + after.date);
     if (before && (before.date !== after.date || before.start !== after.start || before.startsAt !== after.startsAt)) after.remindedAt = 0;
   }
-  if (coll === 'pings' && !before) {
-    // pings have their own unread dot; live viewers also get a pop-up via the upsert event
-  }
+  if (coll === 'pings' && !before) pushPing(cid, after); // live viewers get a pop-up via the upsert event; everyone else gets a lock-screen alert
   void c;
 }
 
@@ -1198,6 +1255,39 @@ async function api(req, res, url) {
     secLog('join-requested', { company: c.id, user: user.id });
     return json(res, 200, { company: directoryCard(c, user.id) });
   }
+  // --- lock-screen notifications for this device
+  if (p === '/api/push/key' && M === 'GET') return json(res, 200, { key: webpush.publicKeyOf(vapid()) });
+  if (p === '/api/push' && M === 'POST') {
+    const b = await readBody(req, 8 * 1024);
+    const endpoint = str(b.endpoint, 1000); const k = b.keys || {};
+    if (!webpush.endpointOk(endpoint)) bad('This browser’s notification service isn’t supported');
+    if (!/^[A-Za-z0-9_-]{80,100}$/.test(String(k.p256dh || '')) || !/^[A-Za-z0-9_-]{16,30}$/.test(String(k.auth || ''))) bad('Notification sign-up was incomplete — try again');
+    // One device can only belong to one person: signing in as someone else on the same phone moves it.
+    for (const other of Object.values(db.users)) if (other.push && other.id !== user.id) other.push = other.push.filter((x) => x.endpoint !== endpoint);
+    user.push = (user.push || []).filter((x) => x.endpoint !== endpoint);
+    user.push.push({ endpoint, keys: { p256dh: String(k.p256dh), auth: String(k.auth) }, at: now(), device: str(b.device, 60) });
+    if (user.push.length > 10) user.push.splice(0, user.push.length - 10);
+    save();
+    return json(res, 200, { ok: true, devices: user.push.length });
+  }
+  if (p === '/api/push' && M === 'DELETE') {
+    const b = await readBody(req, 8 * 1024);
+    user.push = (user.push || []).filter((x) => x.endpoint !== str(b.endpoint, 1000)); save();
+    return json(res, 200, { ok: true });
+  }
+  if (p === '/api/push/test' && M === 'POST') {
+    throttle('pushtest:' + user.id, 10, 3600e3);
+    if (!user.push || !user.push.length) bad('Lock-screen notifications aren’t on for any of your devices yet');
+    const cid = Object.keys(db.companies).find((id) => db.companies[id].members[user.id]);
+    pushUser(cid, user.id, { title: 'Crewdesk', body: 'Lock-screen notifications are working 👍', link: '#/profile', tag: 'test' }, true);
+    return json(res, 200, { ok: true });
+  }
+  // Whether they're looking at the app right now (then pop-ups show in the app instead of on the lock screen).
+  if (p === '/api/looking' && M === 'POST') {
+    const b = await readBody(req, 1024);
+    if (b.on) looking.set(user.id, now() + 70e3); else looking.delete(user.id);
+    return json(res, 200, { ok: true });
+  }
   if (p === '/api/me' && M === 'PUT') {
     const b = await readBody(req, 2 * 1024 * 1024);
     if ('name' in b) user.name = str(b.name, 80) || bad('Name can’t be empty');
@@ -1209,6 +1299,7 @@ async function api(req, res, url) {
       if (old !== user.avatar) dropFile(old);
     }
     if (b.prefs && typeof b.prefs === 'object') for (const k of ['popups', 'desktop', 'sound']) if (k in b.prefs) user.prefs[k] = !!b.prefs[k];
+    if (b.prefs && typeof b.prefs.seenUpdate === 'string') user.prefs.seenUpdate = str(b.prefs.seenUpdate, 20); // the newest What's new entry they've opened
     if (b.prefs && Array.isArray(b.prefs.tabs)) { // the phone's bottom tab bar, as the person arranged it
       const ok = ['home', 'projects', 'timesheet', 'calendar', 'chat', 'pings', 'team', 'clients', 'suggest', 'admin', 'sheets'];
       const tabs = [...new Set(b.prefs.tabs.map(String))].filter((k) => ok.includes(k)).slice(0, 4);

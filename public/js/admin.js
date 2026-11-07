@@ -382,7 +382,7 @@ VIEWS.profile = {
       <div class="stack">
         <div class="card"><h2 style="margin-bottom:4px">Notifications</h2>
           ${sw('popups', u.prefs.popups !== false, 'Show notifications', 'Pop-ups for new pings, messages and things assigned to you. Red dots always show what’s unread.', 'data-change="pref" data-k="popups"')}
-          ${sw('desktop', !!u.prefs.desktop && perm === 'granted', 'Alerts when the app is in the background', perm === 'denied' ? 'Blocked in your browser settings' : perm === 'unsupported' ? 'Not supported on this browser' : 'Uses your device’s notifications', `data-change="pref" data-k="desktop" ${perm === 'denied' || perm === 'unsupported' ? 'disabled' : ''}`)}
+          ${pushSettingRow(sw, perm)}
           ${sw('sound', !!u.prefs.sound, 'Play a sound', 'A short tone with each notification', 'data-change="pref" data-k="sound"')}</div>
         <div class="card stack"><h2>Appearance</h2>
           <div class="row between"><div><b style="display:block">Tab bar</b><span class="small muted">Choose and arrange the buttons along the bottom of the app on your phone.</span></div><button class="btn sm" data-act="edit-tabs">${ic('edit')}Edit</button></div>
@@ -418,6 +418,28 @@ C.pref = async (el) => {
   }
   try { const r = await api('PUT', '/api/me', { prefs: { [k]: on } }); S.user = r.user; toast('Saved'); } catch (e) { toast(e.message, true); el.checked = !on; }
 };
+// Lock-screen notifications: the switch, with plain help for phones that need a step first.
+function pushSettingRow(sw, perm) {
+  const label = 'Lock-screen notifications';
+  if (!pushSupported()) {
+    const why = isIOS() && !installedApp() ? 'On iPhone, first add Crewdesk to your Home Screen (Safari → Share → Add to Home Screen), then open it from there and switch this on.' : 'This browser can’t show notifications when the app is closed.';
+    return sw('push', false, label, why, 'disabled');
+  }
+  if (perm === 'denied') return sw('push', false, label, isIOS() ? 'Blocked — turn them on in iPhone Settings → Notifications → Crewdesk' : 'Blocked — allow notifications for this site in your browser or phone settings', 'disabled');
+  return sw('push', !!S.pushOn, label, 'Messages, pings and things for you appear on this device’s lock screen and make it buzz, even when Crewdesk is closed.', 'data-change="push"') +
+    (S.pushOn ? `<div class="row between wrap" style="padding:2px 0 10px;gap:8px"><span class="tiny muted">${isIOS() ? 'No buzz? iPhone Settings → Notifications → Crewdesk → turn on Sounds and Lock Screen.' : 'Switch this on for each phone or computer you use.'}</span><button class="btn sm" data-act="push-test">${ic('bell')}Send a test</button></div>` : '');
+}
+C.push = async (el) => {
+  el.disabled = true;
+  try {
+    if (el.checked) { await pushSubscribe(); toast('Lock-screen notifications are on for this device'); }
+    else { await pushUnsubscribe(); toast('Lock-screen notifications are off for this device'); }
+  } catch (e) { el.checked = !!S.pushOn; toast(e.message, true); }
+  el.disabled = false; renderView(false);
+};
+A['push-test'] = async () => {
+  try { await api('POST', '/api/push/test'); toast(isIOS() || /Android/.test(navigator.userAgent) ? 'Sent — lock your phone to see it arrive' : 'Sent — it should appear in a moment'); } catch (e) { toast(e.message, true); }
+};
 C.privacy = async (el) => { try { const r = await api('PUT', '/api/me', { privacy: { [el.dataset.k]: el.checked } }); S.user = r.user; toast('Saved'); } catch (e) { toast(e.message, true); el.checked = !el.checked; } };
 C.theme = (el) => { store.set('cd_theme', el.value === 'auto' ? null : el.value); applyTheme(); };
 A.avatar = async () => {
@@ -451,10 +473,11 @@ VIEWS.more = {
   render() {
     return `<h1 style="margin-bottom:14px">More</h1>
       <div class="card" style="padding:6px"><div class="menu">
-        ${moreTabs().map((k) => `<a href="#/${k}">${ic(TAB_ITEMS[k][1])}<span class="grow">${({ sheets: 'Spreadsheets', team: 'Team &amp; map', admin: 'Admin dashboard', suggest: 'Suggestions', timesheet: 'My timesheet' })[k] || TAB_ITEMS[k][0]}</span>${k === 'sheets' || k === 'admin' ? '<span class="tiny muted">Admins</span>' : ''}${k === 'admin' ? '<span class="count hidden" data-badge="admin"></span>' : ''}${ic('right')}</a>`).join('')}
+        ${moreTabs().map((k) => `<a href="#/${k}">${ic(TAB_ITEMS[k][1])}<span class="grow">${({ sheets: 'Spreadsheets', team: 'Team &amp; map', admin: 'Admin dashboard', suggest: 'Suggestions', timesheet: 'My timesheet' })[k] || TAB_ITEMS[k][0]}</span>${k === 'sheets' || k === 'admin' ? '<span class="tiny muted">Admins</span>' : ''}${['chat', 'pings', 'admin', 'home'].includes(k) ? `<span class="count hidden" data-badge="${k}"></span>` : ''}${ic('right')}</a>`).join('')}
         <button data-act="edit-tabs">${ic('edit')}<span class="grow">Edit tab bar</span>${ic('right')}</button>
       </div></div>
       <div class="card section" style="padding:6px"><div class="menu">
+        <a href="#/updates">${ic('sparkle')}<span class="grow">What’s new</span><span class="tiny muted">v${esc(UPDATES[0].id)}</span><span class="count hidden" data-badge="updates"></span>${ic('right')}</a>
         <a href="#/files">${ic('folder')}<span class="grow">Files</span><span class="tiny muted">Resources · Maps</span>${ic('right')}</a>
         ${isAdmin() ? `<a href="#/data">${ic('download')}<span class="grow">Data & free allowance</span>${ic('right')}</a>` : ''}
         <a href="#/tutorials">${ic('play')}<span class="grow">Tutorials</span><span class="tiny muted">${TUTORIALS.length + 1} videos</span>${ic('right')}</a>
@@ -473,8 +496,9 @@ VIEWS.more = {
         <a href="mailto:${esc(S.info.supportEmail || '')}">${ic('mail')}<span class="grow">Contact support</span>${ic('right')}</a>
         <button data-act="logout">${ic('logout')}<span class="grow">Sign out</span></button>
       </div></div>
-      ${installedApp() ? '' : `<div class="card section row">${icSize('phoneapp', 24, 'color:var(--accent-text);flex:none')}<div class="small"><b>Install on your phone</b><br><span class="muted">iPhone: Safari → Share → Add to Home Screen. Android: Chrome menu → Install app.</span></div></div>`}`;
+      ${installedApp() ? '' : `<div class="card section row">${icSize('phoneapp', 24, 'color:var(--accent-text);flex:none')}<div class="small"><b>Install on your phone</b><br><span class="muted">iPhone: Safari → Share → Add to Home Screen. Android: Chrome menu → Install app. Then switch on lock-screen notifications in <a href="#/profile">My settings</a>.</span></div></div>`}`;
   },
+  mount() { updateChrome(); },
 };
 
 // ============================================================ PRIVACY & TERMS
@@ -594,7 +618,7 @@ const TUTORIALS = [
   ['Plotting manholes', 'mhplot', ['Open the map and switch to Edit mode.', 'Pick the type for new manholes (bottom left) — it sets the colour and icon.', 'Tap “Add manhole”, then tap exactly where the cover is; it gets the next reference automatically. In 3D, tap the ground the same way.', 'On site, use “use my GPS position” instead; or Coordinates → type the lat/lng → Add manhole here.', 'Fill in cover and invert levels, depth, material and condition, and add photos with your camera.', 'Drag a pin to move it. Everyone on the project sees changes live.']],
   ['Manhole maps', 'manholes', ['Open a project → Maps, or More → Files, to open or create a manhole map. Only people on that project can see it.', 'Tap a pin to open its record: status, location, photos, notes, survey details and history.', 'Switch to Edit mode to add (tap “Add manhole” then the map, or use your GPS position), drag pins, change status and fill in levels.', 'Tap 3D for a Google Earth-style 3D view (or 3D building shapes on the free map); drag to move, two fingers (or right-drag) to turn and tilt; on a computer the side buttons also move closer, turn and tilt. Tap a pin to open it. Tap 3D again to go back to 2D.', 'Everyone sees changes live; if two people change the same thing you’ll be asked which to keep.', '⋯ → Export makes a manhole index, a labelled map on satellite imagery with a scale bar, grid and corner coordinates, a full PDF report or an Excel register. Manhole types are shared company-wide and anyone can add them.']],
   ['Spreadsheets & stats', 'sheets', ['Admins only. Money has income, expenses and a projection.', 'Hours shows hours by month and type of work, the busiest projects, weekdays and everyone’s totals.', 'Performance shows projects against plan, tasks completed, typical working days, timesheet completion and rework.']],
-  ['Settings, search & more', 'settings', ['More has your timesheet, Files, Tutorials and a private Demo company to practise in.', 'Admins: More → Data & free allowance shows storage and Google Maps use against the free limits, downloads all company data as a zip, and clears chat or uploaded timesheets. Uploads and Google maps pause at 95% so nothing is ever charged.', 'Edit your photo and details in My settings; choose light or dark and your tab bar.', 'Search finds jobs by number, people, places — and parts of the app such as “tutorials” or “holiday”.']],
+  ['Settings, search & more', 'settings', ['More has your timesheet, Files, Tutorials, What’s new (the update log) and a private Demo company to practise in. Anything you’ve moved off the tab bar shows its red count in More, and the More tab adds them up.', 'Lock-screen notifications: My settings → Notifications → switch on Lock-screen notifications, then tap Send a test. On iPhone, add Crewdesk to your Home Screen first and open it from there. Your phone stays quiet while you’re looking at Crewdesk on any device.', 'Admins: More → Data & free allowance shows storage and Google Maps use against the free limits, downloads all company data as a zip, and clears chat or uploaded timesheets. Uploads and Google maps pause at 95% so nothing is ever charged.', 'Edit your photo and details in My settings; choose light or dark and your tab bar.', 'Search finds jobs by number, people, places — and parts of the app such as “tutorials” or “holiday”.']],
 ];
 const tutWide = () => matchMedia('(min-width: 900px)').matches;
 const tutSrc = (v) => (tutWide() ? '/tutorials/desk/' : '/tutorials/') + v;

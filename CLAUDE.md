@@ -4,6 +4,14 @@
 - Bump the `?v=` cache-buster in `public/index.html` after front-end changes.
 - Work on branch `timesheets-redesign`, fast-forward `main`, push both (Render deploys `main`).
 
+## Update log
+More → What's new reads `UPDATES` in `public/js/updates.js` (newest first). **Every time a change goes live, add an entry at the top**
+(bump the version, plain user-facing wording, items tagged new / better / fix) — people get a red dot in More until they open it.
+
+## Lock-screen notifications
+Web Push is built in (`lib/webpush.js`, `public/sw.js`, no packages, VAPID keys kept in `db.meta.vapid`). Server sends via `pushUser()`
+from `notify()`, `postMessage()` and new pings; it skips anyone looking at the app (`/api/looking` heartbeat).
+
 ## Tutorials must stay current
 The app has a Tutorials page (More → Tutorials) with a written guide and two videos per section: a phone video (portrait,
 `public/tutorials/<name>.mp4`) and a computer video (landscape, `public/tutorials/desk/<name>.mp4`); the page picks by screen width.
