@@ -162,5 +162,17 @@
   "Admins have company settings too: invites, the working day, and permissions.",
   "Search finds jobs, people, and even parts of the app. Try typing tutorials.",
   "Set it up once, and it's ready to go."
+ ],
+ "lone": [
+  "Stay safe keeps an eye on anyone working on their own.",
+  "Buddies and admins can see everyone who's working alone right now.",
+  "If someone misses a check-in, you get an urgent alert. Call them, open their location, or tap I'm responding.",
+  "Working alone yourself? Say where you are, how often to check in, and pick a buddy.",
+  "The dial counts down to your next check-in, and your phone buzzes when it's due.",
+  "Tap I'm safe to check in. You can add more time, or finish when you're done.",
+  "In trouble? Hold the red button for two seconds. It alerts everyone and sounds a loud siren.",
+  "Help is told straight away. Cancel the alert once you're safe.",
+  "Location is only shared from the Crewdesk Android app.",
+  "Nobody works alone unseen."
  ]
 }
